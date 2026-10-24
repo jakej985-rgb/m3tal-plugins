@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.0] - 2026-10-24
+
+### 🚀 Changes & Improvements
+- **feat(plugins): standardize folder layout to m3tal-<name>, add documentation and dynamic UI support** (`470553f`)
+
+---
+
 ## [0.1.2] - 2026-10-24
 
 ### 🚀 Changes & Improvements
