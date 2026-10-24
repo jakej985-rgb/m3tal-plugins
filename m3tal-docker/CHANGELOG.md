@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.1] - 2026-10-24
+
+### 🚀 Changes & Improvements
+- **docs(maintainer): document canonical binary naming & direct execution**: Updated plugin maintainer guidelines to mandate compiling `bin/m3tal-docker` for direct execution by M3TAL Core without runtime symlinks.
+- **chore(version): bump version to 0.2.1**: Synchronized `plugin.yaml`, `CHANGELOG.md`, and backend `PluginVersion` constant.
+
+---
+
 ## [0.2.0] - 2026-10-24
 
 ### 🚀 Changes & Improvements

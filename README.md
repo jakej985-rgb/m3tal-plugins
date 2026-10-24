@@ -7,7 +7,10 @@ This repository contains all official and community plugins for the **M3TAL Core
 - **Zero Core Footprint**: `m3tal-core` contains zero plugin-specific UI components, API endpoints, or models. It acts solely as the Host Supervisor and Dynamic UI mount point.
 - **Standardized Plugin Folders (`m3tal-<plugin-name>`)**: Every plugin lives in its own top-level directory following the canonical format `m3tal-<plugin-name>` (e.g. `m3tal-docker/`, `m3tal-stacks/`, `m3tal-ai/`, `m3tal-smart/`). There are no intermediate wrapper folders or symlinks.
 - **Complete Self-Containment**: All backend code, frontend UI assets, manifest (`plugin.yaml`), configuration schema, and build rules live strictly within the plugin's own folder. Each plugin directory includes its own dedicated `README.md`.
-- **Canonical Process Identity (`m3tal-<process>`)**: Every running plugin subprocess, collector, and worker MUST identify as `m3tal-<process>` (e.g. `m3tal-docker`, `m3tal-stacks`, `m3tal-ai`, `m3tal-smart`) so operators and monitoring tools can instantly track high CPU, memory, or disk I/O usage in `top`, `htop`, or `m3tal-sysmon`.
+- **Canonical Process Identity & Direct Execution (`m3tal-<process>`)**:
+  - Every running plugin subprocess, collector, and worker MUST identify as `m3tal-<process>` (e.g. `m3tal-docker`, `m3tal-stacks`, `m3tal-ai`, `m3tal-smart`) so operators and monitoring tools can instantly track high CPU, memory, or disk I/O usage in `top`, `htop`, or `m3tal-sysmon`.
+  - **First-Party Plugins (Direct Execution)**: Compiles binaries canonically as `bin/m3tal-<process>`. M3TAL Core detects this and executes directly from its install location without creating symlinks, eliminating `/tmp` dependencies and avoiding `noexec` failures.
+  - **Third-Party / Legacy Plugins (Runtime Symlink)**: If a plugin uses a non-canonical binary name (e.g. `server`, `app`), the supervisor automatically creates a canonical symlink inside `/run/m3tal/plugins-bin/` (the secure systemd runtime directory) instead of polluting `/tmp`.
 - **Debian Packaging & Central Signing**: All `.deb` packages (`m3tal-plugin-<name>_<version>_amd64.deb`) are built in this repository and dispatched to `jakej985-rgb/m3tal-apt-key` for official GPG signing and APT repository indexing.
 
 ---

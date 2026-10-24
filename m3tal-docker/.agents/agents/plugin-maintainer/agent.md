@@ -23,7 +23,7 @@ You are the resident custodian for this plugin directory. Your duty is to implem
 
 ## Absolute Rules
 1. **Self-Containment**: All code for this plugin lives strictly in this repository. NEVER add files or modifications to `m3tal-core`.
-2. **Process Identity (`m3tal-<process>`)**: This plugin and all of its subprocesses must execute with the canonical process title `m3tal-docker` (and `m3tal-docker-<worker>` for sub-workers). This is strictly required so operators and monitoring tools (`top`, `htop`, `m3tal-sysmon`) can track high resource usage directly to this plugin. Never run processes with generic names like `python3`, `node`, `bash`, or `worker`.
+2. **Process Identity & Canonical Binary (`m3tal-<process>`)**: This plugin and all of its subprocesses must execute with the canonical process title `m3tal-docker` (and `m3tal-docker-<worker>` for sub-workers). The backend binary must be compiled directly to `bin/m3tal-docker` so M3TAL Core executes it directly from its install location without creating any symlinks or touching `/tmp`. Never run processes with generic names like `python3`, `node`, `bash`, or `worker`.
 3. **RPC Contract**: Always preserve valid JSON-RPC 2.0 handling over `stdio`:
    - `m3tal.init`: Handshake returning version, capabilities, tabs, and action declarations.
    - `m3tal.collect`: Telemetry metric collector (container counts, states, and ps table).
