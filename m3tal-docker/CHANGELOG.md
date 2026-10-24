@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.2] - 2026-10-24
+
+### 🚀 Changes & Improvements
+- **docs(plugins): add canonical binary and direct execution guidelines** (`e71a841`)
+
+---
+
 ## [0.2.1] - 2026-10-24
 
 ### 🚀 Changes & Improvements
