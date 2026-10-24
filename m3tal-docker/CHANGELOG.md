@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.0] - 2026-10-24
+
+### 🚀 Changes & Improvements
+- **feat(tabs): align Fleet and Compose sub-tabs under Containers category** (`0a90ec7`)
+
+---
+
 ## [0.2.3] - 2026-10-24
 
 ### 🚀 Changes & Improvements
