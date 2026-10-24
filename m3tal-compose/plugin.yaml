@@ -1,0 +1,41 @@
+apiVersion: m3tal.io/v1alpha1
+kind: Plugin
+metadata:
+  name: compose
+  version: "0.1.0"
+  title: "Compose Editor"
+  description: "Docker Compose visual editor, syntax validator, and stack lifecycle manager"
+  author: "jakej985-rgb"
+  license: "MIT"
+  icon: "IconLayers"
+
+spec:
+  command: "./bin/m3tal-compose"
+  args: []
+  process_name: "m3tal-compose"
+  poll_interval: 5s
+
+  capabilities:
+    - collector
+    - actions
+    - ui_view
+
+  ui:
+    entry: "ui/dist/index.html"
+    route: "/containers"
+    category: "containers"
+    category_title: "Containers"
+    tab_id: "compose"
+    title: "Compose Editor"
+    sidebar: true
+    order: 25
+    roles: ["admin", "viewer"]
+
+  rpc:
+    protocol: "jsonrpc-2.0"
+    transport: "stdio"
+
+  requirements:
+    binaries:
+      - docker
+    root: false

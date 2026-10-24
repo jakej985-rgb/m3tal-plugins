@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>M3TAL Compose Editor</title>
+  <style>
+    :root {
+      --bg-dark: #0d1117;
+      --bg-card: #161b22;
+      --border: #30363d;
+      --text-main: #c9d1d9;
+      --text-muted: #8b949e;
+      --emerald: #10b981;
+      --emerald-dark: #065f46;
+      --cyan: #06b6d4;
+      --amber: #f59e0b;
+      --rose: #f43f5e;
+      --editor-bg: #090d13;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    body { background-color: var(--bg-dark); color: var(--text-main); height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+
+    /* Top Bar */
+    header {
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand h1 { font-size: 1.1rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 8px; }
+    .badge { background: #21262d; color: var(--cyan); font-size: 0.75rem; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); font-family: monospace; }
+    
+    .metrics { display: flex; gap: 16px; }
+    .metric-pill { background: #21262d; border: 1px solid var(--border); border-radius: 8px; padding: 6px 14px; display: flex; align-items: center; gap: 8px; font-size: 0.8rem; }
+    .metric-val { font-weight: 700; color: #fff; }
+
+    /* Main Container */
+    .workspace { display: flex; flex: 1; overflow: hidden; }
+
+    /* Sidebar - Stacks List */
+    .sidebar {
+      width: 260px;
+      background: var(--bg-card);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+    }
+    .sidebar-header {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .sidebar-title { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); font-weight: 700; }
+    .btn-new { background: var(--emerald-dark); color: #fff; border: 1px solid var(--emerald); border-radius: 6px; padding: 4px 10px; font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: 0.2s; }
+    .btn-new:hover { background: var(--emerald); color: #000; }
+
+    .stack-list { overflow-y: auto; flex: 1; padding: 8px; display: flex; flex-direction: column; gap: 4px; }
+    .stack-item {
+      padding: 10px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: background 0.15s;
+      border: 1px solid transparent;
+    }
+    .stack-item:hover { background: #21262d; }
+    .stack-item.active { background: #21262d; border-color: var(--emerald); }
+    .stack-name { font-size: 0.85rem; font-weight: 600; color: #fff; display: flex; align-items: center; gap: 6px; }
+    .stack-status-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .dot-running { background: var(--emerald); box-shadow: 0 0 6px var(--emerald); }
+    .dot-stopped { background: var(--rose); }
+
+    /* Editor Area */
+    .editor-pane { flex: 1; display: flex; flex-direction: column; background: var(--editor-bg); overflow: hidden; }
+
+    /* Action Toolbar */
+    .toolbar {
+      background: #161b22;
+      border-bottom: 1px solid var(--border);
+      padding: 8px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+    .toolbar-left, .toolbar-right { display: flex; align-items: center; gap: 8px; }
+    .tool-btn {
+      background: #21262d;
+      color: #fff;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: 0.15s;
+    }
+    .tool-btn:hover { background: #30363d; border-color: #8b949e; }
+    .btn-deploy { background: var(--emerald-dark); border-color: var(--emerald); }
+    .btn-deploy:hover { background: var(--emerald); color: #000; }
+    .btn-stop { background: rgba(244, 63, 94, 0.2); border-color: var(--rose); color: #fca5a5; }
+    .btn-stop:hover { background: var(--rose); color: #fff; }
+
+    /* Dual Panes: Visual & Code */
+    .content-split { display: flex; flex: 1; overflow: hidden; }
+    
+    /* Code Pane */
+    .code-container { flex: 1; display: flex; flex-direction: column; border-right: 1px solid var(--border); }
+    .code-editor {
+      flex: 1;
+      background: var(--editor-bg);
+      color: #7ee787;
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 0.88rem;
+      line-height: 1.5;
+      padding: 16px;
+      border: none;
+      resize: none;
+      outline: none;
+      white-space: pre;
+      overflow: auto;
+    }
+
+    /* Visual Pane */
+    .visual-container {
+      width: 420px;
+      background: var(--bg-card);
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .visual-header { font-size: 0.85rem; font-weight: 700; color: #fff; display: flex; justify-content: space-between; align-items: center; }
+    .service-card {
+      background: #0d1117;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .service-title { font-size: 0.85rem; font-weight: 700; color: var(--cyan); display: flex; justify-content: space-between; }
+    .service-prop { font-size: 0.75rem; color: var(--text-muted); display: flex; justify-content: space-between; }
+    .service-prop span:last-child { color: #fff; font-family: monospace; }
+
+    /* Console Drawer */
+    .console-drawer {
+      height: 180px;
+      background: #06090f;
+      border-top: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+    }
+    .console-header {
+      background: #161b22;
+      padding: 6px 14px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+    }
+    .console-logs {
+      flex: 1;
+      padding: 10px 14px;
+      overflow-y: auto;
+      font-family: monospace;
+      font-size: 0.8rem;
+      color: #58a6ff;
+      white-space: pre-wrap;
+    }
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: var(--bg-card);
+      border: 1px solid var(--emerald);
+      color: #fff;
+      padding: 10px 16px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      display: none;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+      z-index: 100;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Navigation Header -->
+  <header>
+    <div class="brand">
+      <h1>📝 Compose Editor</h1>
+      <span class="badge">v0.1.0</span>
+      <span class="badge" id="categoryBadge">Containers / Compose</span>
+    </div>
+    <div class="metrics">
+      <div class="metric-pill">
+        <span>Active Stacks:</span>
+        <span class="metric-val" id="metricRunningStacks">0</span>
+        <span style="color: var(--text-muted);">/</span>
+        <span class="metric-val" id="metricTotalStacks">0</span>
+      </div>
+      <div class="metric-pill">
+        <span>Total Services:</span>
+        <span class="metric-val" id="metricTotalServices">0</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Workspace Container -->
+  <div class="workspace">
+    <!-- Sidebar: Stacks -->
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <span class="sidebar-title">Compose Projects</span>
+        <button class="btn-new" onclick="createNewStack()">+ New Stack</button>
+      </div>
+      <div class="stack-list" id="stackList">
+        <div style="padding: 12px; font-size: 0.8rem; color: var(--text-muted);">Loading stacks...</div>
+      </div>
+    </div>
+
+    <!-- Main Editor Pane -->
+    <div class="editor-pane">
+      <!-- Action Toolbar -->
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <button class="tool-btn btn-deploy" onclick="triggerAction('compose_up')">🚀 Deploy (up -d)</button>
+          <button class="tool-btn btn-stop" onclick="triggerAction('compose_down')">🛑 Stop (down)</button>
+          <button class="tool-btn" onclick="triggerAction('compose_restart')">🔄 Restart</button>
+          <button class="tool-btn" onclick="triggerAction('save_stack')">💾 Save</button>
+          <button class="tool-btn" onclick="triggerAction('validate_yaml')">🔍 Validate</button>
+        </div>
+        <div class="toolbar-right">
+          <button class="tool-btn" onclick="fetchLogs()">📋 Tail Logs</button>
+        </div>
+      </div>
+
+      <!-- Content Split: YAML + Visual Cards -->
+      <div class="content-split">
+        <div class="code-container">
+          <textarea class="code-editor" id="yamlEditor" spellcheck="false" oninput="onYamlEdited()"></textarea>
+        </div>
+        <div class="visual-container">
+          <div class="visual-header">
+            <span>Discovered Services</span>
+            <button class="btn-new" onclick="addSampleService()">+ Add Service</button>
+          </div>
+          <div id="serviceCards" style="display: flex; flex-direction: column; gap: 8px;">
+            <!-- Rendered service cards -->
+          </div>
+        </div>
+      </div>
+
+      <!-- Execution Console Drawer -->
+      <div class="console-drawer">
+        <div class="console-header">
+          <span>Execution Output & Service Logs</span>
+          <button style="background: none; border: none; color: var(--text-muted); cursor: pointer;" onclick="clearLogs()">Clear</button>
+        </div>
+        <div class="console-logs" id="consoleLogs">Ready. Select a stack or deploy to inspect execution telemetry.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    let activeToken = "";
+    let activeStack = null;
+    let currentStacks = [];
+
+    function getToken() {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('token')) return params.get('token');
+      try {
+        if (window.parent && window.parent.localStorage) {
+          const t = window.parent.localStorage.getItem('m3tal_token');
+          if (t) return t;
+        }
+      } catch (e) {}
+      return localStorage.getItem('m3tal_token') || 'change_me_api_token';
+    }
+
+    activeToken = getToken();
+
+    async function fetchStacks() {
+      try {
+        const res = await fetch('/api/v2/plugins/compose/collect', {
+          headers: {
+            'X-API-Token': activeToken,
+            'Authorization': `Bearer ${activeToken}`
+          }
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        
+        if (data.result && data.result.stacks) {
+          currentStacks = data.result.stacks;
+          renderMetrics(data.result.metrics);
+          renderStackList(currentStacks);
+          if (!activeStack && currentStacks.length > 0) {
+            selectStack(currentStacks[0].name);
+          }
+        }
+      } catch (err) {
+        logConsole(`Failed to fetch compose telemetry: ${err.message}`);
+      }
+    }
+
+    function renderMetrics(metrics) {
+      if (!metrics) return;
+      metrics.forEach(m => {
+        if (m.name === 'stacks_total') document.getElementById('metricTotalStacks').textContent = m.value;
+        if (m.name === 'stacks_running') document.getElementById('metricRunningStacks').textContent = m.value;
+        if (m.name === 'services_total') document.getElementById('metricTotalServices').textContent = m.value;
+      });
+    }
+
+    function renderStackList(stacks) {
+      const container = document.getElementById('stackList');
+      container.innerHTML = '';
+      stacks.forEach(s => {
+        const item = document.createElement('div');
+        item.className = `stack-item ${activeStack === s.name ? 'active' : ''}`;
+        item.onclick = () => selectStack(s.name);
+        
+        const isRunning = s.status === 'running';
+        item.innerHTML = `
+          <div class="stack-name">
+            <span class="stack-status-dot ${isRunning ? 'dot-running' : 'dot-stopped'}"></span>
+            <span>${s.name}</span>
+          </div>
+          <span style="font-size: 0.7rem; color: var(--text-muted);">${s.services_count} svcs</span>
+        `;
+        container.appendChild(item);
+      });
+    }
+
+    function selectStack(name) {
+      activeStack = name;
+      renderStackList(currentStacks);
+      const stack = currentStacks.find(s => s.name === name);
+      if (stack && stack.yaml_content) {
+        document.getElementById('yamlEditor').value = stack.yaml_content;
+        renderServiceCards(stack.services);
+      }
+    }
+
+    function renderServiceCards(services) {
+      const container = document.getElementById('serviceCards');
+      container.innerHTML = '';
+      if (!services || services.length === 0) {
+        container.innerHTML = '<div style="font-size: 0.75rem; color: var(--text-muted);">No services declared.</div>';
+        return;
+      }
+      services.forEach(svc => {
+        const card = document.createElement('div');
+        card.className = 'service-card';
+        card.innerHTML = `
+          <div class="service-title">
+            <span>📦 ${svc}</span>
+            <span style="font-size: 0.7rem; color: var(--emerald);">active</span>
+          </div>
+          <div class="service-prop">
+            <span>Type</span>
+            <span>container</span>
+          </div>
+          <div class="service-prop">
+            <span>Restart</span>
+            <span>unless-stopped</span>
+          </div>
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    function onYamlEdited() {
+      // Light re-parsing
+      const content = document.getElementById('yamlEditor').value;
+      const svcs = [];
+      const lines = content.split('\n');
+      let inSvc = false;
+      for (const line of lines) {
+        if (line.trim() === 'services:') { inSvc = true; continue; }
+        if (inSvc && line.startsWith('  ') && !line.startsWith('   ')) {
+          const parts = line.trim().split(':');
+          if (parts[0] && !parts[0].startsWith('#')) svcs.push(parts[0]);
+        }
+      }
+      renderServiceCards(svcs);
+    }
+
+    async function triggerAction(actionId) {
+      if (!activeStack) {
+        showToast('Please select a stack first');
+        return;
+      }
+      const content = document.getElementById('yamlEditor').value;
+      logConsole(`Executing action '${actionId}' on stack '${activeStack}'...`);
+
+      try {
+        const res = await fetch('/api/v2/plugins/compose/action', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-API-Token': activeToken,
+            'Authorization': `Bearer ${activeToken}`
+          },
+          body: JSON.stringify({
+            action_id: actionId,
+            stack: activeStack,
+            content: content
+          })
+        });
+        const data = await res.json();
+        if (data.result && (data.result.message || data.result.success)) {
+          showToast(data.result.message || `Action ${actionId} succeeded`);
+          logConsole(data.result.message || `[SUCCESS] ${actionId}`);
+          fetchStacks();
+        } else if (data.error) {
+          logConsole(`[ERROR] ${data.error.message}: ${data.error.data || ''}`);
+          showToast(`Error: ${data.error.message}`);
+        }
+      } catch (err) {
+        logConsole(`Network error: ${err.message}`);
+      }
+    }
+
+    async function fetchLogs() {
+      if (!activeStack) return;
+      logConsole(`Fetching logs for '${activeStack}'...`);
+      try {
+        const res = await fetch('/api/v2/plugins/compose/action', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-API-Token': activeToken,
+            'Authorization': `Bearer ${activeToken}`
+          },
+          body: JSON.stringify({
+            action_id: 'get_logs',
+            stack: activeStack,
+            lines: 100
+          })
+        });
+        const data = await res.json();
+        if (data.result && data.result.logs) {
+          logConsole(data.result.logs);
+        }
+      } catch (err) {
+        logConsole(`Failed to fetch logs: ${err.message}`);
+      }
+    }
+
+    function createNewStack() {
+      const name = prompt('Enter new stack name (e.g. database-stack):');
+      if (!name) return;
+      const initialYaml = `services:\n  app:\n    image: nginx:alpine\n    ports:\n      - "8080:80"\n    restart: unless-stopped\n`;
+      currentStacks.push({
+        name: name,
+        services: ['app'],
+        services_count: 1,
+        running_count: 0,
+        status: 'stopped',
+        yaml_content: initialYaml
+      });
+      selectStack(name);
+      triggerAction('save_stack');
+    }
+
+    function addSampleService() {
+      const svcName = prompt('Enter service name (e.g. redis, cache, web):');
+      if (!svcName) return;
+      const editor = document.getElementById('yamlEditor');
+      editor.value += `\n  ${svcName}:\n    image: redis:7-alpine\n    restart: unless-stopped\n`;
+      onYamlEdited();
+      showToast(`Added service ${svcName}`);
+    }
+
+    function logConsole(msg) {
+      const el = document.getElementById('consoleLogs');
+      el.textContent = `[${new Date().toLocaleTimeString()}] ${msg}\n` + el.textContent;
+    }
+
+    function clearLogs() {
+      document.getElementById('consoleLogs').textContent = 'Console cleared.';
+    }
+
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.style.display = 'block';
+      setTimeout(() => { t.style.display = 'none'; }, 3000);
+    }
+
+    // Initialize
+    fetchStacks();
+    setInterval(fetchStacks, 10000);
+  </script>
+</body>
+</html>

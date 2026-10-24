@@ -14,8 +14,9 @@ All plugins strictly adhere to the **M3TAL Plugin Standardization Specification*
 
 | Folder Name | Title | Category | Canonical Process | Debian Package | Status | Short Description |
 |---|---|---|---|---|---|---|
-| [`m3tal-docker`](./m3tal-docker/) | **Containers** | Container Management | `m3tal-docker` | `m3tal-plugin-docker-monitor` | 🟢 Available | Docker fleet monitor, live log inspector, lifecycle controls, image pruning. |
-| [`m3tal-stacks`](./m3tal-stacks/) | **Compose Stacks** | Compose Orchestration | `m3tal-stacks` | `m3tal-plugin-stacks` | 🟡 Planned | Multi-service compose orchestration, dependency health checks, lifecycle deployment. |
+| [`m3tal-docker`](./m3tal-docker/) | **Containers** | Container Fleet | `m3tal-docker` | `m3tal-plugin-docker-monitor` | 🟢 Available | Docker fleet monitor, live log inspector, lifecycle controls, image pruning. |
+| [`m3tal-compose`](./m3tal-compose/) | **Compose Editor** | Container Management | `m3tal-compose` | `m3tal-plugin-compose` | 🟡 Developing | Visual & YAML Compose editor, live syntax validator, stack deployer (`up`/`down`). |
+| [`m3tal-stacks`](./m3tal-stacks/) | **Compose Template DB** | App Store & Hub | `m3tal-stacks` | `m3tal-plugin-stacks` | 🟡 Planned | Curated database of verified Docker Compose templates, argument presets, and 1-click apps. |
 | [`m3tal-ai`](./m3tal-ai/) | **Local AI & LLM** | Local AI & LLM | `m3tal-ai` | `m3tal-plugin-ai` | 🟡 Planned | Local LLM inference manager (Ollama, vLLM), GPU VRAM stats, job queue. |
 | [`m3tal-smart`](./m3tal-smart/) | **Smart Disk Telemetry** | Hardware Diagnostics | `m3tal-smart` | `m3tal-plugin-smart` | 🟡 Planned | Drive health telemetry, NVMe wear life, S.M.A.R.T. self-tests, thermal history. |
 | [`m3tal-traefik`](./m3tal-traefik/) | **Traefik Gateway** | Networking & Proxy | `m3tal-traefik` | `m3tal-plugin-traefik` | 🟡 Planned | Traefik v3 reverse proxy, automated Let's Encrypt SSL/TLS, dynamic routing. |
@@ -31,9 +32,9 @@ All plugins strictly adhere to the **M3TAL Plugin Standardization Specification*
 - **Directory**: `m3tal-docker/`
 - **Process Identity**: `m3tal-docker`
 - **Debian Package**: `m3tal-plugin-docker-monitor`
-- **Dashboard Mount**: `/containers` (`/plugins/m3tal-docker/`)
+- **Dashboard Mount**: `/containers` (`/plugins/m3tal-docker/`) — Sub-Tab: `Containers Fleet`
 - **Capabilities**: `collector`, `actions`, `ui_view`, `websocket_stream`
-- **Status**: 🟢 **Available (v0.1.1)**
+- **Status**: 🟢 **Available (v0.2.1)**
 - **What it does**:
   Provides complete, real-time Docker container fleet monitoring and lifecycle management. Discovers all running, stopped, and paused containers directly through `/var/run/docker.sock`. Operators can inspect container stdout/stderr log streams live, view CPU/RAM/network usage metrics, trigger container actions (`start`, `stop`, `restart`, `remove`), and reclaim drive space with one-click unused image and builder cache pruning.
 - **Install Command**:
@@ -43,15 +44,31 @@ All plugins strictly adhere to the **M3TAL Plugin Standardization Specification*
 
 ---
 
-### 📦 [`m3tal-stacks`](./m3tal-stacks/) — Docker Compose Stack Orchestrator
+### 📝 [`m3tal-compose`](./m3tal-compose/) — Docker Compose Editor & Stack Manager
+- **Directory**: `m3tal-compose/`
+- **Process Identity**: `m3tal-compose`
+- **Debian Package**: `m3tal-plugin-compose`
+- **Dashboard Mount**: `/containers` (`/plugins/m3tal-compose/`) — Sub-Tab: `Compose Editor`
+- **Capabilities**: `collector`, `actions`, `ui_view`
+- **Status**: 🟡 **Developing (v0.1.0)**
+- **What it does**:
+  Visual and YAML editor for Docker Compose projects (`docker-compose.yml`, `compose.yaml`). Provides syntax validation, visual service creator, environment variable (`.env`) manager, and direct stack lifecycle actions (`compose up -d`, `compose down`, `compose restart`, `compose pull`, `compose logs`).
+- **Install Command**:
+  ```bash
+  sudo apt install -y m3tal-plugin-compose
+  ```
+
+---
+
+### 📚 [`m3tal-stacks`](./m3tal-stacks/) — Docker Compose Template Database & Hub
 - **Directory**: `m3tal-stacks/`
 - **Process Identity**: `m3tal-stacks`
 - **Debian Package**: `m3tal-plugin-stacks`
-- **Dashboard Mount**: `/stacks`
-- **Capabilities**: `orchestrator`, `actions`, `ui_view`
+- **Dashboard Mount**: `/stacks` / `/containers`
+- **Capabilities**: `collector`, `actions`, `ui_view`
 - **Status**: 🟡 **Planned**
 - **What it does**:
-  Orchestrates multi-service Compose applications. Parses standard `docker-compose.yml` configurations, validates service dependency DAGs (`depends_on`), manages per-stack `.env` secrets, monitors inter-service network health, and performs rolling updates or full stack deployments.
+  Curated database and template store of verified, production-ready Docker Compose definitions and argument presets (Nextcloud, Plex, Vaultwarden, Pi-hole, WireGuard, Traefik, PostgreSQL, Redis, etc.). Allows operators to browse community stacks, inspect required ports/volumes/environment variables, and export definitions directly into `m3tal-compose` for instant deployment.
 - **Install Command**:
   ```bash
   sudo apt install -y m3tal-plugin-stacks

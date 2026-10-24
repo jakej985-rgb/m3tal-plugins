@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "M3TAL Compose Editor Configuration",
+  "type": "object",
+  "properties": {
+    "compose_dir": {
+      "type": "string",
+      "default": "/etc/m3tal/compose",
+      "description": "Base directory for storing docker-compose stack definitions."
+    },
+    "auto_pull": {
+      "type": "boolean",
+      "default": true,
+      "description": "Automatically pull newer container images when deploying stacks."
+    },
+    "backup_on_save": {
+      "type": "boolean",
+      "default": true,
+      "description": "Keep a .bak backup file when saving modified docker-compose.yml files."
+    }
+  },
+  "additionalProperties": false
+}

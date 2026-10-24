@@ -1,0 +1,28 @@
+# Changelog
+
+All notable changes to the **Compose Editor** (`m3tal-compose`) plugin for M3TAL Core will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+---
+
+## [0.1.0] - 2026-10-24
+
+### Overview & Highlights
+Initial release of the standardized Docker Compose Editor & Stack Manager plugin (`m3tal-compose`) for M3TAL Core. Provides visual/YAML editing, syntax verification, and stack lifecycle deployment controls.
+
+### 🚀 Capabilities & Features
+- **JSON-RPC 2.0 Engine**: Standard stdio event loop responding to `m3tal.init`, `m3tal.collect`, `m3tal.action`, and `m3tal.shutdown`.
+- **Canonical Process Identity**: Executes with `prctl(PR_SET_NAME, "m3tal-compose")` and compiled to `bin/m3tal-compose` for direct host execution without `/tmp` symlinks.
+- **Compose Stack Management**:
+  - `compose_up`: Deploys stacks in detached mode (`docker compose up -d`).
+  - `compose_down`: Shuts down active stack services and networks.
+  - `compose_restart`: Restarts all stack services.
+  - `save_stack`: Writes validated YAML to disk.
+  - `validate_yaml`: Validates Compose schema syntax before deployment.
+- **Dynamic Micro-Frontend (`ui/dist/index.html`)**:
+  - Dark-mode syntax-highlighted YAML editor and service visualizer.
+  - Quick action toolbar (`Deploy`, `Stop`, `Restart`, `Validate`, `Logs`).
+  - Terminal log drawer for live deployment output.
+- **Debian Packaging**: Automated Debian `.deb` packaging via `scripts/build-plugin-deb.sh`.

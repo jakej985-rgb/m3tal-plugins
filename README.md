@@ -22,7 +22,8 @@ For full profiles, capabilities, and detailed documentation on every plugin, con
 | Plugin Folder | Title | Canonical Process | Debian Package | Status | What it does |
 |---|---|---|---|---|---|
 | [`m3tal-docker`](./m3tal-docker/) | **Containers** | `m3tal-docker` | `m3tal-plugin-docker-monitor` | 🟢 Available | Docker fleet monitor, log inspector, lifecycle controls, image pruning. |
-| [`m3tal-stacks`](./m3tal-stacks/) | **Compose Stacks** | `m3tal-stacks` | `m3tal-plugin-stacks` | 🟡 Planned | Multi-service compose stack orchestration, health checks, lifecycle deployment. |
+| [`m3tal-compose`](./m3tal-compose/) | **Compose Editor** | `m3tal-compose` | `m3tal-plugin-compose` | 🟡 Developing | Visual & YAML Compose editor, live syntax validator, stack deployer (`up`/`down`). |
+| [`m3tal-stacks`](./m3tal-stacks/) | **Compose Template DB** | `m3tal-stacks` | `m3tal-plugin-stacks` | 🟡 Planned | Curated database of verified Docker Compose templates, argument presets, 1-click apps. |
 | [`m3tal-ai`](./m3tal-ai/) | **Local AI & LLM** | `m3tal-ai` | `m3tal-plugin-ai` | 🟡 Planned | Local LLM inference manager (Ollama, vLLM), GPU VRAM stats, job queue. |
 | [`m3tal-smart`](./m3tal-smart/) | **Smart Disk Telemetry** | `m3tal-smart` | `m3tal-plugin-smart` | 🟡 Planned | Drive health telemetry, NVMe wear life, S.M.A.R.T. self-tests, temperature history. |
 | [`m3tal-traefik`](./m3tal-traefik/) | **Traefik Gateway** | `m3tal-traefik` | `m3tal-plugin-traefik` | 🟡 Planned | Traefik v3 reverse proxy, automated Let's Encrypt SSL/TLS, dynamic routing. |
