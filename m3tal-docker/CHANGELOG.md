@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.2] - 2026-10-24
 
 ### 🚀 Changes & Improvements
+- **refactor(layout): standardize directory structure to `m3tal-docker`**: Migrated repository directory layout to canonical `m3tal-<name>` naming scheme.
+- **feat(ui): dynamic standalone micro-frontend**: Enhanced `ui/dist/index.html` to live-poll M3TAL Core API (`/api/v2/plugins/docker-monitor/collect`), render real-time container metrics cards and status table, trigger lifecycle actions (`start`, `stop`, `restart`), and view logs.
+- **build(go): update Go module path**: Updated module definition in `src/go.mod` to `github.com/jakej985-rgb/m3tal-plugins/m3tal-docker`.
 - **refactor(docker-monitor): purge legacy tui_widget and m3tal.render handler** (`be7e866`)
 
 ---

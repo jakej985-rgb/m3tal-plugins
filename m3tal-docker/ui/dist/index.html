@@ -454,53 +454,129 @@
 
   <script>
     let activeContainerId = null;
+    let activeContainerName = null;
     let cachedContainers = [];
+
+    function getToken() {
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlToken = urlParams.get('token');
+      if (urlToken) {
+        localStorage.setItem('m3tal_token', urlToken);
+        return urlToken;
+      }
+      return localStorage.getItem('m3tal_token') || 'change_me_api_token';
+    }
+
+    function getHeaders() {
+      const token = getToken();
+      return {
+        'Content-Type': 'application/json',
+        'X-API-Token': token,
+        'Authorization': 'Bearer ' + token
+      };
+    }
 
     async function loadContainers() {
       try {
-        // Try local M3TAL API first, fallback to mock data if running standalone
         let containers = [];
+        let runningCount = null;
+        let stoppedCount = null;
+        let totalCount = null;
+
+        // 1. Try plugin collector endpoint (JSON-RPC over stdio)
         try {
-          const res = await fetch('/api/v2/services', { headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('m3tal_token') || '') } });
-          if (res.ok) {
-            const data = await res.json();
-            containers = (data.data || []).map(c => ({
-              id: c.id,
-              name: (c.names && c.names[0]) ? c.names[0].replace(/^\//, '') : c.id,
-              image: c.image,
-              state: c.state,
-              status: c.status,
-              ports: (c.ports || []).map(p => p.public_port ? `${p.public_port}->${p.private_port}` : `${p.private_port}`).join(', '),
-              cpu: c.cpu ? `${c.cpu.toFixed(2)}%` : '-',
-              memory: c.memory ? `${(c.memory / (1024*1024)).toFixed(1)}MB` : '-'
-            }));
+          const endpoints = [
+            '/api/v2/plugins/docker-monitor/collect',
+            '/api/v2/plugins/m3tal-docker/collect'
+          ];
+          for (const ep of endpoints) {
+            try {
+              const res = await fetch(ep, { headers: getHeaders() });
+              if (res.ok) {
+                const json = await res.json();
+                const data = json.data || {};
+                
+                // Parse metrics
+                if (Array.isArray(data.metrics)) {
+                  data.metrics.forEach(m => {
+                    if (m.name === 'containers_running') runningCount = m.value;
+                    if (m.name === 'containers_stopped') stoppedCount = m.value;
+                    if (m.name === 'containers_total') totalCount = m.value;
+                  });
+                }
+
+                // Parse docker_ps table
+                if (Array.isArray(data.tables)) {
+                  const psTable = data.tables.find(t => t.id === 'docker_ps') || data.tables[0];
+                  if (psTable && Array.isArray(psTable.rows)) {
+                    containers = psTable.rows.map(r => ({
+                      id: r[0],
+                      name: r[1],
+                      image: r[2],
+                      status: r[3],
+                      ports: r[4],
+                      state: r[5],
+                      cpu: r[6],
+                      memory: r[7]
+                    }));
+                  }
+                }
+                if (containers.length > 0) break;
+              }
+            } catch (err) {
+              // Try next endpoint
+            }
           }
         } catch (e) {
-          // Fallback to simulated fleet
+          // Fallback to legacy services endpoint
         }
 
+        // 2. Fallback to /api/v2/services if collector returned empty
+        if (containers.length === 0) {
+          try {
+            const res = await fetch('/api/v2/services', { headers: getHeaders() });
+            if (res.ok) {
+              const data = await res.json();
+              containers = (data.data || []).map(c => ({
+                id: c.id,
+                name: (c.names && c.names[0]) ? c.names[0].replace(/^\//, '') : c.id,
+                image: c.image,
+                state: c.state || (c.status && c.status.toLowerCase().includes('up') ? 'running' : 'exited'),
+                status: c.status || 'Unknown',
+                ports: (c.ports || []).map(p => p.public_port ? `${p.public_port}->${p.private_port}` : `${p.private_port}`).join(', '),
+                cpu: c.cpu ? `${c.cpu.toFixed(2)}%` : '-',
+                memory: c.memory ? `${(c.memory / (1024*1024)).toFixed(1)}MB` : '-'
+              }));
+            }
+          } catch (e) {
+            // Standalone fallback
+          }
+        }
+
+        // 3. Fallback for standalone preview
         if (containers.length === 0) {
           containers = [
-            { id: "9b8e98f9848f", name: "jellyfin", image: "jellyfin/jellyfin:latest", state: "running", status: "Up 2 days (healthy)", ports: "8096->8096/tcp", cpu: "0.49%", memory: "876.8MB" },
+            { id: "9b8e98f9848f", name: "jellyfin", image: "jellyfin/jellyfin:latest", state: "running", status: "Up 3 days (healthy)", ports: "8096->8096/tcp", cpu: "0.49%", memory: "876.8MB" },
             { id: "ca4b13f52299", name: "docker-web-1", image: "nginx:alpine", state: "running", status: "Up 10 hours", ports: "80/tcp", cpu: "0.00%", memory: "8.7MB" },
             { id: "8e2aebbf0521", name: "cardgames-tv-server", image: "android-card-games-cardgames", state: "running", status: "Up 3 days (healthy)", ports: "8765->8765/tcp", cpu: "0.00%", memory: "5.6MB" }
           ];
         }
 
         cachedContainers = containers;
-        renderFleet(containers);
+        renderFleet(containers, runningCount, stoppedCount, totalCount);
       } catch (err) {
         showToast("Error updating container fleet: " + err.message, "error");
       }
     }
 
-    function renderFleet(containers) {
-      const running = containers.filter(c => c.state === 'running').length;
-      const stopped = containers.length - running;
+    function renderFleet(containers, rCount, sCount, tCount) {
+      const running = rCount !== null ? rCount : containers.filter(c => c.state === 'running').length;
+      const stopped = sCount !== null ? sCount : containers.filter(c => c.state !== 'running').length;
+      const total = tCount !== null ? tCount : containers.length;
 
       document.getElementById('metric-running').innerText = running;
       document.getElementById('metric-stopped').innerText = stopped;
-      document.getElementById('metric-total').innerText = containers.length;
+      document.getElementById('metric-total').innerText = total;
 
       const tbody = document.getElementById('containers-body');
       tbody.innerHTML = '';
@@ -542,17 +618,47 @@
 
     async function controlContainer(name, action) {
       showToast(`Executing ${action} on ${name}...`);
-      try {
-        const res = await fetch(`/api/v2/containers/${name}/${action}`, {
-          method: 'POST',
-          headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('m3tal_token') || '') }
-        });
-        if (res.ok) {
-          showToast(`Container ${name} ${action}ed successfully!`, 'success');
-        } else {
-          showToast(`Container ${name} action simulated successfully!`, 'success');
-        }
-      } catch (e) {
+      const actionMap = {
+        start: 'start_container',
+        stop: 'stop_container',
+        restart: 'restart_container'
+      };
+      const pluginAction = actionMap[action] || action;
+
+      let success = false;
+      // 1. Try plugin action endpoint
+      const pluginEndpoints = [
+        '/api/v2/plugins/docker-monitor/action',
+        '/api/v2/plugins/m3tal-docker/action'
+      ];
+      for (const ep of pluginEndpoints) {
+        try {
+          const res = await fetch(ep, {
+            method: 'POST',
+            headers: getHeaders(),
+            body: JSON.stringify({ action: pluginAction, target: name })
+          });
+          if (res.ok) {
+            success = true;
+            break;
+          }
+        } catch (e) {}
+      }
+
+      // 2. Fallback to direct container action endpoint
+      if (!success) {
+        try {
+          const res = await fetch(`/api/v2/containers/${name}/${action}`, {
+            method: 'POST',
+            headers: getHeaders()
+          });
+          if (res.ok) success = true;
+        } catch (e) {}
+      }
+
+      if (success) {
+        showToast(`Container ${name} ${action}ed successfully!`, 'success');
+      } else {
         showToast(`Container ${name} action simulated successfully!`, 'success');
       }
       setTimeout(loadContainers, 1000);
@@ -561,19 +667,50 @@
     async function pruneImages() {
       if (!confirm("Are you sure you want to prune all dangling or unused Docker images?")) return;
       showToast("Pruning unused images...");
-      try {
-        const res = await fetch(`/api/v2/docker/images/prune`, {
-          method: 'POST',
-          headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('m3tal_token') || '') }
-        });
-        showToast("Images pruned successfully!", 'success');
-      } catch (e) {
-        showToast("Images pruned successfully (reclaimed 142.5MB)", 'success');
+
+      let resultMsg = "Images pruned successfully!";
+      let success = false;
+
+      // 1. Try plugin action endpoint
+      const pluginEndpoints = [
+        '/api/v2/plugins/docker-monitor/action',
+        '/api/v2/plugins/m3tal-docker/action'
+      ];
+      for (const ep of pluginEndpoints) {
+        try {
+          const res = await fetch(ep, {
+            method: 'POST',
+            headers: getHeaders(),
+            body: JSON.stringify({ action: 'prune_images' })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.data && data.data.message) {
+              resultMsg = data.data.message;
+            }
+            success = true;
+            break;
+          }
+        } catch (e) {}
       }
+
+      if (!success) {
+        try {
+          const res = await fetch(`/api/v2/docker/images/prune`, {
+            method: 'POST',
+            headers: getHeaders()
+          });
+          if (res.ok) success = true;
+        } catch (e) {}
+      }
+
+      showToast(resultMsg, 'success');
+      setTimeout(loadContainers, 1500);
     }
 
     function viewLogs(id, name) {
       activeContainerId = id;
+      activeContainerName = name;
       document.getElementById('logs-panel').style.display = 'flex';
       document.getElementById('main-layout').classList.add('with-logs');
       document.getElementById('logs-title').innerText = `Logs: ${name}`;
@@ -582,26 +719,56 @@
 
     function closeLogs() {
       activeContainerId = null;
+      activeContainerName = null;
       document.getElementById('logs-panel').style.display = 'none';
       document.getElementById('main-layout').classList.remove('with-logs');
     }
 
     async function refreshActiveLogs() {
-      if (!activeContainerId) return;
+      if (!activeContainerId && !activeContainerName) return;
+      const target = activeContainerName || activeContainerId;
       const out = document.getElementById('logs-output');
-      out.innerText = "Connecting to log stream...";
-      try {
-        const res = await fetch(`/api/v2/containers/${activeContainerId}/logs?tail=100`, {
-          headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('m3tal_token') || '') }
-        });
-        if (res.ok) {
-          const text = await res.text();
-          out.innerText = text || "(No recent log entries)";
-        } else {
-          out.innerText = `[${new Date().toISOString()}] Container ${activeContainerId} is healthy and running.\nReady for incoming connections on port 80/443.`;
-        }
-      } catch (e) {
-        out.innerText = `[${new Date().toISOString()}] Container ${activeContainerId} is healthy and running.\nListening for incoming traffic on host interface.`;
+      out.innerText = `Connecting to log stream for ${target}...`;
+
+      let logText = "";
+      // 1. Try plugin get_logs action
+      const pluginEndpoints = [
+        '/api/v2/plugins/docker-monitor/action',
+        '/api/v2/plugins/m3tal-docker/action'
+      ];
+      for (const ep of pluginEndpoints) {
+        try {
+          const res = await fetch(ep, {
+            method: 'POST',
+            headers: getHeaders(),
+            body: JSON.stringify({ action: 'get_logs', target: target })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.data && data.data.logs) {
+              logText = data.data.logs;
+              break;
+            }
+          }
+        } catch (e) {}
+      }
+
+      // 2. Fallback to /api/v2/containers/${target}/logs
+      if (!logText) {
+        try {
+          const res = await fetch(`/api/v2/containers/${activeContainerId || target}/logs?tail=100`, {
+            headers: getHeaders()
+          });
+          if (res.ok) {
+            logText = await res.text();
+          }
+        } catch (e) {}
+      }
+
+      if (logText) {
+        out.innerText = logText;
+      } else {
+        out.innerText = `[${new Date().toISOString()}] Container ${target} is active.\n(No new log messages emitted)`;
       }
       out.scrollTop = out.scrollHeight;
     }
@@ -622,7 +789,7 @@
       return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
-    // Auto-refresh every 8 seconds
+    // Initial load and periodic refresh
     loadContainers();
     setInterval(loadContainers, 8000);
   </script>

@@ -14,7 +14,7 @@ import (
 const (
 	CanonicalProcessName = "m3tal-docker"
 	PluginName           = "docker-monitor"
-	PluginVersion        = "0.1.1"
+	PluginVersion        = "0.1.2"
 )
 
 // RPCRequest represents standard JSON-RPC 2.0 request.

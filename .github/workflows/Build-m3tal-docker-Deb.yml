@@ -1,11 +1,11 @@
-name: Build docker-monitor DEB
+name: Build m3tal-docker DEB
 
 on:
   push:
     branches:
       - main
     paths:
-      - 'docker-monitor/**'
+      - 'm3tal-docker/**'
   workflow_dispatch:
     inputs:
       force_bump:
@@ -48,7 +48,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends dpkg-dev apt-utils gnupg curl
           python3 -m pip install --upgrade pip pyyaml
 
-      - name: Smart Auto-Bump docker-monitor
+      - name: Smart Auto-Bump m3tal-docker
         id: bump
         run: |
           FORCE_BUMP="${{ github.event.inputs.force_bump || 'auto' }}"
@@ -56,36 +56,38 @@ jobs:
           [ -z "$BASE_REF" ] || [ "$BASE_REF" = "0000000000000000000000000000000000000000" ] && BASE_REF="HEAD~1"
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "Manual workflow dispatch for docker-monitor..."
-            ./scripts/smart-bump.py --plugin "docker-monitor" --bump-type "$FORCE_BUMP" --apply --force
+            echo "Manual workflow dispatch for m3tal-docker..."
+            ./scripts/smart-bump.py --plugin "m3tal-docker" --bump-type "$FORCE_BUMP" --apply --force
           else
-            echo "Checking if docker-monitor was modified since $BASE_REF..."
-            TOUCHED=$(./scripts/smart-bump.py --plugin "docker-monitor" --base "$BASE_REF" --list-touched)
+            echo "Checking if m3tal-docker was modified since $BASE_REF..."
+            TOUCHED=$(./scripts/smart-bump.py --plugin "m3tal-docker" --base "$BASE_REF" --list-touched)
             if [ -n "$TOUCHED" ]; then
-              ./scripts/smart-bump.py --plugin "docker-monitor" --base "$BASE_REF" --apply
+              ./scripts/smart-bump.py --plugin "m3tal-docker" --base "$BASE_REF" --apply
             else
-              echo "ℹ️ docker-monitor was not modified. Skipping build."
+              echo "ℹ️ m3tal-docker was not modified. Skipping build."
               echo "skip=true" >> $GITHUB_OUTPUT
               exit 0
             fi
           fi
 
           # Commit bumped version and changelog if updated
-          if [ -n "$(git status --porcelain docker-monitor/)" ]; then
+          if [ -n "$(git status --porcelain m3tal-docker/)" ]; then
             git config user.name "m3tal-bot"
             git config user.email "bot@m3tal.io"
-            git add docker-monitor/
-            git commit -m "chore(release): auto-bump docker-monitor version and update CHANGELOG [skip ci]" || true
+            git add m3tal-docker/
+            git commit -m "chore(release): auto-bump m3tal-docker version and update CHANGELOG [skip ci]" || true
             git push origin main || true
           fi
 
-      - name: Build and Package docker-monitor DEB
+      - name: Build and Package m3tal-docker DEB
         if: steps.bump.outputs.skip != 'true'
         run: |
           mkdir -p dist/packages
-          ./scripts/build-plugin-deb.sh docker-monitor
+          ./scripts/build-plugin-deb.sh m3tal-docker
           mv m3tal-plugin-docker-monitor*.deb dist/packages/ 2>/dev/null || true
           mv m3tal-plugin-docker-monitor*.sha256 dist/packages/ 2>/dev/null || true
+          mv m3tal-plugin-docker*.deb dist/packages/ 2>/dev/null || true
+          mv m3tal-plugin-docker*.sha256 dist/packages/ 2>/dev/null || true
           ls -la dist/packages/
 
       - name: Create / Update GitHub Release

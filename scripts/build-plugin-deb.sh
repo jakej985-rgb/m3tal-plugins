@@ -27,7 +27,36 @@ except Exception:
 [ -z "$VERSION" ] && VERSION="0.1.0"
 CLEAN_VERSION=$(echo "$VERSION" | sed 's/^v//')
 
-PKG_NAME="m3tal-plugin-$PLUGIN"
+# Extract package_name if specified, or resolve from catalog.json or folder name
+PKG_NAME=$(python3 -c "
+import yaml, json, os
+try:
+    with open('$PLUGIN_DIR/plugin.yaml') as f:
+        data = yaml.safe_load(f)
+        pkg = data.get('metadata', {}).get('package_name')
+        if pkg:
+            print(pkg)
+            exit(0)
+        root_dir = os.path.dirname(os.path.abspath('$PLUGIN_DIR'))
+        cat_file = os.path.join(root_dir, 'catalog.json')
+        if os.path.exists(cat_file):
+            with open(cat_file) as cf:
+                catalog = json.load(cf)
+                m_name = data.get('metadata', {}).get('name')
+                p_name = data.get('spec', {}).get('process_name')
+                for item in catalog:
+                    if item.get('name') in [m_name, '$PLUGIN'] or item.get('process_name') in [p_name, '$PLUGIN']:
+                        print(item.get('package_name'))
+                        exit(0)
+except Exception:
+    pass
+" 2>/dev/null)
+
+if [ -z "$PKG_NAME" ]; then
+    CLEAN_PLUGIN=$(echo "$PLUGIN" | sed 's/^m3tal-//')
+    PKG_NAME="m3tal-plugin-$CLEAN_PLUGIN"
+fi
+
 DEB_NAME="${PKG_NAME}_${CLEAN_VERSION}_amd64.deb"
 
 echo "📦 Packaging $PKG_NAME v${CLEAN_VERSION}..."
@@ -59,6 +88,22 @@ find "$STAGE_DIR" -type d -exec chmod 755 {} +
 find "$STAGE_DIR/usr/lib/m3tal/plugins/$PLUGIN" -type f -exec chmod 644 {} +
 find "$STAGE_DIR/usr/share/doc/$PKG_NAME" -type f -exec chmod 644 {} + 2>/dev/null || true
 [ -d "$STAGE_DIR/usr/lib/m3tal/plugins/$PLUGIN/bin" ] && find "$STAGE_DIR/usr/lib/m3tal/plugins/$PLUGIN/bin" -type f -exec chmod 755 {} +
+
+# Create alias symlink if metadata name differs from folder name
+ALT_NAME=$(python3 -c "
+import yaml
+try:
+    with open('$PLUGIN_DIR/plugin.yaml') as f:
+        data = yaml.safe_load(f)
+        n = data.get('metadata', {}).get('name')
+        if n and n != '$PLUGIN':
+            print(n)
+except Exception:
+    pass
+" 2>/dev/null)
+if [ -n "$ALT_NAME" ]; then
+    ln -s "$PLUGIN" "$STAGE_DIR/usr/lib/m3tal/plugins/$ALT_NAME"
+fi
 
 # Generate DEBIAN/control
 cat << EOF > "$STAGE_DIR/DEBIAN/control"
