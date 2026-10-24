@@ -14,7 +14,7 @@ import (
 const (
 	CanonicalProcessName = "m3tal-compose"
 	PluginName           = "compose"
-	PluginVersion        = "0.1.0"
+	PluginVersion        = "0.2.1"
 )
 
 // RPCRequest represents standard JSON-RPC 2.0 request.
@@ -96,12 +96,13 @@ func handleInit(req *RPCRequest) {
 		"capabilities": []string{"collector", "actions", "ui_view"},
 		"tabs": []map[string]interface{}{
 			{
-				"id":          "compose_editor",
-				"title":       "Compose Editor",
-				"category":    "containers",
-				"order":       25,
-				"shortcut":    "c",
-				"description": "Docker Compose visual editor, syntax validator, and stack lifecycle manager",
+				"id":             "compose_editor",
+				"title":          "Compose",
+				"category":       "containers",
+				"category_title": "Containers",
+				"order":          25,
+				"shortcut":       "c",
+				"description":    "Docker Compose visual editor, syntax validator, and stack lifecycle manager",
 			},
 		},
 		"actions": []map[string]interface{}{

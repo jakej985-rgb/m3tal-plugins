@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.3] - 2026-10-24
+
+### 🚀 Changes & Improvements
+- **feat(tabs): update tab title to Fleet under Containers category**: Declared subtab title as `Fleet` to cleanly pair with `Compose` under the unified `Containers` category view in M3TAL Core.
+
+---
+
 ## [0.2.2] - 2026-10-24
 
 ### 🚀 Changes & Improvements

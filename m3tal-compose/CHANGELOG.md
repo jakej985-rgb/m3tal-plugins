@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.1] - 2026-10-24
+
+### 🚀 Changes & Improvements
+- **feat(tabs): align under Containers category with Compose subtab**: Grouped tab under `containers` category with title `Compose` to render as a top sub-tab alongside `Fleet`.
+
+---
+
 ## [0.2.0] - 2026-10-24
 
 ### 🚀 Changes & Improvements

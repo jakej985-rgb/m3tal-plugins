@@ -2,8 +2,8 @@ apiVersion: m3tal.io/v1alpha1
 kind: Plugin
 metadata:
   name: compose
-  version: "0.2.0"
-  title: "Compose Editor"
+  version: "0.2.1"
+  title: "Compose"
   description: "Docker Compose visual editor, syntax validator, and stack lifecycle manager"
   author: "jakej985-rgb"
   license: "MIT"
@@ -25,8 +25,8 @@ spec:
     route: "/containers"
     category: "containers"
     category_title: "Containers"
-    tab_id: "compose"
-    title: "Compose Editor"
+    tab_id: "compose_editor"
+    title: "Compose"
     sidebar: true
     order: 25
     roles: ["admin", "viewer"]

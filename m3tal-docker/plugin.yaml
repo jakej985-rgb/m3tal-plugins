@@ -2,7 +2,7 @@ apiVersion: m3tal.io/v1alpha1
 kind: Plugin
 metadata:
   name: docker-monitor
-  version: "0.2.2"
+  version: "0.2.3"
   title: "Containers"
   description: "Docker container fleet manager, log inspector, and lifecycle controller"
   author: "jakej985-rgb"
@@ -23,7 +23,10 @@ spec:
   ui:
     entry: "ui/dist/index.html"
     route: "/containers"
-    title: "Containers"
+    category: "containers"
+    category_title: "Containers"
+    tab_id: "docker_containers"
+    title: "Fleet"
     sidebar: true
     order: 20
     roles: ["admin", "viewer"]
