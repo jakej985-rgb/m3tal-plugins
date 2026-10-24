@@ -12,17 +12,33 @@
       "ui_view",
       "websocket_stream"
     ],
-    "version": "0.1.0",
+    "version": "0.2.2",
     "status": "available",
     "apt_command": "sudo apt install -y m3tal-plugin-docker-monitor"
   },
   {
+    "name": "compose",
+    "title": "Compose Editor",
+    "process_name": "m3tal-compose",
+    "package_name": "m3tal-plugin-compose",
+    "category": "Container Management",
+    "description": "Docker Compose visual editor, syntax validator, and multi-container stack lifecycle manager.",
+    "capabilities": [
+      "collector",
+      "actions",
+      "ui_view"
+    ],
+    "version": "0.2.0",
+    "status": "available",
+    "apt_command": "sudo apt install -y m3tal-plugin-compose"
+  },
+  {
     "name": "stack-orchestrator",
-    "title": "Compose Stacks",
+    "title": "Compose Stacks (Template DB)",
     "process_name": "m3tal-stacks",
     "package_name": "m3tal-plugin-stacks",
     "category": "Compose Stacks",
-    "description": "Multi-service compose stack orchestration, live health checks, and lifecycle deployment.",
+    "description": "Curated database of verified Docker Compose templates, argument presets, and 1-click community stacks.",
     "capabilities": [
       "orchestrator",
       "actions",
@@ -38,7 +54,7 @@
     "process_name": "m3tal-ai",
     "package_name": "m3tal-plugin-ai",
     "category": "Local AI & LLM",
-    "description": "Local LLM inference manager (Ollama, vLLM), job queue, and model catalog.",
+    "description": "Local LLM inference manager (Ollama, vLLM), GPU VRAM stats, asynchronous job queue, and model catalog.",
     "capabilities": [
       "inference_runner",
       "job_queue",
