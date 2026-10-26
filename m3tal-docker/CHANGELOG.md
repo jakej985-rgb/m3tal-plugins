@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.6.0] - 2026-10-26
+
+### 🚀 Changes & Improvements
+- **feat(settings): register settings capability and fields for docker-monitor v0.4.3** (`3212283`)
+
+---
+
 ## [0.5.1] - 2026-10-26
 
 ### 🚀 Changes & Improvements
