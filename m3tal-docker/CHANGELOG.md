@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.5.1] - 2026-10-26
+
+### 🚀 Changes & Improvements
+- **feat(settings): add settings capability and dynamic configuration section**:
+  - Registered `settings` in `spec.capabilities` in `plugin.yaml` and `m3tal.init` handshake response.
+  - Declared `docker_config` section ("Docker Host Engine") with settings fields:
+    - `docker_host` (string): Docker daemon socket or endpoint URL (default: `unix:///var/run/docker.sock`).
+    - `log_tail` (integer): Default log lines retrieved when querying container logs (default: 100).
+    - `show_all` (boolean): Toggle stopped/exited containers in fleet listings (default: true).
+    - `poll_interval` (string): Cadence for background metrics collection (default: `2s`).
+  - Added `set_settings` action handler in `m3tal.action` to apply dynamic settings changes received from Core Settings API without requiring daemon restart.
+
+---
+
 ## [0.5.0] - 2026-10-26
 
 ### 🚀 Changes & Improvements

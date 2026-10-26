@@ -2,7 +2,7 @@ apiVersion: m3tal.io/v1alpha1
 kind: Plugin
 metadata:
   name: docker-monitor
-  version: "0.5.0"
+  version: "0.5.1"
   title: "Containers"
   description: "Docker container fleet manager, log inspector, and lifecycle controller"
   author: "jakej985-rgb"
@@ -20,6 +20,7 @@ spec:
     - actions
     - ui_view
     - ui_widget
+    - settings
 
   ui:
     entry: "ui/dist/index.html"
@@ -37,6 +38,32 @@ spec:
       title: "Containers"
       size: [2, 1]
       type: "card"
+
+  settings:
+    - id: "docker_config"
+      title: "Docker Host Engine"
+      description: "Docker daemon socket path, polling cadence, and log viewing preferences"
+      fields:
+        - key: "docker_host"
+          label: "Docker Host Endpoint"
+          type: "text"
+          default: "unix:///var/run/docker.sock"
+          description: "UNIX domain socket or remote HTTP URL for Docker daemon communication"
+        - key: "log_tail"
+          label: "Default Log Tail Lines"
+          type: "number"
+          default: 100
+          description: "Number of log lines to query when inspecting container logs"
+        - key: "show_all"
+          label: "Show Stopped Containers"
+          type: "boolean"
+          default: true
+          description: "Include exited, created, and paused containers in fleet listings"
+        - key: "poll_interval"
+          label: "Metrics Poll Interval"
+          type: "text"
+          default: "2s"
+          description: "Interval between background telemetry collections (e.g. 2s, 5s, 10s)"
 
   rpc:
     protocol: "jsonrpc-2.0"

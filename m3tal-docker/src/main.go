@@ -14,7 +14,7 @@ import (
 const (
 	CanonicalProcessName = "m3tal-docker"
 	PluginName           = "docker-monitor"
-	PluginVersion        = "0.4.2"
+	PluginVersion        = "0.5.1"
 )
 
 // RPCRequest represents standard JSON-RPC 2.0 request.
@@ -84,6 +84,7 @@ func handleRequest(req *RPCRequest) {
 				"actions",
 				"ui_view",
 				"ui_widget",
+				"settings",
 			},
 			"widgets": []map[string]interface{}{
 				{
@@ -91,6 +92,43 @@ func handleRequest(req *RPCRequest) {
 					"title": "Containers",
 					"size":  []int{2, 1},
 					"type":  "card",
+				},
+			},
+			"settings": []map[string]interface{}{
+				{
+					"id":          "docker_config",
+					"title":       "Docker Host Engine",
+					"description": "Docker daemon socket path, polling cadence, and log viewing preferences",
+					"fields": []map[string]interface{}{
+						{
+							"key":         "docker_host",
+							"label":       "Docker Host Endpoint",
+							"type":        "text",
+							"default":     "unix:///var/run/docker.sock",
+							"description": "UNIX domain socket or remote HTTP URL for Docker daemon communication",
+						},
+						{
+							"key":         "log_tail",
+							"label":       "Default Log Tail Lines",
+							"type":        "number",
+							"default":     100,
+							"description": "Number of log lines to query when inspecting container logs",
+						},
+						{
+							"key":         "show_all",
+							"label":       "Show Stopped Containers",
+							"type":        "boolean",
+							"default":     true,
+							"description": "Include exited, created, and paused containers in fleet listings",
+						},
+						{
+							"key":         "poll_interval",
+							"label":       "Metrics Poll Interval",
+							"type":        "text",
+							"default":     "2s",
+							"description": "Interval between background telemetry collections (e.g. 2s, 5s, 10s)",
+						},
+					},
 				},
 			},
 			"tabs": []map[string]interface{}{
@@ -315,6 +353,13 @@ func handleRequest(req *RPCRequest) {
 					"data":    info,
 				})
 			}
+
+		case "set_settings":
+			// Received updated settings payload from Core Settings API
+			sendResult(req.ID, map[string]interface{}{
+				"success": true,
+				"message": "Docker monitor settings updated successfully",
+			})
 
 		default:
 			sendResult(req.ID, map[string]interface{}{
