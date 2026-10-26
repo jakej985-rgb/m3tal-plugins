@@ -1,9 +1,11 @@
-.PHONY: help build-all test-all build test package package-all bump bump-check build-changed package-changed clean
+.PHONY: help build-all test-all build test audit audit-all package package-all bump bump-check build-changed package-changed clean
 
 help:
 	@echo "M3TAL Plugins Monorepo Build Targets:"
 	@echo "  make bump [PLUGIN=<name>]   - Smart auto-bump version and CHANGELOG for touched plugins"
 	@echo "  make bump-check             - Dry-run inspect which plugins are touched/need bump"
+	@echo "  make audit [PLUGIN=<name>]  - Audit plugin compliance against 6 standardization gates"
+	@echo "  make audit-all              - Audit all plugins in the repository"
 	@echo "  make build PLUGIN=<name>    - Build backend and UI for specified plugin"
 	@echo "  make build-changed          - Build only plugins that have been modified"
 	@echo "  make build-all              - Build all plugins in the repository"
@@ -25,6 +27,19 @@ ifdef PLUGIN
 else
 	@./scripts/smart-bump.sh $(BASE_ARG) --apply
 endif
+
+audit:
+ifndef PLUGIN
+	$(error PLUGIN is not set. Usage: make audit PLUGIN=<plugin-name>)
+endif
+	@./scripts/audit-plugin.sh "$(PLUGIN)"
+
+audit-all:
+	@for p in $$(find . -maxdepth 1 -mindepth 1 -type d ! -name '.*' ! -name 'scripts'); do \
+		if [ -f "$$p/plugin.yaml" ]; then \
+			./scripts/audit-plugin.sh "$$(basename "$$p")"; \
+		fi; \
+	done
 
 build-changed:
 	@TOUCHED=$$("./scripts/smart-bump.sh" $(BASE_ARG) --list-touched); \

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.1] - 2026-10-26
+
+### 🚀 Removed Dummy Mock Nodes & Real Hardware Telemetry
+- **Zero Dummy Data**: Completely removed hardcoded mock entries (`node-home-server`, `node-nas-storage`, `node-alpha-r2`) from backend and frontend.
+- **Genuine Local Host Telemetry**: Local workstation node now dynamically queries `/proc/loadavg`, `/proc/meminfo`, `syscall.Statfs`, local IPv4 addresses, and NVIDIA GPU stats (`nvidia-smi`).
+- **Clean Fleet Discovery**: Fleet view starts strictly with genuine local workstation telemetry and an empty peer list until remote `m3tal-mesh-node` peers are paired.
+
 ## [0.1.0] - 2026-10-26
 
 ### Overview & Highlights

@@ -41,7 +41,7 @@ func TestRPCHandlerActionPairAndForget(t *testing.T) {
 
 	nodeMutex.RLock()
 	var testNodeID string
-	for _, n := range nodes {
+	for _, n := range remoteNodes {
 		if n.IP == "192.168.1.199" {
 			testNodeID = n.ID
 			break
@@ -50,7 +50,7 @@ func TestRPCHandlerActionPairAndForget(t *testing.T) {
 	nodeMutex.RUnlock()
 
 	if testNodeID == "" {
-		t.Fatalf("Expected newly paired node to exist in nodes list")
+		t.Fatalf("Expected newly paired node to exist in remoteNodes list")
 	}
 
 	forgetParams, _ := json.Marshal(map[string]interface{}{

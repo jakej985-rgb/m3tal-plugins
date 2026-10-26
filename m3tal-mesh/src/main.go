@@ -4,8 +4,14 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"math"
+	"net"
 	"os"
+	"os/exec"
 	"os/signal"
+	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -15,7 +21,7 @@ import (
 const (
 	CanonicalProcessName = "m3tal-mesh"
 	PluginName           = "mesh"
-	PluginVersion        = "0.1.0"
+	PluginVersion        = "0.1.1"
 )
 
 // RPCRequest represents standard JSON-RPC 2.0 request.
@@ -54,7 +60,7 @@ type MeshNode struct {
 	RAMTotalGB     float64 `json:"ram_total_gb"`
 	StorageUsedGB  float64 `json:"storage_used_gb"`
 	StorageTotalGB float64 `json:"storage_total_gb"`
-	StoragePool    string  `json:"storage_pool,omitempty"` // e.g. "ZFS tank0", "NVMe RAID0"
+	StoragePool    string  `json:"storage_pool,omitempty"`
 	GPUName        string  `json:"gpu_name,omitempty"`
 	GPUVRAMUsedGB  float64 `json:"gpu_vram_used_gb,omitempty"`
 	GPUVRAMTotalGB float64 `json:"gpu_vram_total_gb,omitempty"`
@@ -65,74 +71,144 @@ type MeshNode struct {
 }
 
 var (
-	nodeMutex sync.RWMutex
-	nodes     = []MeshNode{
-		{
-			ID:             "node-alpha-r2",
-			Name:           "Alpha R2 (Workstation)",
-			IP:             "127.0.0.1",
-			Role:           "workstation",
-			Status:         "online",
-			Cores:          8,
-			CPULoad:        14.2,
-			RAMUsedGB:      6.4,
-			RAMTotalGB:     16.0,
-			StorageUsedGB:  240.0,
-			StorageTotalGB: 512.0,
-			StoragePool:    "NVMe System",
-			GPUName:        "NVIDIA GeForce GTX 960",
-			GPUVRAMUsedGB:  1.1,
-			GPUVRAMTotalGB: 4.0,
-			GPUTempC:       42,
-			PingMs:         0,
-			LastSeen:       "now",
-			IsLocal:        true,
-		},
-		{
-			ID:             "node-home-server",
-			Name:           "Home Server (Compute Node)",
-			IP:             "192.168.1.50",
-			Role:           "server",
-			Status:         "online",
-			Cores:          16,
-			CPULoad:        6.8,
-			RAMUsedGB:      14.2,
-			RAMTotalGB:     64.0,
-			StorageUsedGB:  820.0,
-			StorageTotalGB: 2048.0,
-			StoragePool:    "Fast SSD Pool",
-			GPUName:        "NVIDIA RTX 3060",
-			GPUVRAMUsedGB:  3.8,
-			GPUVRAMTotalGB: 12.0,
-			GPUTempC:       48,
-			PingMs:         1,
-			LastSeen:       "5s ago",
-			IsLocal:        false,
-		},
-		{
-			ID:             "node-nas-storage",
-			Name:           "Storage NAS (ZFS)",
-			IP:             "192.168.1.60",
-			Role:           "nas",
-			Status:         "online",
-			Cores:          4,
-			CPULoad:        3.1,
-			RAMUsedGB:      18.5,
-			RAMTotalGB:     32.0,
-			StorageUsedGB:  8600.0,
-			StorageTotalGB: 16000.0,
-			StoragePool:    "ZFS RAIDZ2 tank",
-			PingMs:         2,
-			LastSeen:       "8s ago",
-			IsLocal:        false,
-		},
-	}
+	nodeMutex   sync.RWMutex
+	remoteNodes = make([]MeshNode, 0)
 )
 
 func setProcessName(name string) {
 	bytes := append([]byte(name), 0)
 	// PR_SET_NAME = 15
 	syscall.Syscall6(syscall.SYS_PRCTL, 15, uintptr(unsafe.Pointer(&bytes[0])), 0, 0, 0, 0)
+}
+
+func getLocalIP() string {
+	addrs, err := net.InterfaceAddrs()
+	if err == nil {
+		for _, addr := range addrs {
+			if ipNet, ok := addr.(*net.IPNet); ok && !ipNet.IP.IsLoopback() {
+				if ipNet.IP.To4() != nil {
+					return ipNet.IP.String()
+				}
+			}
+		}
+	}
+	return "127.0.0.1"
+}
+
+func getCPULoad(cores int) float64 {
+	if data, err := os.ReadFile("/proc/loadavg"); err == nil {
+		parts := strings.Fields(string(data))
+		if len(parts) >= 1 {
+			if load1, err := strconv.ParseFloat(parts[0], 64); err == nil && cores > 0 {
+				pct := (load1 / float64(cores)) * 100.0
+				if pct > 100.0 {
+					pct = 100.0
+				}
+				return pct
+			}
+		}
+	}
+	return 0.0
+}
+
+func getRAM() (float64, float64) {
+	var totalRAM, availRAM float64
+	if data, err := os.ReadFile("/proc/meminfo"); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(line, "MemTotal:") {
+				fields := strings.Fields(line)
+				if len(fields) >= 2 {
+					val, _ := strconv.ParseFloat(fields[1], 64)
+					totalRAM = val / 1024.0 / 1024.0
+				}
+			} else if strings.HasPrefix(line, "MemAvailable:") {
+				fields := strings.Fields(line)
+				if len(fields) >= 2 {
+					val, _ := strconv.ParseFloat(fields[1], 64)
+					availRAM = val / 1024.0 / 1024.0
+				}
+			}
+		}
+	}
+	usedRAM := totalRAM - availRAM
+	if usedRAM < 0 {
+		usedRAM = 0
+	}
+	return usedRAM, totalRAM
+}
+
+func getStorage() (float64, float64) {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs("/", &stat); err == nil {
+		totalBytes := stat.Blocks * uint64(stat.Bsize)
+		freeBytes := stat.Bfree * uint64(stat.Bsize)
+		totalStorage := float64(totalBytes) / 1024.0 / 1024.0 / 1024.0
+		usedStorage := float64(totalBytes-freeBytes) / 1024.0 / 1024.0 / 1024.0
+		return usedStorage, totalStorage
+	}
+	return 0, 0
+}
+
+func getGPU() (string, float64, float64, int) {
+	out, err := exec.Command("nvidia-smi", "--query-gpu=name,memory.total,memory.used,temperature.gpu", "--format=csv,noheader,nounits").Output()
+	if err == nil {
+		line := strings.TrimSpace(string(out))
+		if line != "" {
+			parts := strings.Split(line, ",")
+			if len(parts) >= 4 {
+				name := strings.TrimSpace(parts[0])
+				totalMB, _ := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+				usedMB, _ := strconv.ParseFloat(strings.TrimSpace(parts[2]), 64)
+				temp, _ := strconv.Atoi(strings.TrimSpace(parts[3]))
+				return name, usedMB / 1024.0, totalMB / 1024.0, temp
+			}
+		}
+	}
+	return "", 0, 0, 0
+}
+
+func getLocalNode() MeshNode {
+	hostname, err := os.Hostname()
+	if err != nil || hostname == "" {
+		hostname = "Local Host"
+	}
+	cores := runtime.NumCPU()
+	cpuPct := getCPULoad(cores)
+	ramUsed, ramTotal := getRAM()
+	diskUsed, diskTotal := getStorage()
+	gpuName, gpuUsed, gpuTotal, gpuTemp := getGPU()
+
+	return MeshNode{
+		ID:             "node-local",
+		Name:           fmt.Sprintf("%s (Host Workstation)", hostname),
+		IP:             getLocalIP(),
+		Role:           "workstation",
+		Status:         "online",
+		Cores:          cores,
+		CPULoad:        math.Round(cpuPct*10) / 10,
+		RAMUsedGB:      math.Round(ramUsed*10) / 10,
+		RAMTotalGB:     math.Round(ramTotal*10) / 10,
+		StorageUsedGB:  math.Round(diskUsed*10) / 10,
+		StorageTotalGB: math.Round(diskTotal*10) / 10,
+		StoragePool:    "Root NVMe/SSD",
+		GPUName:        gpuName,
+		GPUVRAMUsedGB:  math.Round(gpuUsed*10) / 10,
+		GPUVRAMTotalGB: math.Round(gpuTotal*10) / 10,
+		GPUTempC:       gpuTemp,
+		PingMs:         0,
+		LastSeen:       "now",
+		IsLocal:        true,
+	}
+}
+
+func getAllNodes() []MeshNode {
+	nodeMutex.RLock()
+	defer nodeMutex.RUnlock()
+
+	all := make([]MeshNode, 0, 1+len(remoteNodes))
+	all = append(all, getLocalNode())
+	all = append(all, remoteNodes...)
+	return all
 }
 
 func main() {
@@ -225,16 +301,15 @@ func handleInit(req *RPCRequest) {
 }
 
 func handleCollect(req *RPCRequest) {
-	nodeMutex.RLock()
-	defer nodeMutex.RUnlock()
+	allNodes := getAllNodes()
 
 	var totalCores int
 	var totalRAM float64
 	var totalStorage float64
 	var onlineCount int
 
-	tableRows := make([][]string, 0, len(nodes))
-	for _, n := range nodes {
+	tableRows := make([][]string, 0, len(allNodes))
+	for _, n := range allNodes {
 		totalCores += n.Cores
 		totalRAM += n.RAMTotalGB
 		totalStorage += n.StorageTotalGB
@@ -262,12 +337,12 @@ func handleCollect(req *RPCRequest) {
 
 	result := map[string]interface{}{
 		"status": "ok",
-		"nodes":  nodes,
+		"nodes":  allNodes,
 		"metrics": []map[string]interface{}{
 			{
 				"category": "mesh",
 				"name":     "nodes_total",
-				"value":    len(nodes),
+				"value":    len(allNodes),
 				"unit":     "nodes",
 				"status":   "ok",
 			},
@@ -324,115 +399,154 @@ func handleCollect(req *RPCRequest) {
 }
 
 func handleAction(req *RPCRequest) {
-	var params struct {
-		ActionID string `json:"action_id"`
-		NodeID   string `json:"node_id"`
-		Name     string `json:"name"`
-		IP       string `json:"ip"`
-		Role     string `json:"role"`
-		Token    string `json:"token"`
+	var raw struct {
+		ActionID string                 `json:"action_id"`
+		Action   string                 `json:"action"`
+		Target   string                 `json:"target"`
+		Args     map[string]interface{} `json:"args"`
+		NodeID   string                 `json:"node_id"`
+		Name     string                 `json:"name"`
+		IP       string                 `json:"ip"`
+		Role     string                 `json:"role"`
+		Token    string                 `json:"token"`
 	}
 
 	if req.Params != nil {
-		_ = json.Unmarshal(req.Params, &params)
+		_ = json.Unmarshal(req.Params, &raw)
 	}
 
-	switch params.ActionID {
+	action := raw.ActionID
+	if action == "" {
+		action = raw.Action
+	}
+
+	name := raw.Name
+	ip := raw.IP
+	role := raw.Role
+	nodeID := raw.NodeID
+
+	if raw.Args != nil {
+		if v, ok := raw.Args["name"].(string); ok && name == "" {
+			name = v
+		}
+		if v, ok := raw.Args["ip"].(string); ok && ip == "" {
+			ip = v
+		}
+		if v, ok := raw.Args["role"].(string); ok && role == "" {
+			role = v
+		}
+		if v, ok := raw.Args["node_id"].(string); ok && nodeID == "" {
+			nodeID = v
+		}
+	}
+	if raw.Target != "" && nodeID == "" {
+		nodeID = raw.Target
+	}
+
+	switch action {
 	case "pair_node":
-		if params.IP == "" {
+		if ip == "" {
 			sendError(req.ID, -32602, "Invalid params", "Node IP address is required")
 			return
 		}
 
-		nodeMutex.Lock()
-		nodeName := params.Name
-		if nodeName == "" {
-			nodeName = fmt.Sprintf("Node (%s)", params.IP)
+		if name == "" {
+			name = fmt.Sprintf("Node (%s)", ip)
 		}
-		role := params.Role
 		if role == "" {
 			role = "server"
 		}
 
 		newNode := MeshNode{
 			ID:             fmt.Sprintf("node-%d", time.Now().Unix()),
-			Name:           nodeName,
-			IP:             params.IP,
+			Name:           name,
+			IP:             ip,
 			Role:           role,
 			Status:         "online",
-			Cores:          8,
-			CPULoad:        5.0,
-			RAMUsedGB:      4.2,
+			Cores:          4,
+			CPULoad:        0.0,
+			RAMUsedGB:      0.0,
 			RAMTotalGB:     16.0,
-			StorageUsedGB:  120.0,
+			StorageUsedGB:  0.0,
 			StorageTotalGB: 512.0,
-			StoragePool:    "Discovered Storage",
-			PingMs:         2,
+			StoragePool:    "Remote Storage",
+			PingMs:         1,
 			LastSeen:       "just now",
 			IsLocal:        false,
 		}
-		nodes = append(nodes, newNode)
+
+		nodeMutex.Lock()
+		remoteNodes = append(remoteNodes, newNode)
 		nodeMutex.Unlock()
 
 		sendResponse(req.ID, map[string]interface{}{
 			"success": true,
-			"message": fmt.Sprintf("Successfully paired node %s (%s)", nodeName, params.IP),
+			"message": fmt.Sprintf("Successfully paired node %s (%s)", name, ip),
 			"node":    newNode,
 		})
 
 	case "forget_node":
-		if params.NodeID == "" {
+		if nodeID == "" {
 			sendError(req.ID, -32602, "Invalid params", "node_id is required")
+			return
+		}
+		if nodeID == "node-local" {
+			sendError(req.ID, -32602, "Invalid operation", "Cannot forget the local workstation host")
 			return
 		}
 
 		nodeMutex.Lock()
 		found := false
-		newNodes := make([]MeshNode, 0, len(nodes))
-		for _, n := range nodes {
-			if n.ID == params.NodeID {
-				if n.IsLocal {
-					nodeMutex.Unlock()
-					sendError(req.ID, -32602, "Invalid operation", "Cannot forget the local workstation node")
-					return
-				}
+		newRemotes := make([]MeshNode, 0, len(remoteNodes))
+		for _, n := range remoteNodes {
+			if n.ID == nodeID {
 				found = true
 				continue
 			}
-			newNodes = append(newNodes, n)
+			newRemotes = append(newRemotes, n)
 		}
 		if found {
-			nodes = newNodes
+			remoteNodes = newRemotes
 		}
 		nodeMutex.Unlock()
 
 		if !found {
-			sendError(req.ID, -32602, "Not found", fmt.Sprintf("Node %s not found", params.NodeID))
+			sendError(req.ID, -32602, "Not found", fmt.Sprintf("Node %s not found", nodeID))
 			return
 		}
 
 		sendResponse(req.ID, map[string]interface{}{
 			"success": true,
-			"message": fmt.Sprintf("Node %s removed from mesh cluster", params.NodeID),
+			"message": fmt.Sprintf("Node %s removed from mesh cluster", nodeID),
 		})
 
 	case "ping_node":
+		if nodeID == "node-local" {
+			sendResponse(req.ID, map[string]interface{}{
+				"success": true,
+				"node_id": nodeID,
+				"ping_ms": 0,
+				"status":  "online",
+			})
+			return
+		}
+
 		nodeMutex.Lock()
 		defer nodeMutex.Unlock()
-		for i := range nodes {
-			if nodes[i].ID == params.NodeID {
-				nodes[i].LastSeen = "just now"
-				nodes[i].PingMs = 1
+		for i := range remoteNodes {
+			if remoteNodes[i].ID == nodeID {
+				remoteNodes[i].LastSeen = "just now"
+				remoteNodes[i].PingMs = 1
 				sendResponse(req.ID, map[string]interface{}{
 					"success": true,
-					"node_id": params.NodeID,
+					"node_id": nodeID,
 					"ping_ms": 1,
-					"status":  nodes[i].Status,
+					"status":  remoteNodes[i].Status,
 				})
 				return
 			}
 		}
-		sendError(req.ID, -32602, "Not found", fmt.Sprintf("Node %s not found", params.NodeID))
+		sendError(req.ID, -32602, "Not found", fmt.Sprintf("Node %s not found", nodeID))
 
 	case "scan_network":
 		sendResponse(req.ID, map[string]interface{}{
@@ -442,7 +556,7 @@ func handleAction(req *RPCRequest) {
 		})
 
 	default:
-		sendError(req.ID, -32601, "Unknown action", fmt.Sprintf("Unsupported action_id: %s", params.ActionID))
+		sendError(req.ID, -32601, "Unknown action", fmt.Sprintf("Unsupported action_id: %s", action))
 	}
 }
 

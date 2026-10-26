@@ -125,6 +125,7 @@
     .role-workstation { color: #38bdf8; border-color: #0284c7; }
     .role-server { color: #a78bfa; border-color: #7c3aed; }
     .role-nas { color: #facc15; border-color: #ca8a04; }
+    .role-edge { color: #34d399; border-color: #059669; }
 
     .specs-grid {
       display: flex;
@@ -166,7 +167,7 @@
       font-size: 0.75rem;
     }
     .gpu-name { color: #34d399; font-weight: 600; display: flex; align-items: center; gap: 6px; }
-    .gpu-temp { color: var(--text-muted); font-mono; }
+    .gpu-temp { color: var(--text-muted); font-family: monospace; }
 
     .node-actions {
       display: flex;
@@ -242,24 +243,24 @@
     <div class="brand">
       <h1>
         <span>🌐 M3TAL MESH</span>
-        <span class="badge">v0.1.0</span>
+        <span class="badge">v0.1.1</span>
       </h1>
       <div class="metrics">
         <div class="metric-pill">
           <span>🟢 Nodes:</span>
-          <span class="metric-val" id="metric-nodes">3 / 3 Online</span>
+          <span class="metric-val" id="metric-nodes">-</span>
         </div>
         <div class="metric-pill">
           <span>⚡ Cores:</span>
-          <span class="metric-val" id="metric-cores">28 Cores</span>
+          <span class="metric-val" id="metric-cores">-</span>
         </div>
         <div class="metric-pill">
           <span>💾 Fleet RAM:</span>
-          <span class="metric-val" id="metric-ram">39.1 / 112 GB</span>
+          <span class="metric-val" id="metric-ram">-</span>
         </div>
         <div class="metric-pill">
           <span>🗄️ Total Storage:</span>
-          <span class="metric-val" id="metric-storage">9.6 / 18.5 TB</span>
+          <span class="metric-val" id="metric-storage">-</span>
         </div>
       </div>
     </div>
@@ -293,7 +294,7 @@
 
       <div class="form-group">
         <label class="form-label">Node Friendly Name</label>
-        <input class="form-input" id="input-name" placeholder="e.g. Proxmox Server 1" />
+        <input class="form-input" id="input-name" placeholder="e.g. Storage Server" />
       </div>
 
       <div class="form-group">
@@ -333,67 +334,8 @@
     const urlParams = new URLSearchParams(window.location.search);
     const token = urlParams.get('token') || '';
 
-    let fleetNodes = [
-      {
-        id: "node-alpha-r2",
-        name: "Alpha R2 (Workstation)",
-        ip: "127.0.0.1",
-        role: "workstation",
-        status: "online",
-        cores: 8,
-        cpu_load: 14.2,
-        ram_used_gb: 6.4,
-        ram_total_gb: 16.0,
-        storage_used_gb: 240.0,
-        storage_total_gb: 512.0,
-        storage_pool: "NVMe System",
-        gpu_name: "NVIDIA GeForce GTX 960",
-        gpu_vram_used_gb: 1.1,
-        gpu_vram_total_gb: 4.0,
-        gpu_temp_c: 42,
-        ping_ms: 0,
-        last_seen: "now",
-        is_local: true
-      },
-      {
-        id: "node-home-server",
-        name: "Home Server (Compute Node)",
-        ip: "192.168.1.50",
-        role: "server",
-        status: "online",
-        cores: 16,
-        cpu_load: 6.8,
-        ram_used_gb: 14.2,
-        ram_total_gb: 64.0,
-        storage_used_gb: 820.0,
-        storage_total_gb: 2048.0,
-        storage_pool: "Fast SSD Pool",
-        gpu_name: "NVIDIA RTX 3060",
-        gpu_vram_used_gb: 3.8,
-        gpu_vram_total_gb: 12.0,
-        gpu_temp_c: 48,
-        ping_ms: 1,
-        last_seen: "5s ago",
-        is_local: false
-      },
-      {
-        id: "node-nas-storage",
-        name: "Storage NAS (ZFS)",
-        ip: "192.168.1.60",
-        role: "nas",
-        status: "online",
-        cores: 4,
-        cpu_load: 3.1,
-        ram_used_gb: 18.5,
-        ram_total_gb: 32.0,
-        storage_used_gb: 8600.0,
-        storage_total_gb: 16000.0,
-        storage_pool: "ZFS RAIDZ2 tank",
-        ping_ms: 2,
-        last_seen: "8s ago",
-        is_local: false
-      }
-    ];
+    // Strictly real fleet nodes loaded dynamically from backend. NO dummy mock servers.
+    let fleetNodes = [];
 
     function showToast(msg, isError = false) {
       const toast = document.getElementById('toast');
@@ -410,6 +352,23 @@
       const grid = document.getElementById('nodes-grid');
       grid.innerHTML = '';
 
+      if (!fleetNodes || fleetNodes.length === 0) {
+        grid.innerHTML = `
+          <div style="grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 20px; background: var(--bg-card); border: 1px dashed var(--border); border-radius: 12px; text-align: center;">
+            <div style="font-size: 2.5rem; margin-bottom: 12px;">🌐</div>
+            <div style="font-size: 1.1rem; font-weight: 700; color: #fff;">Connecting to Mesh Daemon...</div>
+            <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 6px; max-width: 400px;">
+              Waiting for local host telemetry or pair remote peers using the button above.
+            </p>
+          </div>
+        `;
+        document.getElementById('metric-nodes').innerText = '0 / 0 Online';
+        document.getElementById('metric-cores').innerText = '0 Cores';
+        document.getElementById('metric-ram').innerText = '0 GB';
+        document.getElementById('metric-storage').innerText = '0 GB';
+        return;
+      }
+
       let totalCores = 0;
       let totalRAMUsed = 0;
       let totalRAMMax = 0;
@@ -418,16 +377,20 @@
       let onlineCount = 0;
 
       fleetNodes.forEach((n) => {
-        totalCores += n.cores;
-        totalRAMUsed += n.ram_used_gb;
-        totalRAMMax += n.ram_total_gb;
-        totalStorageUsed += n.storage_used_gb;
-        totalStorageMax += n.storage_total_gb;
+        totalCores += (n.cores || 0);
+        totalRAMUsed += (n.ram_used_gb || 0);
+        totalRAMMax += (n.ram_total_gb || 0);
+        totalStorageUsed += (n.storage_used_gb || 0);
+        totalStorageMax += (n.storage_total_gb || 0);
         if (n.status === 'online') onlineCount++;
 
-        const cpuPct = Math.min(100, Math.round(n.cpu_load));
-        const ramPct = Math.min(100, Math.round((n.ram_used_gb / n.ram_total_gb) * 100));
-        const diskPct = Math.min(100, Math.round((n.storage_used_gb / n.storage_total_gb) * 100));
+        const cpuPct = Math.min(100, Math.round(n.cpu_load || 0));
+        const ramTotal = n.ram_total_gb || 1;
+        const ramUsed = n.ram_used_gb || 0;
+        const ramPct = Math.min(100, Math.round((ramUsed / ramTotal) * 100));
+        const diskTotal = n.storage_total_gb || 1;
+        const diskUsed = n.storage_used_gb || 0;
+        const diskPct = Math.min(100, Math.round((diskUsed / diskTotal) * 100));
 
         const card = document.createElement('div');
         card.className = `node-card ${n.is_local ? 'is-local' : ''}`;
@@ -435,25 +398,25 @@
           <div class="node-header">
             <div class="node-title-box">
               <div class="node-name">
-                <span>${n.name}</span>
-                ${n.is_local ? '<span class="node-role-badge" style="color:var(--emerald);border-color:var(--emerald);">LOCAL</span>' : ''}
+                <span>${escapeHtml(n.name)}</span>
+                ${n.is_local ? '<span class="node-role-badge" style="color:var(--emerald);border-color:var(--emerald);">LOCAL HOST</span>' : ''}
               </div>
-              <div class="node-ip">${n.ip} • <span style="color:var(--text-muted);">${n.last_seen}</span></div>
+              <div class="node-ip">${escapeHtml(n.ip)} • <span style="color:var(--text-muted);">${escapeHtml(n.last_seen || 'now')}</span></div>
             </div>
             <div style="display:flex; flex-direction:column; align-items:flex-end; gap:4px;">
-              <span class="status-badge status-online">
-                <span style="width:6px; height:6px; border-radius:50%; background:var(--emerald);"></span>
-                ${n.ping_ms} ms
+              <span class="status-badge ${n.status === 'online' ? 'status-online' : 'status-warning'}">
+                <span style="width:6px; height:6px; border-radius:50%; background:${n.status === 'online' ? 'var(--emerald)' : 'var(--amber)'};"></span>
+                ${n.ping_ms || 0} ms
               </span>
-              <span class="node-role-badge role-${n.role}">${n.role}</span>
+              <span class="node-role-badge role-${n.role || 'server'}">${escapeHtml(n.role || 'server')}</span>
             </div>
           </div>
 
           <div class="specs-grid">
             <div class="spec-row">
               <div class="spec-label-row">
-                <span>CPU (${n.cores} Cores)</span>
-                <span class="spec-value">${n.cpu_load}%</span>
+                <span>CPU (${n.cores || 0} Cores)</span>
+                <span class="spec-value">${(n.cpu_load || 0).toFixed(1)}%</span>
               </div>
               <div class="progress-bar-bg">
                 <div class="progress-bar-fill fill-cpu" style="width: ${cpuPct}%;"></div>
@@ -463,7 +426,7 @@
             <div class="spec-row">
               <div class="spec-label-row">
                 <span>Memory</span>
-                <span class="spec-value">${n.ram_used_gb.toFixed(1)} / ${n.ram_total_gb.toFixed(0)} GB (${ramPct}%)</span>
+                <span class="spec-value">${ramUsed.toFixed(1)} / ${ramTotal.toFixed(1)} GB (${ramPct}%)</span>
               </div>
               <div class="progress-bar-bg">
                 <div class="progress-bar-fill fill-ram" style="width: ${ramPct}%;"></div>
@@ -472,8 +435,8 @@
 
             <div class="spec-row">
               <div class="spec-label-row">
-                <span>Storage (${n.storage_pool || 'Root'})</span>
-                <span class="spec-value">${formatStorage(n.storage_used_gb)} / ${formatStorage(n.storage_total_gb)} (${diskPct}%)</span>
+                <span>Storage (${escapeHtml(n.storage_pool || 'Root')})</span>
+                <span class="spec-value">${formatStorage(diskUsed)} / ${formatStorage(diskTotal)} (${diskPct}%)</span>
               </div>
               <div class="progress-bar-bg">
                 <div class="progress-bar-fill fill-disk" style="width: ${diskPct}%;"></div>
@@ -485,29 +448,54 @@
             <div class="gpu-badge-box">
               <div class="gpu-name">
                 <span>🎮</span>
-                <span>${n.gpu_name}</span>
+                <span>${escapeHtml(n.gpu_name)}</span>
               </div>
-              <div class="gpu-temp">${n.gpu_vram_used_gb.toFixed(1)} / ${n.gpu_vram_total_gb.toFixed(0)} GB VRAM • ${n.gpu_temp_c}°C</div>
+              <div class="gpu-temp">${(n.gpu_vram_used_gb || 0).toFixed(1)} / ${(n.gpu_vram_total_gb || 0).toFixed(0)} GB VRAM • ${n.gpu_temp_c || 0}°C</div>
             </div>
           ` : ''}
 
           <div class="node-actions">
             <div class="node-actions-left">
-              <button class="btn" style="padding:4px 8px; font-size:0.75rem;" onclick="pingNode('${n.id}')">⚡ Ping</button>
+              <button class="btn" style="padding:4px 8px; font-size:0.75rem;" onclick="pingNode('${escapeHtml(n.id)}')">⚡ Ping</button>
             </div>
             ${!n.is_local ? `
-              <button class="btn" style="padding:4px 8px; font-size:0.75rem; color:var(--rose);" onclick="forgetNode('${n.id}')">Forget</button>
+              <button class="btn" style="padding:4px 8px; font-size:0.75rem; color:var(--rose);" onclick="forgetNode('${escapeHtml(n.id)}')">Forget</button>
             ` : '<span style="font-size:0.7rem; color:var(--text-muted); font-weight:600;">Workstation Host</span>'}
           </div>
         `;
         grid.appendChild(card);
       });
 
+      // If only local host is present, show prompt card for pairing remote peers
+      if (fleetNodes.length === 1 && fleetNodes[0].is_local) {
+        const emptyCard = document.createElement('div');
+        emptyCard.className = 'node-card';
+        emptyCard.style.borderStyle = 'dashed';
+        emptyCard.style.alignItems = 'center';
+        emptyCard.style.justifyContent = 'center';
+        emptyCard.style.textAlign = 'center';
+        emptyCard.style.minHeight = '280px';
+        emptyCard.innerHTML = `
+          <div style="font-size: 2rem; margin-bottom: 8px;">📡</div>
+          <div style="font-weight: 700; color: #fff;">No Remote Peers Paired</div>
+          <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 6px; max-width: 260px; line-height: 1.4;">
+            Pair another machine running <code>m3tal-mesh-node</code> to view unified cluster telemetry.
+          </p>
+          <button class="btn btn-primary" style="margin-top: 14px;" onclick="openPairModal()">+ Pair Peer Node</button>
+        `;
+        grid.appendChild(emptyCard);
+      }
+
       // Update Header Metrics
       document.getElementById('metric-nodes').innerText = `${onlineCount} / ${fleetNodes.length} Online`;
       document.getElementById('metric-cores').innerText = `${totalCores} Cores`;
       document.getElementById('metric-ram').innerText = `${totalRAMUsed.toFixed(1)} / ${totalRAMMax.toFixed(0)} GB`;
       document.getElementById('metric-storage').innerText = `${formatStorage(totalStorageUsed)} / ${formatStorage(totalStorageMax)}`;
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
     function formatStorage(gb) {
@@ -522,13 +510,14 @@
         const res = await fetch(`/api/v2/plugins/mesh/collect?token=${token}`);
         if (res.ok) {
           const data = await res.json();
-          if (data?.result?.nodes && Array.isArray(data.result.nodes)) {
-            fleetNodes = data.result.nodes;
+          const nodes = data?.result?.nodes || data?.nodes;
+          if (Array.isArray(nodes)) {
+            fleetNodes = nodes;
             renderFleet();
           }
         }
-      } catch {
-        // Render fallback local fleet nodes
+      } catch (err) {
+        console.warn('Collect request failed:', err);
       }
     }
 
@@ -556,7 +545,14 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            action: 'pair_node',
             action_id: 'pair_node',
+            args: {
+              name: name || `Node (${ip})`,
+              ip: ip,
+              role: role,
+              token: pairToken
+            },
             name: name || `Node (${ip})`,
             ip: ip,
             role: role,
@@ -566,39 +562,22 @@
 
         if (res.ok) {
           const data = await res.json();
-          if (data?.result?.node) {
-            fleetNodes.push(data.result.node);
+          const node = data?.result?.node || data?.node;
+          if (node) {
+            fleetNodes.push(node);
             renderFleet();
-            showToast(`Paired ${data.result.node.name}`);
+            showToast(`Paired ${node.name}`);
             closePairModal();
             return;
           }
         }
-      } catch {
-        // Fallback for local demo simulation
+      } catch (e) {
+        console.error('Pair action error:', e);
       }
 
-      const newNode = {
-        id: `node-${Date.now()}`,
-        name: name || `Node (${ip})`,
-        ip: ip,
-        role: role,
-        status: "online",
-        cores: 8,
-        cpu_load: 4.8,
-        ram_used_gb: 4.0,
-        ram_total_gb: 16.0,
-        storage_used_gb: 120.0,
-        storage_total_gb: 512.0,
-        storage_pool: "Discovered Storage",
-        ping_ms: 1,
-        last_seen: "just now",
-        is_local: false
-      };
-      fleetNodes.push(newNode);
-      renderFleet();
-      showToast(`Paired ${newNode.name}`);
+      showToast(`Pair request sent to ${ip}`);
       closePairModal();
+      fetchCollect();
     }
 
     async function pingNode(id) {
@@ -606,10 +585,16 @@
         await fetch(`/api/v2/plugins/mesh/action?token=${token}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action_id: 'ping_node', node_id: id })
+          body: JSON.stringify({
+            action: 'ping_node',
+            action_id: 'ping_node',
+            target: id,
+            args: { node_id: id },
+            node_id: id
+          })
         });
       } catch {}
-      showToast(`Pinged node ${id} (1 ms)`);
+      showToast(`Pinged node (0 ms)`);
     }
 
     async function forgetNode(id) {
@@ -618,12 +603,18 @@
         await fetch(`/api/v2/plugins/mesh/action?token=${token}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action_id: 'forget_node', node_id: id })
+          body: JSON.stringify({
+            action: 'forget_node',
+            action_id: 'forget_node',
+            target: id,
+            args: { node_id: id },
+            node_id: id
+          })
         });
       } catch {}
       fleetNodes = fleetNodes.filter((n) => n.id !== id);
       renderFleet();
-      showToast(`Node ${id} removed`);
+      showToast(`Node removed`);
     }
 
     function scanNetwork() {
