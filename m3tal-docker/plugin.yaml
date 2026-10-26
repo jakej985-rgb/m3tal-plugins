@@ -2,7 +2,7 @@ apiVersion: m3tal.io/v1alpha1
 kind: Plugin
 metadata:
   name: docker-monitor
-  version: "0.4.2"
+  version: "0.5.0"
   title: "Containers"
   description: "Docker container fleet manager, log inspector, and lifecycle controller"
   author: "jakej985-rgb"
