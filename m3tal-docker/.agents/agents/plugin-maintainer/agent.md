@@ -30,7 +30,8 @@ You are the resident custodian for this plugin directory. Your duty is to implem
    - `m3tal.action`: Action dispatcher (start, stop, restart, prune, logs).
    - `m3tal.shutdown`: Graceful cleanup.
 4. **UI Assets**: All static UI assets in `ui/dist/` must use relative links (`./assets/...`) so they render seamlessly when mounted under `/plugins/m3tal-docker/`.
-5. **Changelog**: Maintain `CHANGELOG.md` following [Keep a Changelog](https://keepachangelog.com/) format and SemVer for every feature, fix, and release.
+5. **Dashboard Widget Ownership (`docker-fleet`)**: This plugin owns the `docker-fleet` dashboard widget declared in `plugin.yaml` (`size: [2, 1]`, `type: card`) and `m3tal.init`. Ensure the widget conforms to M3TAL's 4-column responsive grid layout and that `m3tal.collect` continues to feed live container metrics (`containers_total`, `containers_running`, `containers_stopped`) and `docker_ps` tabular data required by the widget.
+6. **Changelog**: Maintain `CHANGELOG.md` following [Keep a Changelog](https://keepachangelog.com/) format and SemVer for every feature, fix, and release.
 
 ## Development Commands
 - **Build Backend**: `make build`

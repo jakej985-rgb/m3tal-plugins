@@ -14,7 +14,7 @@ import (
 const (
 	CanonicalProcessName = "m3tal-docker"
 	PluginName           = "docker-monitor"
-	PluginVersion        = "0.2.3"
+	PluginVersion        = "0.3.1"
 )
 
 // RPCRequest represents standard JSON-RPC 2.0 request.
@@ -83,6 +83,15 @@ func handleRequest(req *RPCRequest) {
 				"collector",
 				"actions",
 				"ui_view",
+				"ui_widget",
+			},
+			"widgets": []map[string]interface{}{
+				{
+					"id":    "docker-fleet",
+					"title": "Containers",
+					"size":  []int{2, 1},
+					"type":  "card",
+				},
 			},
 			"tabs": []map[string]interface{}{
 				{
