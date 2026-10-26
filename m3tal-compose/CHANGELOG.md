@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.0] - 2026-10-26
+
+### 🚀 Changes & Improvements
+- **feat(mesh): add m3tal-mesh reader and m3tal-mesh-node telemetry broadcaster** (`31db524`)
+
+---
+
 ## [0.2.2] - 2026-10-26
 
 ### 🚀 Capabilities & Enhancements
