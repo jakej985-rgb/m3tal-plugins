@@ -67,7 +67,7 @@ if [ -f "$PLUGIN_DIR/Makefile" ]; then
     make -C "$PLUGIN_DIR" build
 fi
 
-STAGE_DIR=$(mktemp -d /tmp/m3tal-plugin-deb.XXXXXX)
+STAGE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/m3tal-plugin-deb".XXXXXX)
 trap 'rm -rf "$STAGE_DIR"' EXIT
 
 # Create standard package layout

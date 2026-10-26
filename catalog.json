@@ -17,6 +17,53 @@
     "apt_command": "sudo apt install -y m3tal-plugin-docker-monitor"
   },
   {
+    "name": "compose",
+    "title": "Compose Editor",
+    "process_name": "m3tal-compose",
+    "package_name": "m3tal-plugin-compose",
+    "category": "Container Management",
+    "description": "Docker Compose visual editor, syntax validator, and stack lifecycle manager.",
+    "capabilities": [
+      "collector",
+      "actions",
+      "ui_view"
+    ],
+    "version": "0.2.2",
+    "status": "available",
+    "apt_command": "sudo apt install -y m3tal-plugin-compose"
+  },
+  {
+    "name": "mesh",
+    "title": "Cluster & Mesh Federation",
+    "process_name": "m3tal-mesh",
+    "package_name": "m3tal-plugin-mesh-cluster",
+    "category": "Networking & Fleet",
+    "description": "Local network discovery, multi-node clustering, and telemetry federation across M3TAL workstations, servers, and NAS nodes.",
+    "capabilities": [
+      "collector",
+      "actions",
+      "ui_view"
+    ],
+    "version": "0.1.0",
+    "status": "available",
+    "apt_command": "sudo apt install -y m3tal-plugin-mesh-cluster"
+  },
+  {
+    "name": "mesh-node",
+    "title": "Mesh Node (Telemetry Sender)",
+    "process_name": "m3tal-mesh-node",
+    "package_name": "m3tal-plugin-mesh-node",
+    "category": "Networking & Fleet",
+    "description": "Headless M3TAL telemetry broadcaster and node metrics daemon for personal cloud clustering.",
+    "capabilities": [
+      "collector",
+      "actions"
+    ],
+    "version": "0.1.0",
+    "status": "available",
+    "apt_command": "sudo apt install -y m3tal-plugin-mesh-node"
+  },
+  {
     "name": "stack-orchestrator",
     "title": "Compose Stacks",
     "process_name": "m3tal-stacks",

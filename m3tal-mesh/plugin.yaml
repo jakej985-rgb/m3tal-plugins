@@ -1,0 +1,41 @@
+apiVersion: m3tal.io/v1alpha1
+kind: Plugin
+metadata:
+  name: mesh
+  version: "0.1.0"
+  title: "Mesh Fleet"
+  description: "Personal Cloud & Local Network Fleet Federation, peer discovery, and multi-node hardware telemetry reader"
+  author: "jakej985-rgb"
+  license: "MIT"
+  icon: "IconServer"
+  package_name: "m3tal-plugin-mesh"
+
+spec:
+  command: "./bin/m3tal-mesh"
+  args: []
+  process_name: "m3tal-mesh"
+  poll_interval: 3s
+
+  capabilities:
+    - collector
+    - actions
+    - ui_view
+
+  ui:
+    entry: "ui/dist/index.html"
+    route: "/mesh"
+    category: "fleet"
+    category_title: "Mesh Fleet"
+    tab_id: "mesh_fleet"
+    title: "Mesh Fleet"
+    sidebar: true
+    order: 30
+    roles: ["admin", "viewer"]
+
+  rpc:
+    protocol: "jsonrpc-2.0"
+    transport: "stdio"
+
+  requirements:
+    binaries: []
+    root: false

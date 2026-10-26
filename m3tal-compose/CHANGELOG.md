@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.2] - 2026-10-26
+
+### 🚀 Capabilities & Enhancements
+- **feat(discovery): host-wide compose stack discovery**: Integrated `docker compose ls -a --format json` in `ListStacks()` to automatically discover and monitor compose stacks running anywhere on the host system, not just within `/etc/m3tal/compose/`.
+- **fix(discovery): resolve dynamic stack filepaths**: Added `resolveStackPath()` to dynamically map lifecycle actions (`compose_up`, `compose_down`, `compose_restart`, `get_logs`) to the exact file path of any discovered stack across the machine.
+- **fix(safety): eliminate mock data leak in production**: Fixed `ListStacks()` so it cleanly returns an empty collection when no compose projects exist, rather than leaking phantom mock stacks.
+- **feat(ui): empty state handling & version sync**: Added descriptive empty state in `ui/dist/index.html` when no compose stacks are present and synced version badges to `0.2.2`.
+- **chore(metadata): catalog & manifest registration**: Added explicit `package_name: "m3tal-plugin-compose"` to `plugin.yaml` and registered `compose` in root `catalog.json`.
+
+---
+
 ## [0.2.1] - 2026-10-24
 
 ### 🚀 Changes & Improvements

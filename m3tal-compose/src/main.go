@@ -14,7 +14,7 @@ import (
 const (
 	CanonicalProcessName = "m3tal-compose"
 	PluginName           = "compose"
-	PluginVersion        = "0.2.1"
+	PluginVersion        = "0.2.2"
 )
 
 // RPCRequest represents standard JSON-RPC 2.0 request.

@@ -87,7 +87,11 @@ package:
 ifndef PLUGIN
 	$(error PLUGIN is not set. Usage: make package PLUGIN=<plugin-name>)
 endif
-	@./scripts/build-plugin-deb.sh "$(PLUGIN)"
+	@if [ "$(PLUGIN)" = "m3tal-mesh-cluster" ] || [ "$(PLUGIN)" = "cluster" ]; then \
+		./scripts/build-cluster-deb.sh; \
+	else \
+		./scripts/build-plugin-deb.sh "$(PLUGIN)"; \
+	fi
 
 package-all:
 	@for p in $$(find . -maxdepth 1 -mindepth 1 -type d ! -name '.*' ! -name 'scripts'); do \
@@ -95,6 +99,9 @@ package-all:
 			./scripts/build-plugin-deb.sh "$$(basename "$$p")"; \
 		fi; \
 	done
+	@if [ -f "scripts/build-cluster-deb.sh" ]; then \
+		./scripts/build-cluster-deb.sh; \
+	fi
 
 clean:
 	@rm -f *.deb *.sha256

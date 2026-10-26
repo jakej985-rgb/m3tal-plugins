@@ -50,12 +50,44 @@ All plugins strictly adhere to the **M3TAL Plugin Standardization Specification*
 - **Debian Package**: `m3tal-plugin-compose`
 - **Dashboard Mount**: `/containers` (`/plugins/m3tal-compose/`) — Sub-Tab: `Compose Editor`
 - **Capabilities**: `collector`, `actions`, `ui_view`
-- **Status**: 🟡 **Developing (v0.1.0)**
+- **Status**: 🟡 **Developing (v0.2.2)**
 - **What it does**:
   Visual and YAML editor for Docker Compose projects (`docker-compose.yml`, `compose.yaml`). Provides syntax validation, visual service creator, environment variable (`.env`) manager, and direct stack lifecycle actions (`compose up -d`, `compose down`, `compose restart`, `compose pull`, `compose logs`).
 - **Install Command**:
   ```bash
   sudo apt install -y m3tal-plugin-compose
+  ```
+
+---
+
+### 🌐 [`m3tal-mesh`](./m3tal-mesh/) — Cluster & Mesh Federation Reader
+- **Directory**: `m3tal-mesh/`
+- **Process Identity**: `m3tal-mesh`
+- **Debian Package**: `m3tal-plugin-mesh` (or bundle via `m3tal-plugin-mesh-cluster`)
+- **Dashboard Mount**: `/mesh` (`/plugins/m3tal-mesh/`) — Route: `Mesh Fleet`
+- **Capabilities**: `collector`, `actions`, `ui_view`
+- **Status**: 🟢 **Available (v0.1.0)**
+- **What it does**:
+  Personal cloud and local network fleet federation reader. Discovers other M3TAL instances on your LAN/Tailscale, pairs with authenticated remote `m3tal-mesh-node` peers, aggregates multi-machine telemetry (CPU, RAM, ZFS/NVMe storage pools, GPU), and provides a live cluster health dashboard.
+- **Install Command**:
+  ```bash
+  sudo apt install -y m3tal-plugin-mesh-cluster
+  ```
+
+---
+
+### 📡 [`m3tal-mesh-node`](./m3tal-mesh-node/) — Headless Telemetry Broadcaster
+- **Directory**: `m3tal-mesh-node/`
+- **Process Identity**: `m3tal-mesh-node`
+- **Debian Package**: `m3tal-plugin-mesh-node`
+- **Dashboard Mount**: Headless Daemon (No UI tab)
+- **Capabilities**: `collector`, `actions`
+- **Status**: 🟢 **Available (v0.1.0)**
+- **What it does**:
+  Lightweight headless sender daemon designed to run on servers, NAS appliances, and secondary PCs. Broadcasts local system telemetry (CPU load, memory, disk mounts, ZFS pools, GPU status) over mDNS and authenticated endpoints for consumption by `m3tal-mesh`.
+- **Install Command**:
+  ```bash
+  sudo apt install -y m3tal-plugin-mesh-node
   ```
 
 ---

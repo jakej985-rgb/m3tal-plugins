@@ -1,0 +1,29 @@
+apiVersion: m3tal.io/v1alpha1
+kind: Plugin
+metadata:
+  name: mesh-node
+  version: "0.1.0"
+  title: "Mesh Node (Telemetry Sender)"
+  description: "Headless M3TAL telemetry broadcaster and node metrics daemon for personal cloud clustering"
+  author: "jakej985-rgb"
+  license: "MIT"
+  icon: "IconServer"
+  package_name: "m3tal-plugin-mesh-node"
+
+spec:
+  command: "./bin/m3tal-mesh-node"
+  args: []
+  process_name: "m3tal-mesh-node"
+  poll_interval: 2s
+
+  capabilities:
+    - collector
+    - actions
+
+  rpc:
+    protocol: "jsonrpc-2.0"
+    transport: "stdio"
+
+  requirements:
+    binaries: []
+    root: false

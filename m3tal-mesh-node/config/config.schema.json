@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "M3TAL Mesh Node Broadcaster Configuration",
+  "type": "object",
+  "properties": {
+    "poll_interval": {
+      "type": "string",
+      "default": "2s",
+      "description": "Interval for refreshing local system metrics."
+    },
+    "listen_port": {
+      "type": "integer",
+      "default": 9321,
+      "description": "Port used for direct authenticated peer telemetry connections."
+    },
+    "broadcast_mdns": {
+      "type": "boolean",
+      "default": true,
+      "description": "Announce node presence on local subnet via mDNS."
+    }
+  },
+  "additionalProperties": false
+}

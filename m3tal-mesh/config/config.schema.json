@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "M3TAL Mesh Federation Configuration",
+  "type": "object",
+  "properties": {
+    "poll_interval": {
+      "type": "string",
+      "default": "3s",
+      "description": "Polling interval for querying registered mesh peer nodes."
+    },
+    "discovery_enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Automatically discover m3tal-mesh-node daemons via mDNS on local subnet."
+    },
+    "peer_timeout_sec": {
+      "type": "integer",
+      "default": 10,
+      "description": "Seconds before marking a non-responding peer as offline."
+    }
+  },
+  "additionalProperties": false
+}
