@@ -14,7 +14,7 @@ import (
 const (
 	CanonicalProcessName = "m3tal-docker"
 	PluginName           = "docker-monitor"
-	PluginVersion        = "0.3.1"
+	PluginVersion        = "0.4.2"
 )
 
 // RPCRequest represents standard JSON-RPC 2.0 request.
@@ -133,6 +133,12 @@ func handleRequest(req *RPCRequest) {
 					"id":          "get_logs",
 					"label":       "Get Logs",
 					"description": "Fetch container logs",
+					"confirm":     false,
+				},
+				{
+					"id":          "inspect_container",
+					"label":       "Inspect Container",
+					"description": "Inspect detailed container configuration, mounts, networks, and environment",
 					"confirm":     false,
 				},
 			},
@@ -291,6 +297,22 @@ func handleRequest(req *RPCRequest) {
 					"success": true,
 					"message": "Logs retrieved",
 					"logs":    logs,
+				})
+			}
+
+		case "inspect_container":
+			info, err := InspectContainer(params.Target)
+			if err != nil {
+				sendResult(req.ID, map[string]interface{}{
+					"success": false,
+					"message": "Failed to inspect container",
+					"error":   err.Error(),
+				})
+			} else {
+				sendResult(req.ID, map[string]interface{}{
+					"success": true,
+					"message": "Container inspected",
+					"data":    info,
 				})
 			}
 

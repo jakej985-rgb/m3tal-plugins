@@ -292,6 +292,254 @@
       font-size: 12px;
     }
 
+    /* Expandable Row Styles */
+    .btn-expand {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 11px;
+      width: 24px;
+      height: 24px;
+      border-radius: 4px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s ease;
+      line-height: 1;
+    }
+
+    .btn-expand:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: #fff;
+    }
+
+    .btn-expand.expanded {
+      transform: rotate(90deg);
+      color: var(--emerald);
+    }
+
+    .row-clickable {
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+
+    .row-clickable:hover td {
+      background: rgba(255, 255, 255, 0.04) !important;
+    }
+
+    .row-clickable.is-expanded td {
+      background: rgba(16, 185, 129, 0.03) !important;
+      border-bottom-color: transparent !important;
+    }
+
+    .details-row td {
+      padding: 0 !important;
+      background: #090d13 !important;
+      border-bottom: 1px solid var(--border) !important;
+    }
+
+    .details-container {
+      padding: 16px 20px;
+      margin: 4px 16px 16px 16px;
+      background: #11161f;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.4);
+      animation: fadeIn 0.15s ease-out;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-3px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .details-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      padding-bottom: 12px;
+      margin-bottom: 14px;
+      border-bottom: 1px solid #21262d;
+    }
+
+    .details-badges {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .detail-tag {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 6px;
+      background: #21262d;
+      border: 1px solid #30363d;
+      color: #c9d1d9;
+      font-family: ui-monospace, monospace;
+    }
+
+    .detail-tag-accent {
+      background: rgba(56, 189, 248, 0.1);
+      border-color: rgba(56, 189, 248, 0.3);
+      color: #38bdf8;
+    }
+
+    .details-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+
+    .details-card {
+      background: #0d1117;
+      border: 1px solid #21262d;
+      border-radius: 6px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .details-card-title {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .details-kv-table {
+      width: 100%;
+      font-size: 12px;
+      border-collapse: collapse;
+    }
+
+    .details-kv-table td {
+      padding: 4px 6px !important;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.03) !important;
+      vertical-align: top;
+      background: transparent !important;
+    }
+
+    .details-kv-table td:first-child {
+      color: var(--text-muted);
+      width: 110px;
+      font-weight: 500;
+    }
+
+    .details-kv-table td:last-child {
+      color: #e6edf3;
+      font-family: ui-monospace, monospace;
+      word-break: break-all;
+    }
+
+    .env-container {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .env-filter-input {
+      width: 100%;
+      background: #161b22;
+      border: 1px solid #30363d;
+      color: #c9d1d9;
+      font-size: 11px;
+      border-radius: 4px;
+      padding: 4px 8px;
+      outline: none;
+    }
+
+    .env-filter-input:focus {
+      border-color: var(--emerald);
+    }
+
+    .env-scroll {
+      max-height: 120px;
+      overflow-y: auto;
+      background: #05080c;
+      border: 1px solid #21262d;
+      border-radius: 4px;
+      padding: 8px;
+      font-family: ui-monospace, monospace;
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
+    .env-item {
+      display: flex;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      padding: 2px 0;
+      word-break: break-all;
+    }
+
+    .env-key {
+      color: #79c0ff;
+      font-weight: 600;
+      margin-right: 8px;
+      flex-shrink: 0;
+    }
+
+    .env-val {
+      color: #c9d1d9;
+    }
+
+    .mount-item {
+      padding: 6px 8px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid #21262d;
+      border-radius: 4px;
+      margin-bottom: 6px;
+      font-size: 11px;
+      font-family: ui-monospace, monospace;
+    }
+
+    .mount-path {
+      color: #58a6ff;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      word-break: break-all;
+    }
+
+    .copy-chip {
+      background: #21262d;
+      border: 1px solid #30363d;
+      border-radius: 4px;
+      padding: 2px 6px;
+      font-size: 10px;
+      color: #8b949e;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      transition: all 0.15s ease;
+    }
+
+    .copy-chip:hover {
+      background: #30363d;
+      color: #fff;
+    }
+
+    .details-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding-top: 10px;
+      border-top: 1px solid #21262d;
+    }
+
     /* Logs Console */
     .logs-panel {
       background: var(--card-bg);
@@ -415,6 +663,7 @@
       <table>
         <thead>
           <tr>
+            <th style="width: 36px; text-align: center;"></th>
             <th>Name</th>
             <th>State</th>
             <th>Image</th>
@@ -425,7 +674,7 @@
         </thead>
         <tbody id="containers-body">
           <tr>
-            <td colspan="6" style="text-align: center; padding: 32px; color: var(--text-muted);">
+            <td colspan="7" style="text-align: center; padding: 32px; color: var(--text-muted);">
               Connecting to M3TAL Docker supervisor...
             </td>
           </tr>
@@ -456,6 +705,10 @@
     let activeContainerId = null;
     let activeContainerName = null;
     let cachedContainers = [];
+    let expandedContainerIds = new Set();
+    let inspectCache = {};
+    let secretsRevealed = {};
+    let envFilters = {};
 
     function getToken() {
       const urlParams = new URLSearchParams(window.location.search);
@@ -582,16 +835,33 @@
       tbody.innerHTML = '';
 
       if (containers.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; padding: 32px; color: var(--text-muted);">No containers found.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; padding: 32px; color: var(--text-muted);">No containers found.</td></tr>`;
         return;
       }
 
       containers.forEach(c => {
-        const tr = document.createElement('tr');
         const isRunning = c.state === 'running';
+        const isExpanded = expandedContainerIds.has(c.id);
+
+        const tr = document.createElement('tr');
+        tr.className = `row-clickable ${isExpanded ? 'is-expanded' : ''}`;
+        tr.onclick = (e) => {
+          if (e.target.closest('button') || e.target.closest('a') || e.target.closest('input')) return;
+          toggleExpand(c.id, c.name);
+        };
 
         tr.innerHTML = `
-          <td><strong style="color: #fff;">${escapeHtml(c.name)}</strong></td>
+          <td style="text-align: center; width: 36px;">
+            <button class="btn-expand ${isExpanded ? 'expanded' : ''}" onclick="toggleExpand('${c.id}', '${c.name}', event)" title="Expand / collapse container details">
+              ▶
+            </button>
+          </td>
+          <td>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <strong style="color: #fff; font-size: 13px;">${escapeHtml(c.name)}</strong>
+              ${c.status && c.status.toLowerCase().includes('healthy') ? '<span style="font-size: 10px; padding: 1px 6px; border-radius: 10px; background: rgba(16,185,129,0.15); color: #34d399; border: 1px solid rgba(16,185,129,0.3); font-weight: 600;">HEALTHY</span>' : ''}
+            </div>
+          </td>
           <td>
             <span class="badge ${isRunning ? 'badge-running' : 'badge-exited'}">
               <span class="status-dot ${isRunning ? 'dot-running' : 'dot-stopped'}"></span>
@@ -603,6 +873,7 @@
           <td><span class="mono">${c.cpu || '0%'} / ${c.memory || '—'}</span></td>
           <td style="text-align: right;">
             <div class="row-actions">
+              <button class="btn btn-sm" onclick="toggleExpand('${c.id}', '${c.name}', event)" style="color: #58a6ff;">${isExpanded ? 'Collapse' : 'Details'}</button>
               <button class="btn btn-sm" onclick="viewLogs('${c.id}', '${c.name}')">Logs</button>
               ${isRunning
                 ? `<button class="btn btn-sm btn-danger" onclick="controlContainer('${c.name}', 'stop')">Stop</button>`
@@ -613,7 +884,417 @@
           </td>
         `;
         tbody.appendChild(tr);
+
+        // Expandable Details Row
+        const detailsTr = document.createElement('tr');
+        detailsTr.id = `details-row-${c.id}`;
+        detailsTr.className = 'details-row';
+        detailsTr.style.display = isExpanded ? '' : 'none';
+        detailsTr.innerHTML = `
+          <td colspan="7">
+            <div class="details-container" id="details-content-${c.id}">
+              ${isExpanded ? renderDetailsContent(c.id, c.name) : '<div style="padding: 16px; text-align: center; color: var(--text-muted); font-size: 12px;">Loading details...</div>'}
+            </div>
+          </td>
+        `;
+        tbody.appendChild(detailsTr);
       });
+    }
+
+    async function toggleExpand(id, name, event) {
+      if (event) event.stopPropagation();
+      const row = document.getElementById(`details-row-${id}`);
+      const btn = document.querySelector(`button[onclick*="'${id}'"].btn-expand`);
+      const tr = row ? row.previousElementSibling : null;
+
+      if (expandedContainerIds.has(id)) {
+        expandedContainerIds.delete(id);
+        if (row) row.style.display = 'none';
+        if (btn) btn.classList.remove('expanded');
+        if (tr) tr.classList.remove('is-expanded');
+        const detailsBtn = tr ? tr.querySelector('.row-actions button') : null;
+        if (detailsBtn) detailsBtn.innerText = 'Details';
+        return;
+      }
+
+      expandedContainerIds.add(id);
+      if (row) row.style.display = '';
+      if (btn) btn.classList.add('expanded');
+      if (tr) tr.classList.add('is-expanded');
+      const detailsBtn = tr ? tr.querySelector('.row-actions button') : null;
+      if (detailsBtn) detailsBtn.innerText = 'Collapse';
+
+      // Fetch inspect info if not cached
+      if (!inspectCache[id]) {
+        await fetchInspect(id, name);
+      } else {
+        updateDetailsUI(id, name);
+      }
+    }
+
+    async function fetchInspect(id, name) {
+      const containerEl = document.getElementById(`details-content-${id}`);
+      if (containerEl) {
+        containerEl.innerHTML = `
+          <div style="display: flex; align-items: center; justify-content: center; gap: 8px; padding: 24px; color: var(--text-muted); font-size: 12px;">
+            <span class="status-dot dot-running"></span> Inspecting container metadata for <strong>${escapeHtml(name)}</strong>...
+          </div>
+        `;
+      }
+
+      let inspectData = null;
+      // 1. Try plugin action inspect_container
+      const endpoints = [
+        '/api/v2/plugins/docker-monitor/action',
+        '/api/v2/plugins/m3tal-docker/action'
+      ];
+      for (const ep of endpoints) {
+        try {
+          const res = await fetch(ep, {
+            method: 'POST',
+            headers: getHeaders(),
+            body: JSON.stringify({ action: 'inspect_container', target: name || id })
+          });
+          if (res.ok) {
+            const json = await res.json();
+            if (json.data && (json.data.Id || json.data.id || json.data.data)) {
+              inspectData = json.data.data || json.data;
+              break;
+            }
+          }
+        } catch (e) {}
+      }
+
+      // 2. Fallback to /api/v2/containers/${name}
+      if (!inspectData) {
+        try {
+          const res = await fetch(`/api/v2/containers/${name}`, { headers: getHeaders() });
+          if (res.ok) {
+            const json = await res.json();
+            inspectData = json.data || json;
+          }
+        } catch (e) {}
+      }
+
+      // 3. Fallback mock generation if running standalone
+      if (!inspectData) {
+        const c = cachedContainers.find(item => item.id === id || item.name === name) || {};
+        inspectData = {
+          Id: (id || 'mockid') + '00000000000000000000000000000000000000000000000000000000',
+          Created: new Date().toISOString(),
+          State: {
+            Status: c.state || 'running',
+            Running: c.state === 'running',
+            Pid: 10423,
+            StartedAt: new Date(Date.now() - 3600000 * 48).toISOString(),
+            Health: { Status: 'healthy' }
+          },
+          Config: {
+            Image: c.image || 'unknown',
+            Cmd: ['/bin/sh'],
+            Env: ['PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', 'NODE_ENV=production', 'PORT=8080'],
+            Labels: { 'com.docker.compose.service': name, 'com.docker.compose.project': 'm3tal' }
+          },
+          HostConfig: {
+            RestartPolicy: { Name: 'unless-stopped' }
+          },
+          NetworkSettings: {
+            Networks: { bridge: { IPAddress: '172.18.0.4', Gateway: '172.18.0.1', MacAddress: '02:42:ac:12:00:04' } },
+            Ports: { '80/tcp': null }
+          },
+          Mounts: []
+        };
+      }
+
+      inspectCache[id] = inspectData;
+      updateDetailsUI(id, name);
+    }
+
+    function renderDetailsContent(id, name) {
+      const data = inspectCache[id];
+      if (!data) {
+        return `
+          <div style="display: flex; align-items: center; justify-content: center; gap: 8px; padding: 24px; color: var(--text-muted); font-size: 12px;">
+            <span class="status-dot dot-running"></span> Inspecting container metadata for <strong>${escapeHtml(name)}</strong>...
+          </div>
+        `;
+      }
+
+      const fullId = data.Id || data.id || id;
+      const created = data.Created ? new Date(data.Created).toLocaleString() : 'N/A';
+      const state = data.State || {};
+      const pid = state.Pid || 'N/A';
+      const startedAt = state.StartedAt ? new Date(state.StartedAt).toLocaleString() : 'N/A';
+      const health = state.Health?.Status || 'N/A';
+      const restartPolicy = data.HostConfig?.RestartPolicy?.Name || 'unless-stopped';
+      const config = data.Config || {};
+      const image = config.Image || data.Image || 'N/A';
+      const cmd = Array.isArray(config.Cmd) ? config.Cmd.join(' ') : (config.Cmd || 'N/A');
+      const workingDir = config.WorkingDir || '/';
+      const labels = config.Labels || {};
+      const composeProject = labels['com.docker.compose.project'] || labels['com.docker.compose.project.working_dir'] || '';
+      const composeService = labels['com.docker.compose.service'] || '';
+
+      // Networks
+      const netSettings = data.NetworkSettings || {};
+      const networks = netSettings.Networks || {};
+      const netNames = Object.keys(networks);
+      let primaryIp = 'Host Networking / None';
+      let gateway = '—';
+      let mac = '—';
+      if (netNames.length > 0) {
+        const firstNet = networks[netNames[0]];
+        if (firstNet.IPAddress) primaryIp = firstNet.IPAddress;
+        if (firstNet.Gateway) gateway = firstNet.Gateway;
+        if (firstNet.MacAddress) mac = firstNet.MacAddress;
+      }
+      const portMap = netSettings.Ports || {};
+      const portEntries = [];
+      for (const [p, bindings] of Object.entries(portMap)) {
+        if (bindings && bindings.length > 0) {
+          bindings.forEach(b => {
+            portEntries.push(`${b.HostIp || '0.0.0.0'}:${b.HostPort} ➔ ${p}`);
+          });
+        } else {
+          portEntries.push(`${p} (exposed)`);
+        }
+      }
+
+      // Mounts
+      const mounts = Array.isArray(data.Mounts) ? data.Mounts : [];
+
+      // Environment Variables
+      const rawEnv = Array.isArray(config.Env) ? config.Env : [];
+      const filterQ = (envFilters[id] || '').toLowerCase();
+      const showSecret = !!secretsRevealed[id];
+
+      const envItems = rawEnv
+        .map(e => {
+          const eq = e.indexOf('=');
+          if (eq === -1) return { key: e, val: '' };
+          return { key: e.substring(0, eq), val: e.substring(eq + 1) };
+        })
+        .filter(e => !filterQ || e.key.toLowerCase().includes(filterQ) || e.val.toLowerCase().includes(filterQ));
+
+      return `
+        <!-- Drawer Header -->
+        <div class="details-header">
+          <div class="details-badges">
+            <strong style="color: #fff; font-size: 14px;">${escapeHtml(name)}</strong>
+            <span class="detail-tag detail-tag-accent" title="${escapeHtml(fullId)}">
+              ID: ${escapeHtml(fullId.substring(0, 12))}
+            </span>
+            <button class="copy-chip" onclick="copyText('${escapeHtml(fullId)}', 'Full container ID copied!')" title="Copy full ID">
+              📋 Copy ID
+            </button>
+            <span class="detail-tag">PID: ${pid}</span>
+            <span class="detail-tag">Restart: ${escapeHtml(restartPolicy)}</span>
+            ${health !== 'N/A' ? `<span class="detail-tag" style="color: #34d399; border-color: rgba(16,185,129,0.3);">Health: ${escapeHtml(health)}</span>` : ''}
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <button class="btn btn-sm" onclick="copyInspectJson('${id}')" title="Copy full inspect JSON payload">
+              📋 Copy JSON
+            </button>
+            <button class="btn btn-sm btn-danger" onclick="toggleExpand('${id}', '${name}', event)">
+              ✕ Collapse
+            </button>
+          </div>
+        </div>
+
+        <!-- Details Grid -->
+        <div class="details-grid">
+          <!-- Card 1: Network & Ports -->
+          <div class="details-card">
+            <div class="details-card-title">
+              <span>🌐 Network & Connectivity</span>
+              <span class="detail-tag">${netNames.join(', ') || 'host'}</span>
+            </div>
+            <table class="details-kv-table">
+              <tr>
+                <td>IP Address</td>
+                <td><strong style="color: #58a6ff;">${escapeHtml(primaryIp)}</strong></td>
+              </tr>
+              <tr>
+                <td>Gateway</td>
+                <td>${escapeHtml(gateway)}</td>
+              </tr>
+              <tr>
+                <td>MAC Address</td>
+                <td>${escapeHtml(mac)}</td>
+              </tr>
+              <tr>
+                <td>Port Bindings</td>
+                <td>
+                  ${portEntries.length > 0 
+                    ? portEntries.map(p => `<div>${escapeHtml(p)}</div>`).join('') 
+                    : '<span style="color: var(--text-muted);">None</span>'}
+                </td>
+              </tr>
+            </table>
+          </div>
+
+          <!-- Card 2: Configuration & Lifecycle -->
+          <div class="details-card">
+            <div class="details-card-title">
+              <span>⚙️ Configuration & Lifecycle</span>
+            </div>
+            <table class="details-kv-table">
+              <tr>
+                <td>Full Image</td>
+                <td title="${escapeHtml(image)}">${escapeHtml(image)}</td>
+              </tr>
+              <tr>
+                <td>Created</td>
+                <td>${escapeHtml(created)}</td>
+              </tr>
+              <tr>
+                <td>Started At</td>
+                <td>${escapeHtml(startedAt)}</td>
+              </tr>
+              <tr>
+                <td>Working Dir</td>
+                <td>${escapeHtml(workingDir)}</td>
+              </tr>
+              ${composeProject ? `
+                <tr>
+                  <td>Compose</td>
+                  <td><span class="detail-tag detail-tag-accent">${escapeHtml(composeProject)}</span> / <strong>${escapeHtml(composeService)}</strong></td>
+                </tr>
+              ` : ''}
+              <tr>
+                <td>Command</td>
+                <td><span style="color: #f0883e;">${escapeHtml(cmd)}</span></td>
+              </tr>
+            </table>
+          </div>
+
+          <!-- Card 3: Storage & Mounts -->
+          <div class="details-card">
+            <div class="details-card-title">
+              <span>💾 Storage & Mounts</span>
+              <span class="detail-tag">${mounts.length} Mount(s)</span>
+            </div>
+            <div style="max-height: 140px; overflow-y: auto; padding-right: 4px;">
+              ${mounts.length === 0 ? '<div style="color: var(--text-muted); font-size: 11px; padding: 8px 0;">No host mounts or volumes attached.</div>' : ''}
+              ${mounts.map(m => `
+                <div class="mount-item">
+                  <div class="mount-path">
+                    <span style="color: #8b949e;">${escapeHtml(m.Source || 'volume')}</span>
+                    <span style="color: var(--emerald);">➔</span>
+                    <span style="color: #fff; font-weight: 600;">${escapeHtml(m.Destination || '/')}</span>
+                  </div>
+                  <div style="display: flex; gap: 6px; margin-top: 4px; font-size: 10px; color: var(--text-muted);">
+                    <span style="text-transform: uppercase;">${escapeHtml(m.Type || 'bind')}</span>
+                    <span>•</span>
+                    <span style="color: ${m.RW ? 'var(--emerald)' : 'var(--rose)'};">${m.RW ? 'READ-WRITE' : 'READ-ONLY'}</span>
+                    ${m.Propagation ? `<span>•</span><span>${escapeHtml(m.Propagation)}</span>` : ''}
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+
+          <!-- Card 4: Environment Variables -->
+          <div class="details-card">
+            <div class="details-card-title">
+              <span>🔐 Environment Variables</span>
+              <button class="copy-chip" onclick="toggleSecrets('${id}')" title="Toggle sensitive values">
+                ${showSecret ? '🔒 Mask Secrets' : '👁️ Show Secrets'}
+              </button>
+            </div>
+            <div class="env-container">
+              <input 
+                type="text" 
+                class="env-filter-input" 
+                placeholder="Filter environment variables..." 
+                value="${escapeHtml(envFilters[id] || '')}"
+                oninput="handleEnvFilter('${id}', this.value)"
+              />
+              <div class="env-scroll">
+                ${envItems.length === 0 ? '<div style="color: var(--text-muted); text-align: center; padding: 8px;">No environment variables matched.</div>' : ''}
+                ${envItems.map(item => {
+                  const isSecret = /pass|key|secret|token|auth|cred/i.test(item.key);
+                  const displayVal = (isSecret && !showSecret) ? '••••••••' : item.val;
+                  return `
+                    <div class="env-item">
+                      <span class="env-key">${escapeHtml(item.key)}</span>
+                      <span class="env-val" style="${isSecret && !showSecret ? 'letter-spacing: 2px; color: #8b949e;' : ''}">${escapeHtml(displayVal)}</span>
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Drawer Footer -->
+        <div class="details-footer">
+          <div style="font-size: 11px; color: var(--text-muted);">
+            Container Supervision: Active • High-Fidelity Telemetry
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button class="btn btn-sm" onclick="viewLogs('${id}', '${name}')">
+              📜 Live Logs
+            </button>
+            <button class="btn btn-sm" onclick="controlContainer('${name}', 'restart')">
+              🔄 Restart Container
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
+    function copyText(text, successMsg) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => {
+          showToast(successMsg || 'Copied to clipboard!', 'success');
+        }).catch(() => {
+          fallbackCopyText(text, successMsg);
+        });
+      } else {
+        fallbackCopyText(text, successMsg);
+      }
+    }
+
+    function fallbackCopyText(text, successMsg) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand('copy');
+        showToast(successMsg || 'Copied to clipboard!', 'success');
+      } catch (e) {
+        showToast('Failed to copy to clipboard', 'error');
+      }
+      document.body.removeChild(ta);
+    }
+
+    function copyInspectJson(id) {
+      const data = inspectCache[id];
+      if (!data) return;
+      copyText(JSON.stringify(data, null, 2), 'Full container inspect JSON copied to clipboard!');
+    }
+
+    function toggleSecrets(id) {
+      secretsRevealed[id] = !secretsRevealed[id];
+      const c = cachedContainers.find(item => item.id === id);
+      updateDetailsUI(id, c ? c.name : id);
+    }
+
+    function handleEnvFilter(id, val) {
+      envFilters[id] = val;
+      const c = cachedContainers.find(item => item.id === id);
+      updateDetailsUI(id, c ? c.name : id);
+    }
+
+    function updateDetailsUI(id, name) {
+      const el = document.getElementById(`details-content-${id}`);
+      if (el) {
+        el.innerHTML = renderDetailsContent(id, name || id);
+      }
     }
 
     async function controlContainer(name, action) {

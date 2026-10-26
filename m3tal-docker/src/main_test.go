@@ -104,3 +104,30 @@ func TestRPCHandlerAction(t *testing.T) {
 
 	handleRequest(&req)
 }
+
+func TestInspectContainer(t *testing.T) {
+	SetMockMode(true)
+	defer SetMockMode(false)
+
+	info, err := InspectContainer("mock-target")
+	if err != nil {
+		t.Fatalf("expected no error from InspectContainer, got %v", err)
+	}
+	if info["Id"] == "" {
+		t.Errorf("expected non-empty Id in inspect info")
+	}
+
+	// Test inspect action dispatch via RPC
+	params, _ := json.Marshal(map[string]interface{}{
+		"action_id": "inspect_container",
+		"target":    "mock-target",
+	})
+	req := RPCRequest{
+		JSONRPC: "2.0",
+		ID:      5,
+		Method:  "m3tal.action",
+		Params:  params,
+	}
+	handleRequest(&req)
+}
+

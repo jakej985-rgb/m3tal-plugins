@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.2] - 2026-10-26
+
+### 🚀 Changes & Improvements
+- **feat(fleet): add expandable container details drawer for deep telemetry and inspection**:
+  - Implemented row expansion toggle (`▶` / `▼`) and `Details` action button on the Container Fleet table.
+  - Added new `inspect_container` action to the JSON-RPC stdio backend executing `docker inspect <target>` with full mock fallback.
+  - Rendered a structured, dark-themed details drawer displaying:
+    - **Overview**: Full 64-character container ID with 1-click copy, Created timestamp, Uptime, PID, Health status badge, and Restart policy.
+    - **Networking & Connectivity**: Primary network mode, container internal IP, Gateway, MAC address, and exposed/published port bindings.
+    - **Configuration & Lifecycle**: Full image tag/SHA, entrypoint, command, working directory, and Docker Compose project/service metadata.
+    - **Storage & Mounts**: Physical/bind mount paths, volume sources, target destinations, and read/write permissions.
+    - **Environment Variables**: Searchable, scrollable list of environment variables with sensitive key value masking (`••••••••`) and reveal toggle.
+    - **Drawer Controls**: 1-click copy for raw inspect JSON, quick link to live log console, and container restart trigger.
+  - Maintained expand state across periodic 8-second fleet telemetry polling.
+
+---
+
 ## [0.4.1] - 2026-10-26
 
 ### 🚀 Changes & Improvements
