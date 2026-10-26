@@ -5,55 +5,32 @@
     "process_name": "m3tal-docker",
     "package_name": "m3tal-plugin-docker-monitor",
     "category": "Container Management",
-    "description": "Docker container fleet manager, log inspector, lifecycle controller, and modular dashboard widget.",
+    "description": "Docker container fleet monitor, log inspector, container lifecycle controls, and image pruning.",
     "capabilities": [
       "collector",
       "actions",
       "ui_view",
-      "ui_widget",
-      "settings"
+      "websocket_stream"
     ],
-    "version": "0.5.1",
+    "version": "0.1.0",
     "status": "available",
-    "has_deb": true,
-    "deb_filename": "m3tal-plugin-docker-monitor_0.5.1_amd64.deb",
     "apt_command": "sudo apt install -y m3tal-plugin-docker-monitor"
   },
   {
-    "name": "compose",
-    "title": "Compose Editor",
-    "process_name": "m3tal-compose",
-    "package_name": "m3tal-plugin-compose",
-    "category": "Container Management",
-    "description": "Docker Compose visual editor, syntax validator, and multi-container stack lifecycle manager.",
+    "name": "stack-orchestrator",
+    "title": "Compose Stacks",
+    "process_name": "m3tal-stacks",
+    "package_name": "m3tal-plugin-stacks",
+    "category": "Compose Stacks",
+    "description": "Multi-service compose stack orchestration, live health checks, and lifecycle deployment.",
     "capabilities": [
-      "collector",
-      "actions",
-      "ui_view"
-    ],
-    "version": "0.3.0",
-    "status": "available",
-    "has_deb": true,
-    "deb_filename": "m3tal-plugin-compose_0.3.0_amd64.deb",
-    "apt_command": "sudo apt install -y m3tal-plugin-compose"
-  },
-  {
-    "name": "mesh",
-    "title": "Cluster & Mesh Federation",
-    "process_name": "m3tal-mesh",
-    "package_name": "m3tal-plugin-mesh-cluster",
-    "category": "Networking & Fleet",
-    "description": "Local network discovery, multi-node clustering, and telemetry federation across M3TAL workstations, servers, and NAS nodes.",
-    "capabilities": [
-      "collector",
+      "orchestrator",
       "actions",
       "ui_view"
     ],
     "version": "0.1.0",
-    "status": "available",
-    "has_deb": true,
-    "deb_filename": "m3tal-plugin-mesh-cluster_0.1.0_amd64.deb",
-    "apt_command": "sudo apt install -y m3tal-plugin-mesh-cluster"
+    "status": "planned",
+    "apt_command": "sudo apt install -y m3tal-plugin-stacks"
   },
   {
     "name": "ai-engine",
