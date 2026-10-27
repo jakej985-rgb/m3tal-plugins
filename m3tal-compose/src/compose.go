@@ -389,14 +389,7 @@ func ListStacks() ([]StackInfo, error) {
 		// Choose one canonical Compose file per project folder. Flat files are
 		// individually named projects, so each YAML file in the root is eligible.
 		if !flatFile {
-			preferred := ""
-			for _, candidateName := range []string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"} {
-				candidate := filepath.Join(filepath.Dir(path), candidateName)
-				if _, err := os.Stat(candidate); err == nil {
-					preferred = candidate
-					break
-				}
-			}
+			preferred := preferredComposeFile(filepath.Dir(path), "")
 			if preferred != path {
 				return nil
 			}
@@ -457,12 +450,39 @@ func ListStacks() ([]StackInfo, error) {
 }
 
 func isComposeFile(name string) bool {
-	switch strings.ToLower(name) {
-	case "compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml":
-		return true
+	for _, canonicalName := range canonicalComposeFilenames {
+		if strings.EqualFold(name, canonicalName) {
+			return true
+		}
 	}
 	return false
 }
+
+var canonicalComposeFilenames = [...]string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"}
+
+// preferredComposeFile returns the first existing standard Compose filename.
+// assumePresent lets a prospective save destination participate in the same
+// precedence decision before the file has been written.
+func preferredComposeFile(dir, assumePresent string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	existing := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		existing[strings.ToLower(entry.Name())] = filepath.Join(dir, entry.Name())
+	}
+	for _, name := range canonicalComposeFilenames {
+		if candidate, found := existing[strings.ToLower(name)]; found {
+			return candidate
+		}
+		if assumePresent != "" && canonicalPath(filepath.Dir(assumePresent)) == canonicalPath(dir) && strings.EqualFold(filepath.Base(assumePresent), name) {
+			return assumePresent
+		}
+	}
+	return ""
+}
+
 func ignoredComposeDir(name string) bool {
 	switch name {
 	case ".git", "node_modules", "vendor", ".cache", ".local", ".config", ".npm", ".venv", "venv":
@@ -491,18 +511,7 @@ func flatComposeDestinationIsShadowed(root, destination string) bool {
 	if filepath.Dir(destination) != root || !isComposeFile(filepath.Base(destination)) {
 		return false
 	}
-	for _, name := range []string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"} {
-		candidate := filepath.Join(root, name)
-		if canonicalPath(candidate) == canonicalPath(destination) {
-			return false
-		}
-		if _, err := os.Stat(candidate); err == nil {
-			return true
-		} else if !os.IsNotExist(err) {
-			return true
-		}
-	}
-	return false
+	return canonicalPath(preferredComposeFile(root, destination)) != canonicalPath(destination)
 }
 
 func defaultComposeFiles(primary string) []string {

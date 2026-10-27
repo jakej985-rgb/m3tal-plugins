@@ -360,10 +360,10 @@
           } else if (activeStack) {
             let selected = findStackBySelection(activeStack);
             if (!selected && previousSelection?.path) {
-              const localMatch = currentStacks.find(stack => stack.id === previousSelection.path);
-              if (localMatch && sameComposeProject(previousSelection, localMatch)) {
-                selected = localMatch;
-              } else if (localMatch) {
+              selected = currentStacks.find(stack =>
+                (stack.id === previousSelection.path || stack.path === previousSelection.path) && sameComposeProject(previousSelection, stack)
+              );
+              if (!selected && currentStacks.some(stack => stack.id === previousSelection.path || stack.path === previousSelection.path)) {
                 logConsole(`Kept the registered project selection because the rediscovered project has a different Compose name or config file list.`);
               }
             }
