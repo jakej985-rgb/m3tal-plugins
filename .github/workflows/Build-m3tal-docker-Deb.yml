@@ -75,8 +75,8 @@ jobs:
             git config user.name "m3tal-bot"
             git config user.email "bot@m3tal.io"
             git add m3tal-docker/
-            git commit -m "chore(release): auto-bump m3tal-docker version and update CHANGELOG [skip ci]" || true
-            git push origin main || true
+            git commit -m "chore(release): auto-bump m3tal-docker version and update CHANGELOG [skip ci]"
+            bash scripts/push-release-commit.sh origin main
           fi
 
       - name: Build and Package m3tal-docker DEB

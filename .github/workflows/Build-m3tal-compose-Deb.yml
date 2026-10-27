@@ -71,7 +71,7 @@ jobs:
             git config user.email "bot@m3tal.io"
             git add m3tal-compose/
             git commit -m "chore(release): auto-bump m3tal-compose version and update CHANGELOG [skip ci]"
-            git push origin main
+            bash scripts/push-release-commit.sh origin main
           fi
 
       - name: Build and Package m3tal-compose DEB
