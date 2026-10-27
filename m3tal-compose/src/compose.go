@@ -637,12 +637,12 @@ func ValidateYAML(content string) (bool, string, error) {
 }
 
 // SaveStack saves or creates a compose stack definition.
-func SaveStack(name, content string) error {
+func SaveStack(name, content string) (string, error) {
 	if strings.TrimSpace(name) == "" {
-		return fmt.Errorf("stack name is required")
+		return "", fmt.Errorf("stack name is required")
 	}
 	if valid, message, _ := ValidateYAML(content); !valid {
-		return fmt.Errorf("%s", message)
+		return "", fmt.Errorf("%s", message)
 	}
 	mockMu.Lock()
 	if isMockMode {
@@ -651,13 +651,15 @@ func SaveStack(name, content string) error {
 				mockStacks[i].YAMLContent = content
 				mockStacks[i].Services = extractServices(content)
 				mockStacks[i].ServicesCount = len(mockStacks[i].Services)
+				path := mockStacks[i].Path
 				mockMu.Unlock()
-				return nil
+				return path, nil
 			}
 		}
+		path := filepath.Join("/etc/m3tal/compose", name, "compose.yaml")
 		mockStacks = append(mockStacks, StackInfo{
 			Name:          name,
-			Path:          filepath.Join("/etc/m3tal/compose", name, "compose.yaml"),
+			Path:          path,
 			Services:      extractServices(content),
 			ServicesCount: len(extractServices(content)),
 			RunningCount:  0,
@@ -666,7 +668,7 @@ func SaveStack(name, content string) error {
 			YAMLContent:   content,
 		})
 		mockMu.Unlock()
-		return nil
+		return path, nil
 	}
 	mockMu.Unlock()
 
@@ -675,31 +677,27 @@ func SaveStack(name, content string) error {
 	if filepath.IsAbs(name) {
 		_, _, err := resolveStackFiles(name)
 		if err != nil {
-			return err
+			return "", err
 		}
-		filePath = canonicalPath(name)
-		info, err := os.Stat(filePath)
+		filePath, mode, err = resolveExistingComposeFile(name)
 		if err != nil {
-			return fmt.Errorf("stat existing Compose file: %w", err)
+			return "", fmt.Errorf("resolve existing Compose file: %w", err)
 		}
-		mode = info.Mode().Perm()
 	} else if _, _, registered := parseRegisteredComposeID(name); registered {
 		files, _, err := resolveStackFiles(name)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if len(files) == 0 {
-			return fmt.Errorf("no Compose file selected")
+			return "", fmt.Errorf("no Compose file selected")
 		}
-		filePath = files[0]
-		info, err := os.Stat(filePath)
+		filePath, mode, err = resolveExistingComposeFile(files[0])
 		if err != nil {
-			return fmt.Errorf("stat existing Compose file: %w", err)
+			return "", fmt.Errorf("resolve existing Compose file: %w", err)
 		}
-		mode = info.Mode().Perm()
 	} else {
 		if !validStackName(name) {
-			return fmt.Errorf("invalid stack name")
+			return "", fmt.Errorf("invalid stack name")
 		}
 		root := getBaseComposeDir()
 		settingsMu.RLock()
@@ -711,13 +709,13 @@ func SaveStack(name, content string) error {
 			filePath = filepath.Join(root, name, "compose.yaml")
 		}
 		if _, err := os.Lstat(filePath); err == nil {
-			return fmt.Errorf("a Compose file already exists there; select the existing project to edit it")
+			return "", fmt.Errorf("a Compose file already exists there; select the existing project to edit it")
 		} else if !os.IsNotExist(err) {
-			return fmt.Errorf("check new Compose path: %w", err)
+			return "", fmt.Errorf("check new Compose path: %w", err)
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
-		return fmt.Errorf("failed to create compose directory: %w", err)
+		return "", fmt.Errorf("failed to create compose directory: %w", err)
 	}
 	settingsMu.RLock()
 	shouldBackup := backupOnSave
@@ -725,30 +723,36 @@ func SaveStack(name, content string) error {
 	if shouldBackup {
 		if old, err := os.ReadFile(filePath); err == nil {
 			if err := atomicWriteFile(filePath+".bak", old, mode); err != nil {
-				return fmt.Errorf("failed to back up compose file: %w", err)
+				return "", fmt.Errorf("failed to back up compose file: %w", err)
 			}
 		} else if !os.IsNotExist(err) {
-			return fmt.Errorf("failed to read compose file: %w", err)
+			return "", fmt.Errorf("failed to read compose file: %w", err)
 		}
 	}
-	return atomicWriteFile(filePath, []byte(content), mode)
+	if err := atomicWriteFile(filePath, []byte(content), mode); err != nil {
+		return "", err
+	}
+	return canonicalPath(filePath), nil
 }
 
-func savedStackID(identifier string) string {
-	if filepath.IsAbs(identifier) {
-		return canonicalPath(identifier)
+func resolveExistingComposeFile(path string) (string, os.FileMode, error) {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", 0, err
 	}
-	if _, _, ok := parseRegisteredComposeID(identifier); ok {
-		return identifier
+	resolved = canonicalPath(resolved)
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", 0, err
 	}
-	settingsMu.RLock()
-	layout := newStackLayout
-	settingsMu.RUnlock()
-	root := resolvedComposeRoot()
-	if layout == "flat" {
-		return canonicalPath(filepath.Join(root, identifier+".yaml"))
+	return resolved, info.Mode().Perm(), nil
+}
+
+func stackIDForSave(identifier, savedPath string) string {
+	if primary, projectName, ok := parseRegisteredComposeID(identifier); ok {
+		return registeredComposeID(primary, projectName)
 	}
-	return canonicalPath(filepath.Join(root, identifier, "compose.yaml"))
+	return canonicalPath(savedPath)
 }
 
 func atomicWriteFile(path string, content []byte, mode os.FileMode) error {

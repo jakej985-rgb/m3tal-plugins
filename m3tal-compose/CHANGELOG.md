@@ -33,6 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Save responses no longer retarget the editor after selection changes, and stale responses keep newer edits marked unsaved.
 - Registered projects sharing a configuration file receive distinct action IDs tied to their Compose project names.
 - Invalid initialization settings are reported to stderr.
+- Existing symlinked Compose files are replaced through their resolved targets, preserving the link and backing up the target.
+- Refresh rebinds a registered project selection to its local file identity after its Docker registry entry disappears.
+- SaveStack returns the actual path written, which is used directly for the UI's saved project identity.
 - Removed the declared but unimplemented `auto_pull` option and synchronized the plugin version.
 
 ## [0.3.0] - 2026-10-26

@@ -309,14 +309,15 @@ func handleAction(req *RPCRequest) {
 			sendError(req.ID, -32602, "Missing parameter", "stack name and content required")
 			return
 		}
-		if err := SaveStack(params.Stack, params.Content); err != nil {
+		savedPath, err := SaveStack(params.Stack, params.Content)
+		if err != nil {
 			sendError(req.ID, -32001, "Save stack failed", err.Error())
 			return
 		}
 		sendResponse(req.ID, map[string]interface{}{
 			"success":  true,
 			"message":  fmt.Sprintf("Stack '%s' saved successfully", params.Stack),
-			"stack_id": savedStackID(params.Stack),
+			"stack_id": stackIDForSave(params.Stack, savedPath),
 		})
 
 	case "validate_yaml":

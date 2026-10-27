@@ -345,13 +345,17 @@
         const data = await res.json();
         
         if (data.result && data.result.stacks) {
+          const previousSelection = currentStacks.find(stack => stackKey(stack) === activeStack);
           currentStacks = data.result.stacks;
           renderMetrics(data.result.metrics);
           renderStackList(currentStacks);
           if (!activeStack && currentStacks.length > 0) {
             selectStack(stackKey(currentStacks[0]));
           } else if (activeStack) {
-            const selected = findStackBySelection(activeStack);
+            let selected = findStackBySelection(activeStack);
+            if (!selected && previousSelection?.path) {
+              selected = currentStacks.find(stack => stack.id === previousSelection.path);
+            }
             if (selected) {
               activeStack = stackKey(selected);
               renderStackSummary(selected);

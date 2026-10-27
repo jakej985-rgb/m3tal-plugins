@@ -63,7 +63,7 @@ func TestMockComposeOperations(t *testing.T) {
 
 	// Test SaveStack
 	newYaml := "services:\n  web:\n    image: nginx:alpine\n"
-	if err := SaveStack("new-stack", newYaml); err != nil {
+	if _, err := SaveStack("new-stack", newYaml); err != nil {
 		t.Fatalf("failed to save stack: %v", err)
 	}
 
@@ -198,14 +198,14 @@ func TestConfiguredRecursiveDiscoveryAndSaveExisting(t *testing.T) {
 
 	content := "services:\n  api:\n    image: nginx:alpine\n"
 	// A new stack named after an existing file's Compose name must not update that file.
-	if err := SaveStack("api-project", content); err != nil {
+	if _, err := SaveStack("api-project", content); err != nil {
 		t.Fatal(err)
 	}
 	untouched, err := os.ReadFile(composePath)
 	if err != nil || string(untouched) != "name: api-project\nservices:\n  old:\n    image: alpine\n" {
 		t.Fatalf("new-stack alias overwrote existing project: content=%q err=%v", untouched, err)
 	}
-	if err := SaveStack(existing.ID, content); err != nil {
+	if _, err := SaveStack(existing.ID, content); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(composePath)
@@ -268,7 +268,7 @@ func TestRegisteredSecondaryComposeFileIsNotStandaloneAndSavePreservesTarget(t *
 		t.Fatalf("registered secondary file appeared as a standalone stack: %#v", stacks)
 	}
 	updated := "services:\n  production:\n    image: busybox\n"
-	if err := SaveStack(secondary, updated); err != nil {
+	if _, err := SaveStack(secondary, updated); err != nil {
 		t.Fatal(err)
 	}
 	primaryContent, err := os.ReadFile(primary)
@@ -288,7 +288,58 @@ func TestRegisteredSecondaryComposeFileIsNotStandaloneAndSavePreservesTarget(t *
 	}
 }
 
-func TestSavedStackIDUsesCreatedFilePath(t *testing.T) {
+func TestSaveFollowsComposeFileSymlinkAndKeepsLink(t *testing.T) {
+	t.Setenv("M3TAL_COMPOSE_DIR", "")
+	root := t.TempDir()
+	target := filepath.Join(t.TempDir(), "source-compose.yaml")
+	original := "services:\n  source:\n    image: alpine\n"
+	if err := os.WriteFile(target, []byte(original), 0600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "compose.yaml")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	settingsMu.Lock()
+	oldRoot, oldBackup := composeDirSetting, backupOnSave
+	composeDirSetting, backupOnSave = root, true
+	settingsMu.Unlock()
+	defer func() {
+		settingsMu.Lock()
+		composeDirSetting, backupOnSave = oldRoot, oldBackup
+		settingsMu.Unlock()
+	}()
+	oldProjectsSource := composeProjectsSource
+	composeProjectsSource = func() ([]composeProject, error) { return nil, nil }
+	defer func() { composeProjectsSource = oldProjectsSource }()
+
+	stacks, err := ListStacks()
+	if err != nil || len(stacks) != 1 {
+		t.Fatalf("failed to discover symlinked Compose file: stacks=%#v err=%v", stacks, err)
+	}
+	updated := "services:\n  updated:\n    image: nginx\n"
+	savedPath, err := SaveStack(stacks[0].ID, updated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	linkInfo, err := os.Lstat(link)
+	if err != nil || linkInfo.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("saving replaced the Compose symlink: info=%v err=%v", linkInfo, err)
+	}
+	content, err := os.ReadFile(target)
+	if err != nil || string(content) != updated {
+		t.Fatalf("save did not update the symlink target: content=%q err=%v", content, err)
+	}
+	backup, err := os.Stat(target + ".bak")
+	if err != nil || backup.Mode().Perm() != 0600 {
+		t.Fatalf("target backup did not preserve file mode: info=%v err=%v", backup, err)
+	}
+	if canonicalPath(savedPath) != canonicalPath(target) {
+		t.Fatalf("SaveStack returned %q, want resolved target %q", savedPath, target)
+	}
+}
+
+func TestSaveStackReturnsCreatedFilePath(t *testing.T) {
 	t.Setenv("M3TAL_COMPOSE_DIR", "")
 	root := t.TempDir()
 	settingsMu.Lock()
@@ -303,11 +354,12 @@ func TestSavedStackIDUsesCreatedFilePath(t *testing.T) {
 	oldProjectsSource := composeProjectsSource
 	composeProjectsSource = func() ([]composeProject, error) { return nil, nil }
 	defer func() { composeProjectsSource = oldProjectsSource }()
-	if err := SaveStack("fresh-project", "services:\n  app:\n    image: nginx\n"); err != nil {
+	savedPath, err := SaveStack("fresh-project", "services:\n  app:\n    image: nginx\n")
+	if err != nil {
 		t.Fatal(err)
 	}
 	want := canonicalPath(filepath.Join(root, "fresh-project", "compose.yaml"))
-	if got := savedStackID("fresh-project"); got != want {
+	if got := canonicalPath(savedPath); got != want {
 		t.Fatalf("saved stack ID mismatch: got %q, want %q", got, want)
 	}
 }
@@ -337,11 +389,12 @@ func TestFlatSaveReturnsItsWrittenPathWhenFolderNameIsOccupied(t *testing.T) {
 		return []composeProject{{Name: "prod", ConfigFiles: existingPath}}, nil
 	}
 	defer func() { composeProjectsSource = oldProjectsSource }()
-	if err := SaveStack("foo", "services:\n  fresh:\n    image: nginx\n"); err != nil {
+	savedPath, err := SaveStack("foo", "services:\n  fresh:\n    image: nginx\n")
+	if err != nil {
 		t.Fatal(err)
 	}
 	want := canonicalPath(filepath.Join(root, "foo.yaml"))
-	if got := savedStackID("foo"); got != want {
+	if got := canonicalPath(savedPath); got != want {
 		t.Fatalf("saved flat stack ID points to the wrong project: got %q, want %q", got, want)
 	}
 	got, err := os.ReadFile(existingPath)
@@ -386,6 +439,9 @@ func TestRegisteredProjectsSharingConfigHaveDistinctActionIDs(t *testing.T) {
 		if err != nil || projectName != stack.ProjectName {
 			t.Fatalf("action ID resolved to the wrong Compose project: stack=%#v project=%q err=%v", stack, projectName, err)
 		}
+		if got := stackIDForSave(stack.ID, primary); got != stack.ID {
+			t.Fatalf("saving a registered project would lose its project identity: got %q, want %q", got, stack.ID)
+		}
 	}
 }
 
@@ -405,7 +461,7 @@ func TestNewStackLayoutsAndPathValidation(t *testing.T) {
 	settingsMu.Lock()
 	newStackLayout = "per_stack_folder"
 	settingsMu.Unlock()
-	if err := SaveStack("folder-app", content); err != nil {
+	if _, err := SaveStack("folder-app", content); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "folder-app", "compose.yaml")); err != nil {
@@ -414,13 +470,13 @@ func TestNewStackLayoutsAndPathValidation(t *testing.T) {
 	settingsMu.Lock()
 	newStackLayout = "flat"
 	settingsMu.Unlock()
-	if err := SaveStack("flat-app", content); err != nil {
+	if _, err := SaveStack("flat-app", content); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "flat-app.yaml")); err != nil {
 		t.Fatalf("flat layout not created: %v", err)
 	}
-	if err := SaveStack("../escape", content); err == nil {
+	if _, err := SaveStack("../escape", content); err == nil {
 		t.Fatal("path traversal stack name was accepted")
 	}
 }
@@ -470,7 +526,7 @@ func TestSymlinkSearchRootAndDuplicateStackIDs(t *testing.T) {
 		t.Fatalf("duplicate stacks are not deterministically ordered: %q then %q", matches[0].ID, matches[1].ID)
 	}
 	updated := "services:\n  first-only:\n    image: nginx\n"
-	if err := SaveStack(matches[0].ID, updated); err != nil {
+	if _, err := SaveStack(matches[0].ID, updated); err != nil {
 		t.Fatal(err)
 	}
 	firstContent, err := os.ReadFile(matches[0].ID)
