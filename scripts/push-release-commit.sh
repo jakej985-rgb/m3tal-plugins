@@ -9,12 +9,6 @@ REMOTE="${1:-origin}"
 BRANCH="${2:-main}"
 MAX_ATTEMPTS="${3:-5}"
 TRACKING_REF="refs/remotes/${REMOTE}/${BRANCH}"
-CURRENT_BRANCH="$(git branch --show-current)"
-
-if [ "$CURRENT_BRANCH" != "$BRANCH" ]; then
-  echo "Refusing to publish a release from branch '${CURRENT_BRANCH:-detached HEAD}' to '${BRANCH}'." >&2
-  exit 1
-fi
 
 for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
   echo "Fetching ${REMOTE}/${BRANCH} before release push (attempt ${attempt}/${MAX_ATTEMPTS})..."

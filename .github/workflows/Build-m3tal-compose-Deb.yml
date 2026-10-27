@@ -70,9 +70,6 @@ jobs:
             ./scripts/smart-bump.py --base "$BASE_REF" --plugin "m3tal-compose" --apply
           fi
 
-          VERSION=$(grep 'version:' m3tal-compose/plugin.yaml | head -n1 | awk '{print $2}' | tr -d '"')
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
           if [ -n "$(git status --porcelain m3tal-compose/)" ]; then
             git config user.name "m3tal-bot"
             git config user.email "bot@m3tal.io"
@@ -80,6 +77,11 @@ jobs:
             git commit -m "chore(release): auto-bump m3tal-compose version and update CHANGELOG [skip ci]"
             bash scripts/push-release-commit.sh origin main
           fi
+
+          # The push helper may rebase onto a newer release bump; publish the
+          # version from the final manifest that the package build will read.
+          VERSION=$(grep 'version:' m3tal-compose/plugin.yaml | head -n1 | awk '{print $2}' | tr -d '"')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build and Package m3tal-compose DEB
         id: package
