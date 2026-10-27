@@ -2,26 +2,35 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // StackInfo represents metadata and state of a docker compose project.
 type StackInfo struct {
-	Name          string   `json:"name"`
-	Path          string   `json:"path"`
-	Services      []string `json:"services"`
-	ServicesCount int      `json:"services_count"`
-	RunningCount  int      `json:"running_count"`
-	Status        string   `json:"status"` // "running", "stopped", "partial"
-	UpdatedAt     string   `json:"updated_at"`
-	YAMLContent   string   `json:"yaml_content,omitempty"`
+	ID            string            `json:"id"`
+	Name          string            `json:"name"`
+	Path          string            `json:"path"`
+	Services      []string          `json:"services"`
+	ServicesCount int               `json:"services_count"`
+	RunningCount  int               `json:"running_count"`
+	Status        string            `json:"status"` // "running", "stopped", "partial"
+	UpdatedAt     string            `json:"updated_at"`
+	YAMLContent   string            `json:"yaml_content,omitempty"`
+	ConfigFiles   []string          `json:"config_files,omitempty"`
+	ProjectName   string            `json:"project_name,omitempty"`
+	ServiceStates map[string]string `json:"service_states,omitempty"`
 }
 
 var (
@@ -72,6 +81,10 @@ var (
 `,
 		},
 	}
+	settingsMu        sync.RWMutex
+	composeDirSetting string
+	newStackLayout    = "per_stack_folder"
+	backupOnSave      = true
 )
 
 func SetMockMode(mock bool) {
@@ -81,55 +94,251 @@ func SetMockMode(mock bool) {
 }
 
 func getBaseComposeDir() string {
+	// Preserve the established environment override for managed installations.
 	if dir := os.Getenv("M3TAL_COMPOSE_DIR"); dir != "" {
-		return dir
+		return expandUserPath(dir)
 	}
-	return "/etc/m3tal/compose"
+	settingsMu.RLock()
+	dir := composeDirSetting
+	settingsMu.RUnlock()
+	if strings.TrimSpace(dir) == "" {
+		dir = "~/docker"
+	}
+	return expandUserPath(dir)
 }
 
-// resolveStackPath finds the primary compose file for a stack by checking:
-// 1. /etc/m3tal/compose/<name>/ (or $M3TAL_COMPOSE_DIR/<name>/)
-// 2. Existing file path if name is a direct file path
-// 3. Docker Compose native registry (docker compose ls -a)
-// 4. Default fallback path in base directory
-func resolveStackPath(name string) string {
-	baseDir := getBaseComposeDir()
-	stackDir := filepath.Join(baseDir, name)
-
-	for _, candidateName := range []string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"} {
-		candidate := filepath.Join(stackDir, candidateName)
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
+func expandUserPath(path string) string {
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			if path == "~" {
+				return home
+			}
+			return filepath.Join(home, path[2:])
 		}
 	}
+	return filepath.Clean(path)
+}
 
-	if _, err := os.Stat(name); err == nil {
-		return name
+func SetPluginSettings(settings map[string]interface{}) error {
+	var newDir *string
+	var newLayout *string
+	var newBackup *bool
+	if value, ok := settings["compose_dir"]; ok {
+		dir, valid := value.(string)
+		if !valid || strings.TrimSpace(dir) == "" {
+			return fmt.Errorf("compose_dir must be a non-empty path")
+		}
+		expandedDir := expandUserPath(strings.TrimSpace(dir))
+		newDir = &expandedDir
 	}
+	if value, ok := settings["new_stack_layout"]; ok {
+		layout, valid := value.(string)
+		if !valid || (layout != "per_stack_folder" && layout != "flat") {
+			return fmt.Errorf("new_stack_layout must be 'per_stack_folder' or 'flat'")
+		}
+		newLayout = &layout
+	}
+	if value, ok := settings["backup_on_save"]; ok {
+		backup, valid := value.(bool)
+		if !valid {
+			return fmt.Errorf("backup_on_save must be a boolean")
+		}
+		newBackup = &backup
+	}
+	settingsMu.Lock()
+	defer settingsMu.Unlock()
+	if newDir != nil {
+		composeDirSetting = *newDir
+	}
+	if newLayout != nil {
+		newStackLayout = *newLayout
+	}
+	if newBackup != nil {
+		backupOnSave = *newBackup
+	}
+	return nil
+}
 
-	// Query host-wide compose registry for matching project name
+type composeProject struct {
+	Name        string `json:"Name"`
+	Status      string `json:"Status"`
+	ConfigFiles string `json:"ConfigFiles"`
+}
+
+const registeredComposeIDPrefix = "compose-project:"
+
+func registeredComposeID(path, projectName string) string {
+	encodedPath := base64.RawURLEncoding.EncodeToString([]byte(canonicalPath(path)))
+	encodedName := base64.RawURLEncoding.EncodeToString([]byte(projectName))
+	return registeredComposeIDPrefix + encodedPath + "." + encodedName
+}
+
+func parseRegisteredComposeID(identifier string) (string, string, bool) {
+	if !strings.HasPrefix(identifier, registeredComposeIDPrefix) {
+		return "", "", false
+	}
+	parts := strings.SplitN(strings.TrimPrefix(identifier, registeredComposeIDPrefix), ".", 2)
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	pathBytes, pathErr := base64.RawURLEncoding.DecodeString(parts[0])
+	nameBytes, nameErr := base64.RawURLEncoding.DecodeString(parts[1])
+	if pathErr != nil || nameErr != nil || !filepath.IsAbs(string(pathBytes)) || len(nameBytes) == 0 {
+		return "", "", false
+	}
+	return string(pathBytes), string(nameBytes), true
+}
+
+func dockerComposeProjects() ([]composeProject, error) {
 	cmd := exec.Command("docker", "compose", "ls", "-a", "--format", "json")
-	if out, err := cmd.Output(); err == nil && len(out) > 0 {
-		var projects []struct {
-			Name        string `json:"Name"`
-			ConfigFiles string `json:"ConfigFiles"`
-		}
-		if err := json.Unmarshal(out, &projects); err == nil {
-			for _, p := range projects {
-				if p.Name == name && p.ConfigFiles != "" {
-					files := strings.Split(p.ConfigFiles, ",")
-					if len(files) > 0 {
-						primary := strings.TrimSpace(files[0])
-						if primary != "" {
-							return primary
-						}
-					}
-				}
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	var projects []composeProject
+	if err := json.Unmarshal(out, &projects); err != nil {
+		return nil, err
+	}
+	return projects, nil
+}
+
+var composeProjectsSource = dockerComposeProjects
+
+func resolvedComposeRoot() string {
+	root := getBaseComposeDir()
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
+	return canonicalPath(root)
+}
+
+func canonicalPath(path string) string {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	return filepath.Clean(absolute)
+}
+
+func pathWithin(root, path string) bool {
+	relative, err := filepath.Rel(root, path)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator)) && !filepath.IsAbs(relative)
+}
+
+func isOverrideComposeFile(name string) bool {
+	name = strings.ToLower(name)
+	return strings.Contains(name, ".override.")
+}
+
+func allowedComposePath(root, path string) bool {
+	if !pathWithin(root, path) || isOverrideComposeFile(filepath.Base(path)) {
+		return false
+	}
+	if isComposeFile(filepath.Base(path)) {
+		return true
+	}
+	return filepath.Dir(path) == root && (strings.EqualFold(filepath.Ext(path), ".yaml") || strings.EqualFold(filepath.Ext(path), ".yml"))
+}
+
+func registeredProjectForPath(projects []composeProject, path string) (composeProject, []string, bool) {
+	path = canonicalPath(path)
+	for _, project := range projects {
+		files := normalizeConfigFiles(strings.Split(project.ConfigFiles, ","))
+		for _, file := range files {
+			if canonicalPath(file) == path {
+				return project, files, true
 			}
 		}
 	}
+	return composeProject{}, nil, false
+}
 
-	return filepath.Join(baseDir, name, "compose.yaml")
+// resolveStackFiles resolves a stack by its stable Compose-file ID. Legacy
+// callers may pass a safe new-stack name, which is resolved only in the root.
+func resolveStackFiles(identifier string) ([]string, string, error) {
+	root := resolvedComposeRoot()
+	projects, _ := composeProjectsSource()
+	if primary, projectName, ok := parseRegisteredComposeID(identifier); ok {
+		for _, project := range projects {
+			files := normalizeConfigFiles(strings.Split(project.ConfigFiles, ","))
+			if project.Name == projectName && len(files) > 0 && canonicalPath(files[0]) == canonicalPath(primary) {
+				return files, project.Name, nil
+			}
+		}
+		// Do not reconstruct the config file list from the primary file: a
+		// registered project may have included additional files (for example,
+		// a production override), and running with only inferred defaults would
+		// silently change its configuration.
+		return nil, "", fmt.Errorf("registered Compose project %q not found", projectName)
+	}
+	if filepath.IsAbs(identifier) {
+		path := canonicalPath(identifier)
+		if project, files, found := registeredProjectForPath(projects, path); found {
+			return files, project.Name, nil
+		}
+		if !allowedComposePath(root, path) {
+			return nil, "", fmt.Errorf("Compose file is not in the search folder or a registered project")
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return nil, "", fmt.Errorf("Compose file not found: %s", path)
+		}
+		return defaultComposeFiles(path), flatFileProjectName(path, root, string(content)), nil
+	}
+	if !validStackName(identifier) {
+		return nil, "", fmt.Errorf("invalid stack name")
+	}
+	for _, candidate := range []string{
+		filepath.Join(root, identifier, "compose.yaml"),
+		filepath.Join(root, identifier, "compose.yml"),
+		filepath.Join(root, identifier, "docker-compose.yaml"),
+		filepath.Join(root, identifier, "docker-compose.yml"),
+		filepath.Join(root, identifier+".yaml"),
+		filepath.Join(root, identifier+".yml"),
+	} {
+		if _, err := os.Stat(candidate); err == nil && allowedComposePath(root, canonicalPath(candidate)) {
+			if project, files, found := registeredProjectForPath(projects, candidate); found {
+				return files, project.Name, nil
+			}
+			content, readErr := os.ReadFile(candidate)
+			if readErr != nil {
+				return nil, "", readErr
+			}
+			return defaultComposeFiles(candidate), flatFileProjectName(canonicalPath(candidate), root, string(content)), nil
+		}
+	}
+	for _, project := range projects {
+		if project.Name == identifier {
+			files := normalizeConfigFiles(strings.Split(project.ConfigFiles, ","))
+			if len(files) > 0 {
+				return files, project.Name, nil
+			}
+		}
+	}
+	return nil, "", fmt.Errorf("Compose project %q not found", identifier)
+}
+
+func validStackName(name string) bool {
+	if name == "" || name == "." || name == ".." || filepath.Base(name) != name || strings.ContainsAny(name, `/\\`) {
+		return false
+	}
+	for _, r := range name {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.') {
+			return false
+		}
+	}
+	return true
+}
+
+func normalizeConfigFiles(files []string) []string {
+	result := make([]string, 0, len(files))
+	for _, file := range files {
+		if file = strings.TrimSpace(file); file != "" {
+			result = append(result, file)
+		}
+	}
+	return result
 }
 
 // ListStacks returns all discovered compose stacks.
@@ -141,223 +350,436 @@ func ListStacks() ([]StackInfo, error) {
 	}
 	mockMu.RUnlock()
 
-	var results []StackInfo
-	seenPaths := make(map[string]bool)
-	seenNames := make(map[string]bool)
-
-	// 1. Scan local base directory (/etc/m3tal/compose or $M3TAL_COMPOSE_DIR)
-	baseDir := getBaseComposeDir()
-	if entries, err := os.ReadDir(baseDir); err == nil {
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				continue
+	results := make(map[string]StackInfo)
+	baseDir := resolvedComposeRoot()
+	composeProjects, projectsErr := composeProjectsSource()
+	if projectsErr != nil {
+		composeProjects = nil
+	}
+	registeredSecondaries := make(map[string]bool)
+	registeredPrimaries := make(map[string]bool)
+	for _, project := range composeProjects {
+		files := normalizeConfigFiles(strings.Split(project.ConfigFiles, ","))
+		if len(files) > 0 {
+			registeredPrimaries[canonicalPath(files[0])] = true
+		}
+		if len(files) > 1 {
+			for _, file := range files[1:] {
+				registeredSecondaries[canonicalPath(file)] = true
 			}
-			stackPath := filepath.Join(baseDir, entry.Name())
-			composeFile := ""
-			for _, name := range []string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"} {
-				candidate := filepath.Join(stackPath, name)
-				if _, err := os.Stat(candidate); err == nil {
-					composeFile = candidate
-					break
-				}
-			}
-
-			if composeFile == "" {
-				continue
-			}
-
-			content, _ := os.ReadFile(composeFile)
-			info := inspectStack(entry.Name(), composeFile, string(content))
-			results = append(results, info)
-			seenPaths[composeFile] = true
-			seenNames[entry.Name()] = true
 		}
 	}
+	_ = filepath.WalkDir(baseDir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if entry.IsDir() {
+			if path != baseDir && (entry.Type()&os.ModeSymlink != 0 || ignoredComposeDir(entry.Name()) || isSystemComposeDirectory(path) || pathDepth(baseDir, path) > 10) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		flatFile := filepath.Dir(path) == baseDir && !isComposeFile(entry.Name()) && !isOverrideComposeFile(entry.Name()) && (strings.EqualFold(filepath.Ext(entry.Name()), ".yaml") || strings.EqualFold(filepath.Ext(entry.Name()), ".yml"))
+		if !isComposeFile(entry.Name()) && !flatFile {
+			return nil
+		}
+		if registeredSecondaries[canonicalPath(path)] || registeredPrimaries[canonicalPath(path)] {
+			return nil
+		}
+		// Choose one canonical Compose file per project folder. Flat files are
+		// individually named projects, so each YAML file in the root is eligible.
+		if !flatFile {
+			preferred := preferredComposeFile(filepath.Dir(path), "")
+			if preferred != path {
+				return nil
+			}
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		if flatFile && len(extractServices(string(content))) == 0 {
+			return nil
+		}
+		name := filepath.Base(filepath.Dir(path))
+		if filepath.Dir(path) == baseDir {
+			name = strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
+			if isComposeFile(entry.Name()) {
+				name = filepath.Base(baseDir)
+			}
+		}
+		info := inspectStack(canonicalPath(path), name, defaultComposeFiles(path), flatFileProjectName(path, baseDir, string(content)), string(content))
+		// Expose the effective default project name when no explicit name is
+		// declared, so the UI can recognize equivalent local and registered IDs.
+		// Local actions still omit -p so Compose can handle interpolation itself.
+		info.ProjectName = discoveredComposeProjectName(path, baseDir, string(content))
+		results[info.ID] = info
+		return nil
+	})
 
 	// 2. Discover host-wide compose projects using docker compose ls -a
-	cmd := exec.Command("docker", "compose", "ls", "-a", "--format", "json")
-	if out, err := cmd.Output(); err == nil && len(out) > 0 {
-		var composeProjects []struct {
-			Name        string `json:"Name"`
-			Status      string `json:"Status"`
-			ConfigFiles string `json:"ConfigFiles"`
-		}
-		if err := json.Unmarshal(out, &composeProjects); err == nil {
-			for _, cp := range composeProjects {
-				if seenNames[cp.Name] {
-					continue
-				}
-				if cp.ConfigFiles == "" {
-					continue
-				}
-				files := strings.Split(cp.ConfigFiles, ",")
-				primaryFile := strings.TrimSpace(files[0])
-				if primaryFile == "" || seenPaths[primaryFile] {
-					continue
-				}
-
-				if content, err := os.ReadFile(primaryFile); err == nil {
-					info := inspectStack(cp.Name, primaryFile, string(content))
-					results = append(results, info)
-					seenPaths[primaryFile] = true
-					seenNames[cp.Name] = true
-				}
+	if projectsErr == nil {
+		for _, cp := range composeProjects {
+			files := normalizeConfigFiles(strings.Split(cp.ConfigFiles, ","))
+			if len(files) == 0 {
+				continue
 			}
+			content, err := os.ReadFile(files[0])
+			if err != nil {
+				continue
+			}
+			id := registeredComposeID(files[0], cp.Name)
+			info := inspectStack(id, cp.Name, files, cp.Name, string(content))
+			results[id] = info
 		}
 	}
 
 	// Return actual results (empty slice if none found; never leak mock data into production)
-	return results, nil
+	stacks := make([]StackInfo, 0, len(results))
+	for _, stack := range results {
+		stacks = append(stacks, stack)
+	}
+	sort.Slice(stacks, func(i, j int) bool {
+		left, right := strings.ToLower(stacks[i].Name), strings.ToLower(stacks[j].Name)
+		if left == right {
+			return stacks[i].ID < stacks[j].ID
+		}
+		return left < right
+	})
+	return stacks, nil
 }
 
-func inspectStack(name, path, yamlContent string) StackInfo {
+func isComposeFile(name string) bool {
+	for _, canonicalName := range canonicalComposeFilenames {
+		if strings.EqualFold(name, canonicalName) {
+			return true
+		}
+	}
+	return false
+}
+
+var canonicalComposeFilenames = [...]string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"}
+
+// preferredComposeFile returns the first existing standard Compose filename.
+// assumePresent lets a prospective save destination participate in the same
+// precedence decision before the file has been written.
+func preferredComposeFile(dir, assumePresent string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil && !os.IsNotExist(err) {
+		return ""
+	}
+	existing := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		existing[strings.ToLower(entry.Name())] = filepath.Join(dir, entry.Name())
+	}
+	for _, name := range canonicalComposeFilenames {
+		if candidate, found := existing[strings.ToLower(name)]; found {
+			return candidate
+		}
+		if assumePresent != "" && canonicalPath(filepath.Dir(assumePresent)) == canonicalPath(dir) && strings.EqualFold(filepath.Base(assumePresent), name) {
+			return assumePresent
+		}
+	}
+	return ""
+}
+
+func ignoredComposeDir(name string) bool {
+	switch name {
+	case ".git", "node_modules", "vendor", ".cache", ".local", ".config", ".npm", ".venv", "venv":
+		return true
+	}
+	return strings.HasPrefix(name, ".")
+}
+
+func isSystemComposeDirectory(path string) bool {
+	switch filepath.Clean(path) {
+	case "/dev", "/proc", "/run", "/sys", "/tmp":
+		return true
+	default:
+		return false
+	}
+}
+func pathDepth(root, path string) int {
+	rel, err := filepath.Rel(root, path)
+	if err != nil || rel == "." {
+		return 0
+	}
+	return strings.Count(rel, string(os.PathSeparator)) + 1
+}
+
+func flatComposeDestinationIsShadowed(root, destination string) bool {
+	if filepath.Dir(destination) != root || !isComposeFile(filepath.Base(destination)) {
+		return false
+	}
+	return canonicalPath(preferredComposeFile(root, destination)) != canonicalPath(destination)
+}
+
+func defaultComposeFiles(primary string) []string {
+	files := []string{primary}
+	candidates := []string{}
+	switch filepath.Base(primary) {
+	case "compose.yaml":
+		candidates = []string{"compose.override.yaml", "compose.override.yml"}
+	case "compose.yml":
+		candidates = []string{"compose.override.yml", "compose.override.yaml"}
+	case "docker-compose.yaml":
+		candidates = []string{"docker-compose.override.yaml", "docker-compose.override.yml"}
+	case "docker-compose.yml":
+		candidates = []string{"docker-compose.override.yml", "docker-compose.override.yaml"}
+	}
+	for _, candidateName := range candidates {
+		candidate := filepath.Join(filepath.Dir(primary), candidateName)
+		if _, err := os.Stat(candidate); err == nil {
+			files = append(files, candidate)
+			break
+		}
+	}
+	return files
+}
+
+func flatFileProjectName(path, root, content string) string {
+	if filepath.Dir(path) != root || isComposeFile(filepath.Base(path)) {
+		return ""
+	}
+	var config map[string]interface{}
+	if yaml.Unmarshal([]byte(content), &config) != nil {
+		return ""
+	}
+	if _, hasComposeName := config["name"]; hasComposeName {
+		return ""
+	}
+	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	return normalizeComposeProjectName(name)
+}
+
+func discoveredComposeProjectName(path, root, content string) string {
+	var config map[string]interface{}
+	if yaml.Unmarshal([]byte(content), &config) != nil || config == nil {
+		return ""
+	}
+	if _, explicitlyNamed := config["name"]; explicitlyNamed {
+		return extractStaticComposeProjectName(content)
+	}
+	if filepath.Dir(path) == root {
+		if isComposeFile(filepath.Base(path)) {
+			return normalizeComposeProjectName(filepath.Base(root))
+		}
+		return flatFileProjectName(path, root, content)
+	}
+	return normalizeComposeProjectName(filepath.Base(filepath.Dir(path)))
+}
+
+func normalizeComposeProjectName(name string) string {
+	var normalized strings.Builder
+	for _, char := range strings.ToLower(name) {
+		if char >= 'a' && char <= 'z' || char >= '0' && char <= '9' || char == '_' || char == '-' {
+			normalized.WriteRune(char)
+		}
+	}
+	return strings.Trim(normalized.String(), "-_")
+}
+
+func extractStaticComposeProjectName(content string) string {
+	var config map[string]interface{}
+	if yaml.Unmarshal([]byte(content), &config) != nil {
+		return ""
+	}
+	name, ok := config["name"].(string)
+	if !ok || strings.Contains(name, "$") {
+		return ""
+	}
+	return strings.TrimSpace(name)
+}
+
+func inspectStack(id, name string, files []string, projectName, yamlContent string) StackInfo {
 	services := extractServices(yamlContent)
 	status := "stopped"
 	running := 0
+	serviceStates := make(map[string]string)
 
-	// Check runtime status with docker compose ps if docker is available
-	cmd := exec.Command("docker", "compose", "-f", path, "ps", "--format", "{{.Service}}:{{.State}}")
+	args := composeArgs(files, projectName)
+	args = append(args, "ps", "--format", "{{.Service}}:{{.State}}")
+	cmd := exec.Command("docker", args...)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if err := cmd.Run(); err == nil && out.Len() > 0 {
-		lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-		for _, line := range lines {
-			if strings.Contains(strings.ToLower(line), "running") {
-				running++
+		serviceStates, running = composeServiceStateSummary(out.String())
+		hasPartialService := false
+		for _, state := range serviceStates {
+			if !strings.EqualFold(state, "running") {
+				hasPartialService = true
+				break
 			}
 		}
-		if running >= len(services) && len(services) > 0 {
+		if running >= len(services) && len(services) > 0 && !hasPartialService {
 			status = "running"
 		} else if running > 0 {
 			status = "partial"
 		}
 	}
 
+	path := ""
+	if len(files) > 0 {
+		path = files[0]
+	}
+	updatedAt := ""
+	if stat, err := os.Stat(path); err == nil {
+		updatedAt = stat.ModTime().Format("2006-01-02 15:04:05")
+	}
 	return StackInfo{
+		ID:            id,
 		Name:          name,
 		Path:          path,
+		ConfigFiles:   files,
+		ProjectName:   projectName,
+		ServiceStates: serviceStates,
 		Services:      services,
 		ServicesCount: len(services),
 		RunningCount:  running,
 		Status:        status,
-		UpdatedAt:     time.Now().Format("2006-01-02 15:04:05"),
+		UpdatedAt:     updatedAt,
 		YAMLContent:   yamlContent,
 	}
 }
 
-func extractServices(yamlContent string) []string {
-	var services []string
-	lines := strings.Split(yamlContent, "\n")
-	inServices := false
-	serviceIndent := -1
-
-	for _, line := range lines {
-		// Strip comments
-		commentIdx := strings.Index(line, "#")
-		cleanLine := line
-		if commentIdx >= 0 {
-			cleanLine = line[:commentIdx]
-		}
-		trimmed := strings.TrimSpace(cleanLine)
-		if trimmed == "" {
+// composeServiceStateSummary aggregates replica states by service and counts
+// services that have at least one running replica.
+func composeServiceStateSummary(output string) (map[string]string, int) {
+	replicasByService := make(map[string][]string)
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) != 2 {
 			continue
 		}
-
-		if strings.HasPrefix(trimmed, "services:") {
-			after := strings.TrimSpace(strings.TrimPrefix(trimmed, "services:"))
-			if strings.HasPrefix(after, "{") {
-				inner := strings.Trim(after, "{}")
-				parts := strings.Split(inner, ":")
-				if len(parts) > 0 {
-					svcName := strings.TrimSpace(parts[0])
-					svcName = strings.Trim(svcName, `"'`)
-					if svcName != "" {
-						services = append(services, svcName)
-					}
-				}
-				continue
-			}
-			inServices = true
-			serviceIndent = -1
+		service := strings.TrimSpace(parts[0])
+		state := strings.TrimSpace(parts[1])
+		if service == "" || state == "" {
 			continue
 		}
-
-		if inServices {
-			// Count leading spaces
-			leadingSpaces := len(cleanLine) - len(strings.TrimLeft(cleanLine, " "))
-			if leadingSpaces == 0 {
-				// Reached next top-level root key (e.g., volumes:, networks:)
-				inServices = false
-				continue
+		replicasByService[service] = append(replicasByService[service], state)
+	}
+	serviceStates := make(map[string]string, len(replicasByService))
+	runningServices := 0
+	for service, replicaStates := range replicasByService {
+		firstState := replicaStates[0]
+		allSameState := true
+		allReplicasRunning := true
+		serviceHasRunningReplica := false
+		for _, replicaState := range replicaStates {
+			if !strings.EqualFold(firstState, replicaState) {
+				allSameState = false
 			}
-
-			if serviceIndent == -1 {
-				serviceIndent = leadingSpaces
+			if strings.EqualFold(replicaState, "running") {
+				serviceHasRunningReplica = true
+			} else {
+				allReplicasRunning = false
 			}
-
-			// If indentation matches the service definition level
-			if leadingSpaces == serviceIndent {
-				parts := strings.Split(trimmed, ":")
-				if len(parts) > 0 {
-					svcName := strings.TrimSpace(parts[0])
-					svcName = strings.Trim(svcName, `"'`)
-					if svcName != "" {
-						services = append(services, svcName)
-					}
-				}
-			}
+		}
+		state := firstState
+		if !allSameState {
+			state = "partial"
+		} else if allReplicasRunning {
+			state = "running"
+		}
+		serviceStates[service] = state
+		if serviceHasRunningReplica {
+			runningServices++
 		}
 	}
-	return services
+	return serviceStates, runningServices
+}
+
+func extractServices(yamlContent string) []string {
+	var root map[string]interface{}
+	if err := yaml.Unmarshal([]byte(yamlContent), &root); err != nil {
+		return nil
+	}
+	services, ok := root["services"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	names := make([]string, 0, len(services))
+	for name := range services {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // ValidateYAML performs structure and syntax checks on compose YAML.
 func ValidateYAML(content string) (bool, string, error) {
-	trimmed := strings.TrimSpace(content)
-	if trimmed == "" {
+	if strings.TrimSpace(content) == "" {
 		return false, "YAML content is empty", nil
 	}
-	if !strings.Contains(content, "services:") {
-		return false, "Missing top-level 'services:' section", nil
+	var root map[string]interface{}
+	if err := yaml.Unmarshal([]byte(content), &root); err != nil {
+		return false, "Invalid YAML: " + err.Error(), nil
 	}
-
-	// Basic syntax validation: braces & brackets balancing
-	openBraces := strings.Count(content, "{")
-	closeBraces := strings.Count(content, "}")
-	if openBraces != closeBraces {
-		return false, fmt.Sprintf("Mismatched braces: %d '{' vs %d '}'", openBraces, closeBraces), nil
+	services, ok := root["services"].(map[string]interface{})
+	if !ok {
+		return false, "A top-level 'services' mapping is required", nil
 	}
-	openBrackets := strings.Count(content, "[")
-	closeBrackets := strings.Count(content, "]")
-	if openBrackets != closeBrackets {
-		return false, fmt.Sprintf("Mismatched brackets: %d '[' vs %d ']'", openBrackets, closeBrackets), nil
-	}
-
-	services := extractServices(content)
 	if len(services) == 0 {
-		return false, "No valid services defined under 'services:' section", nil
+		return false, "At least one service must be defined", nil
 	}
+	return true, fmt.Sprintf("YAML syntax is valid (%d services defined)", len(services)), nil
+}
 
-	return true, fmt.Sprintf("YAML structure is valid (%d services defined)", len(services)), nil
+// ValidateComposeFragment accepts valid YAML fragments for existing projects,
+// whose services may be declared in a different config file.
+func ValidateComposeFragment(content string) (bool, string, error) {
+	if strings.TrimSpace(content) == "" {
+		return false, "YAML content is empty", nil
+	}
+	var root map[string]interface{}
+	if err := yaml.Unmarshal([]byte(content), &root); err != nil {
+		return false, "Invalid YAML: " + err.Error(), nil
+	}
+	if root == nil {
+		return false, "A Compose config mapping is required", nil
+	}
+	if services, found := root["services"]; found {
+		if _, ok := services.(map[string]interface{}); !ok {
+			return false, "A top-level 'services' value must be a mapping", nil
+		}
+	}
+	return true, "YAML fragment is valid", nil
+}
+
+// ValidateStackContent requires services for new stacks, but allows an
+// existing Compose config file to contribute only part of the project.
+func ValidateStackContent(identifier, content string) (bool, string, error) {
+	_, _, registered := parseRegisteredComposeID(identifier)
+	if filepath.IsAbs(identifier) || registered {
+		return ValidateComposeFragment(content)
+	}
+	return ValidateYAML(content)
 }
 
 // SaveStack saves or creates a compose stack definition.
-func SaveStack(name, content string) error {
+func SaveStack(name, content string) (string, error) {
+	if strings.TrimSpace(name) == "" {
+		return "", fmt.Errorf("stack name is required")
+	}
+	if valid, message, _ := ValidateStackContent(name, content); !valid {
+		return "", fmt.Errorf("%s", message)
+	}
 	mockMu.Lock()
-	defer mockMu.Unlock()
-
 	if isMockMode {
 		for i, s := range mockStacks {
 			if s.Name == name {
 				mockStacks[i].YAMLContent = content
 				mockStacks[i].Services = extractServices(content)
 				mockStacks[i].ServicesCount = len(mockStacks[i].Services)
-				return nil
+				path := mockStacks[i].Path
+				mockMu.Unlock()
+				return path, nil
 			}
 		}
+		path := filepath.Join("/etc/m3tal/compose", name, "compose.yaml")
 		mockStacks = append(mockStacks, StackInfo{
 			Name:          name,
-			Path:          filepath.Join("/etc/m3tal/compose", name, "compose.yaml"),
+			Path:          path,
 			Services:      extractServices(content),
 			ServicesCount: len(extractServices(content)),
 			RunningCount:  0,
@@ -365,16 +787,172 @@ func SaveStack(name, content string) error {
 			UpdatedAt:     time.Now().Format("2006-01-02 15:04:05"),
 			YAMLContent:   content,
 		})
+		mockMu.Unlock()
+		return path, nil
+	}
+	mockMu.Unlock()
+
+	filePath := ""
+	mode := os.FileMode(0644)
+	if filepath.IsAbs(name) {
+		_, _, err := resolveStackFiles(name)
+		if err != nil {
+			return "", err
+		}
+		filePath, mode, err = resolveExistingComposeFile(name)
+		if err != nil {
+			return "", fmt.Errorf("resolve existing Compose file: %w", err)
+		}
+	} else if _, _, registered := parseRegisteredComposeID(name); registered {
+		files, _, err := resolveStackFiles(name)
+		if err != nil {
+			return "", err
+		}
+		if len(files) == 0 {
+			return "", fmt.Errorf("no Compose file selected")
+		}
+		filePath, mode, err = resolveExistingComposeFile(files[0])
+		if err != nil {
+			return "", fmt.Errorf("resolve existing Compose file: %w", err)
+		}
+	} else {
+		if !validStackName(name) {
+			return "", fmt.Errorf("invalid stack name")
+		}
+		root := resolvedComposeRoot()
+		settingsMu.RLock()
+		layout := newStackLayout
+		settingsMu.RUnlock()
+		if layout != "flat" && ignoredComposeDir(name) {
+			return "", fmt.Errorf("stack name %q maps to a directory excluded from Compose discovery", name)
+		}
+		if layout == "flat" {
+			filePath = filepath.Join(root, name+".yaml")
+			if flatComposeDestinationIsShadowed(root, filePath) {
+				return "", fmt.Errorf("flat Compose destination %q would be hidden by canonical file precedence", filePath)
+			}
+		} else {
+			filePath = filepath.Join(root, name, "compose.yaml")
+		}
+		if isOverrideComposeFile(filepath.Base(filePath)) {
+			return "", fmt.Errorf("new stack path cannot use a Compose override filename")
+		}
+		if _, err := os.Lstat(filePath); err == nil {
+			return "", fmt.Errorf("a Compose file already exists there; select the existing project to edit it")
+		} else if !os.IsNotExist(err) {
+			return "", fmt.Errorf("check new Compose path: %w", err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		return "", fmt.Errorf("failed to create compose directory: %w", err)
+	}
+	settingsMu.RLock()
+	shouldBackup := backupOnSave
+	settingsMu.RUnlock()
+	if shouldBackup {
+		if old, err := os.ReadFile(filePath); err == nil {
+			if err := atomicWriteFile(filePath+".bak", old, mode); err != nil {
+				return "", fmt.Errorf("failed to back up compose file: %w", err)
+			}
+		} else if !os.IsNotExist(err) {
+			return "", fmt.Errorf("failed to read compose file: %w", err)
+		}
+	}
+	if err := atomicWriteFile(filePath, []byte(content), mode); err != nil {
+		return "", err
+	}
+	return canonicalPath(filePath), nil
+}
+
+func resolveExistingComposeFile(path string) (string, os.FileMode, error) {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", 0, err
+	}
+	resolved = canonicalPath(resolved)
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", 0, err
+	}
+	return resolved, info.Mode().Perm(), nil
+}
+
+func stackIDForSave(identifier, savedPath string) string {
+	if primary, projectName, ok := parseRegisteredComposeID(identifier); ok {
+		return registeredComposeID(primary, projectName)
+	}
+	if filepath.IsAbs(identifier) {
+		return canonicalPath(identifier)
+	}
+	return canonicalPath(savedPath)
+}
+
+func atomicWriteFile(path string, content []byte, mode os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".compose-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temporary file: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write(content); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write temporary file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temporary file: %w", err)
+	}
+	if err := preserveFileOwnership(tmpName, path); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, mode); err != nil {
+		return fmt.Errorf("set temporary file mode: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("replace file: %w", err)
+	}
+	return nil
+}
+
+func preserveFileOwnership(tempPath, destinationPath string) error {
+	destinationInfo, err := os.Stat(destinationPath)
+	if os.IsNotExist(err) {
 		return nil
 	}
-
-	stackDir := filepath.Join(getBaseComposeDir(), name)
-	if err := os.MkdirAll(stackDir, 0755); err != nil {
-		return fmt.Errorf("failed to create stack directory: %w", err)
+	if err != nil {
+		return fmt.Errorf("read existing Compose file ownership: %w", err)
 	}
+	tempInfo, err := os.Stat(tempPath)
+	if err != nil {
+		return fmt.Errorf("read temporary Compose file ownership: %w", err)
+	}
+	destinationOwner, destinationOK := destinationInfo.Sys().(*syscall.Stat_t)
+	tempOwner, tempOK := tempInfo.Sys().(*syscall.Stat_t)
+	if !destinationOK || !tempOK {
+		return fmt.Errorf("cannot determine Compose file ownership")
+	}
+	if destinationOwner.Uid == tempOwner.Uid && destinationOwner.Gid == tempOwner.Gid {
+		return nil
+	}
+	if os.Geteuid() != 0 {
+		// A non-root process cannot preserve another owner's UID/GID. Allow the
+		// atomic replacement to proceed, as directory-writable saves did before.
+		return nil
+	}
+	if err := os.Chown(tempPath, int(destinationOwner.Uid), int(destinationOwner.Gid)); err != nil {
+		return fmt.Errorf("preserve Compose file ownership: %w", err)
+	}
+	return nil
+}
 
-	filePath := filepath.Join(stackDir, "compose.yaml")
-	return os.WriteFile(filePath, []byte(content), 0644)
+func composeArgs(files []string, projectName string) []string {
+	args := []string{"compose"}
+	if projectName != "" {
+		args = append(args, "-p", projectName)
+	}
+	for _, file := range files {
+		args = append(args, "-f", file)
+	}
+	return args
 }
 
 // ComposeUp starts all services in a stack.
@@ -394,12 +972,13 @@ func ComposeUp(name string) (string, error) {
 	}
 	mockMu.Unlock()
 
-	composePath := resolveStackPath(name)
-	if _, err := os.Stat(composePath); err != nil {
-		return "", fmt.Errorf("compose file for stack '%s' not found at %s", name, composePath)
+	files, project, err := resolveStackFiles(name)
+	if err != nil {
+		return "", err
 	}
-
-	cmd := exec.Command("docker", "compose", "-f", composePath, "up", "-d")
+	args := composeArgs(files, project)
+	args = append(args, "up", "-d")
+	cmd := exec.Command("docker", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("docker compose up failed: %w (output: %s)", err, string(out))
@@ -424,12 +1003,13 @@ func ComposeDown(name string) (string, error) {
 	}
 	mockMu.Unlock()
 
-	composePath := resolveStackPath(name)
-	if _, err := os.Stat(composePath); err != nil {
-		return "", fmt.Errorf("compose file for stack '%s' not found at %s", name, composePath)
+	files, project, err := resolveStackFiles(name)
+	if err != nil {
+		return "", err
 	}
-
-	cmd := exec.Command("docker", "compose", "-f", composePath, "down")
+	args := composeArgs(files, project)
+	args = append(args, "down")
+	cmd := exec.Command("docker", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("docker compose down failed: %w (output: %s)", err, string(out))
@@ -446,12 +1026,13 @@ func ComposeRestart(name string) (string, error) {
 	}
 	mockMu.Unlock()
 
-	composePath := resolveStackPath(name)
-	if _, err := os.Stat(composePath); err != nil {
-		return "", fmt.Errorf("compose file for stack '%s' not found at %s", name, composePath)
+	files, project, err := resolveStackFiles(name)
+	if err != nil {
+		return "", err
 	}
-
-	cmd := exec.Command("docker", "compose", "-f", composePath, "restart")
+	args := composeArgs(files, project)
+	args = append(args, "restart")
+	cmd := exec.Command("docker", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("docker compose restart failed: %w (output: %s)", err, string(out))
@@ -468,12 +1049,13 @@ func ComposeLogs(name string, tail int) (string, error) {
 	}
 	mockMu.RUnlock()
 
-	composePath := resolveStackPath(name)
-	if _, err := os.Stat(composePath); err != nil {
-		return "", fmt.Errorf("compose file for stack '%s' not found at %s", name, composePath)
+	files, project, err := resolveStackFiles(name)
+	if err != nil {
+		return "", err
 	}
-
-	cmd := exec.Command("docker", "compose", "-f", composePath, "logs", fmt.Sprintf("--tail=%d", tail))
+	args := composeArgs(files, project)
+	args = append(args, "logs", fmt.Sprintf("--tail=%d", tail))
+	cmd := exec.Command("docker", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("docker compose logs failed: %w", err)

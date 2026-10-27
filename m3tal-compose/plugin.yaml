@@ -2,7 +2,7 @@ apiVersion: m3tal.io/v1alpha1
 kind: Plugin
 metadata:
   name: compose
-  version: "0.3.0"
+  version: "0.4.0"
   package_name: "m3tal-plugin-compose"
   title: "Compose"
   description: "Docker Compose visual editor, syntax validator, and stack lifecycle manager"
@@ -20,6 +20,7 @@ spec:
     - collector
     - actions
     - ui_view
+    - settings
 
   ui:
     entry: "ui/dist/index.html"
@@ -31,6 +32,28 @@ spec:
     sidebar: true
     order: 25
     roles: ["admin", "viewer"]
+
+  settings:
+    - id: "compose_settings"
+      title: "Compose Projects"
+      description: "Project discovery and new stack storage settings"
+      fields:
+        - key: "compose_dir"
+          label: "Search folder"
+          type: "text"
+          default: "~/docker"
+          description: "Recursively search for Compose projects in this folder."
+        - key: "new_stack_layout"
+          label: "New stack layout"
+          type: "select"
+          default: "per_stack_folder"
+          options: ["per_stack_folder", "flat"]
+          description: "Choose how new stack files are arranged under the search folder."
+        - key: "backup_on_save"
+          label: "Back up before saving"
+          type: "boolean"
+          default: true
+          description: "Keep a .bak copy when replacing an existing Compose file."
 
   rpc:
     protocol: "jsonrpc-2.0"
