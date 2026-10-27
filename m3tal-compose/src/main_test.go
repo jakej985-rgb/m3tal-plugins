@@ -513,7 +513,7 @@ func TestRegisteredProjectsSharingConfigHaveDistinctActionIDs(t *testing.T) {
 	}
 }
 
-func TestRegisteredProjectIDFallsBackLocallyAfterRegistryEntryDisappears(t *testing.T) {
+func TestRegisteredProjectIDFailsWhenRegistryEntryDisappears(t *testing.T) {
 	t.Setenv("M3TAL_COMPOSE_DIR", "")
 	target := t.TempDir()
 	composePath := filepath.Join(target, "foo", "compose.yaml")
@@ -537,16 +537,8 @@ func TestRegisteredProjectIDFallsBackLocallyAfterRegistryEntryDisappears(t *test
 	defer func() { composeProjectsSource = oldProjectsSource }()
 
 	registeredID := registeredComposeID(filepath.Join(link, "foo", "compose.yaml"), "prod")
-	files, projectName, err := resolveStackFiles(registeredID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(files) != 1 || canonicalPath(files[0]) != canonicalPath(composePath) || projectName != "prod" {
-		t.Fatalf("registered ID did not fall back to its validated local file and project name: files=%#v project=%q", files, projectName)
-	}
-	args := composeArgs(files, projectName)
-	if strings.Join(args, " ") != "compose -p prod -f "+composePath {
-		t.Fatalf("fallback would target the wrong Compose project: %#v", args)
+	if _, _, err := resolveStackFiles(registeredID); err == nil || !strings.Contains(err.Error(), `registered Compose project "prod" not found`) {
+		t.Fatalf("missing registered project should fail clearly instead of inferring config files: %v", err)
 	}
 	outsideID := registeredComposeID(filepath.Join(t.TempDir(), "outside.yaml"), "outside")
 	if _, _, err := resolveStackFiles(outsideID); err == nil {

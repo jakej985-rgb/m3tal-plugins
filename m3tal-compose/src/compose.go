@@ -265,18 +265,10 @@ func resolveStackFiles(identifier string) ([]string, string, error) {
 				return files, project.Name, nil
 			}
 		}
-		// A stopped project can disappear from `docker compose ls` before the
-		// UI refreshes its selection. Retain the registered project name while
-		// falling back only to a validated file under the configured search root.
-		localPath := primary
-		if resolved, err := filepath.EvalSymlinks(localPath); err == nil {
-			localPath = canonicalPath(resolved)
-		}
-		if allowedComposePath(root, localPath) {
-			if _, err := os.Stat(localPath); err == nil {
-				return defaultComposeFiles(localPath), projectName, nil
-			}
-		}
+		// Do not reconstruct the config file list from the primary file: a
+		// registered project may have included additional files (for example,
+		// a production override), and running with only inferred defaults would
+		// silently change its configuration.
 		return nil, "", fmt.Errorf("registered Compose project %q not found", projectName)
 	}
 	if filepath.IsAbs(identifier) {
