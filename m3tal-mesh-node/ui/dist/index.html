@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Mesh Node Settings</title>
+  <style>
+    :root{color-scheme:dark;font:14px system-ui,sans-serif;background:#0d1117;color:#c9d1d9}*{box-sizing:border-box}body{margin:0;padding:28px}.wrap{max-width:760px;margin:auto}.card{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:24px}.eyebrow{color:#06b6d4;font-weight:700;text-transform:uppercase;font-size:11px;letter-spacing:.08em}h1{color:#fff;margin:8px 0}p{color:#8b949e;line-height:1.5}.field{margin:22px 0}.field label{display:block;color:#c9d1d9;font-weight:650;margin-bottom:7px}.field small{display:block;color:#8b949e;margin-top:6px}input{width:100%;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:10px 12px;color:white;font:inherit}button{background:#059669;border:1px solid #10b981;border-radius:7px;padding:9px 16px;color:white;font-weight:700;cursor:pointer}button:disabled{opacity:.6;cursor:wait}.row{display:flex;align-items:center;justify-content:space-between;gap:14px}.note{font-size:12px}.status{font-size:13px;margin-top:14px;min-height:20px}.error{color:#fb7185}.success{color:#34d399}
+  </style>
+</head>
+<body>
+  <div class="wrap"><div class="card">
+    <div class="eyebrow">M3TAL Mesh · Sender</div>
+    <h1>Mesh Node Settings</h1>
+    <p>Set the shared pairing secret used by Mesh Fleet on the computer that will connect to this node. Enter the same secret in that computer’s Mesh Fleet settings.</p>
+    <form id="settings-form">
+      <div class="field"><label for="pairing-token">Pairing Token</label><input id="pairing-token" type="password" autocomplete="new-password" placeholder="Enter a shared secret"><small>Telemetry requests are rejected until a token is configured.</small></div>
+      <div class="field"><label for="listen-port">Telemetry Port</label><input id="listen-port" type="number" min="1" max="65535" value="9321"><small>Allow incoming TCP connections on this port in the machine’s firewall.</small></div>
+      <div class="field row"><div><label for="broadcast-mdns">LAN discovery</label><small>Advertise this sender with mDNS so Mesh Fleet can find it.</small></div><input id="broadcast-mdns" type="checkbox" checked style="width:20px;height:20px"></div>
+      <div class="row"><span class="note">Changing the port or LAN discovery setting requires restarting this plugin.</span><button id="save" type="submit">Save Settings</button></div>
+      <div id="status" class="status" role="status"></div>
+    </form>
+  </div></div>
+  <script>
+    const auth = new URLSearchParams(location.search).get('token') || '';
+    const endpoint = `/api/v2/plugins/mesh-node/action?token=${encodeURIComponent(auth)}`;
+    const statusEl = document.getElementById('status');
+    async function load() {
+      try {
+        const res = await fetch(endpoint, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'get_settings',args:{}})});
+        const body = await res.json();
+        if (!res.ok || body.status !== 'success') throw new Error(body.error?.message || 'Could not load sender settings');
+        const cfg = JSON.parse(body.data?.message || '{}');
+        document.getElementById('pairing-token').value = cfg.pairing_token || '';
+        document.getElementById('listen-port').value = cfg.listen_port || 9321;
+        document.getElementById('broadcast-mdns').checked = cfg.broadcast_mdns !== false;
+      } catch (err) { statusEl.textContent = err.message; statusEl.className = 'status error'; }
+    }
+    document.getElementById('settings-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const button = document.getElementById('save'); button.disabled = true;
+      statusEl.textContent = 'Saving…'; statusEl.className = 'status';
+      const config = {
+        pairing_token: document.getElementById('pairing-token').value.trim(),
+        listen_port: Number(document.getElementById('listen-port').value) || 9321,
+        broadcast_mdns: document.getElementById('broadcast-mdns').checked,
+      };
+      try {
+        const res = await fetch(endpoint, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'set_settings',args:config})});
+        const body = await res.json();
+        if (!res.ok || body.status !== 'success' || body.data?.success === false) throw new Error(body.error?.message || body.data?.error || 'Could not save sender settings');
+        statusEl.textContent = 'Saved. The pairing token takes effect immediately; restart Mesh Node after changing the port or LAN discovery setting.';
+        statusEl.className = 'status success';
+      } catch (err) { statusEl.textContent = err.message; statusEl.className = 'status error'; }
+      finally { button.disabled = false; }
+    });
+    load();
+  </script>
+</body>
+</html>

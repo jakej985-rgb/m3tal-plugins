@@ -17,6 +17,10 @@
       "type": "boolean",
       "default": true,
       "description": "Announce node presence on local subnet via mDNS."
+    },
+    "pairing_token": {
+      "type": "string",
+      "description": "Shared secret required for remote telemetry requests."
     }
   },
   "additionalProperties": false

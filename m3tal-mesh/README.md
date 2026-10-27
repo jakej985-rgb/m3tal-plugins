@@ -36,6 +36,10 @@ The **M3TAL Mesh Fleet Federation Plugin** (`m3tal-mesh`) provides personal clou
 | `m3tal.action` | Dispatches node lifecycle actions (`pair_node`, `forget_node`, `ping_node`, `scan_network`). |
 | `m3tal.shutdown` | Graceful shutdown. |
 
+## Pairing Setup
+
+Open **Mesh Fleet → Settings** and set a pairing token. On each sender machine, open the **Mesh Node Settings** plugin tab and set the same token. Leave the default telemetry port (`9321`) unless you have a port conflict, and allow that TCP port through the sender's firewall. Use **Scan LAN** for mDNS discovery or enter a node IP/hostname manually.
+
 ---
 
 ## 4. Development & Build Commands

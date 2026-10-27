@@ -38,6 +38,10 @@ The **M3TAL Mesh Node Telemetry Broadcaster** (`m3tal-mesh-node`) is a lightweig
 | `m3tal.action` | Dispatches node actions (`get_telemetry`, `beacon_ping`). |
 | `m3tal.shutdown` | Graceful shutdown. |
 
+## Pairing Setup
+
+The plugin exposes an authenticated telemetry endpoint on TCP port `9321` and advertises `_m3tal-mesh-node._tcp` over mDNS. Open **Mesh Node Settings** in M3TAL Core and set a pairing token. Enter the same token under **Mesh Fleet → Settings** on the machine that will connect. Allow the configured TCP port through the sender machine's firewall. Changing the port or discovery setting requires restarting this plugin.
+
 ---
 
 ## 4. Development & Build Commands

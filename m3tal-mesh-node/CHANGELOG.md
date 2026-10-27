@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.2] - 2026-10-27
+
+### Added
+- Authenticated HTTP telemetry endpoint and mDNS service advertisement for remote Mesh Fleet pairing.
+- Plugin-provided Mesh Node Settings view for pairing token, port, and LAN discovery configuration.
+
 ## [0.1.1] - 2026-10-27
 
 ### Fixed

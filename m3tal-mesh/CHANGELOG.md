@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.2] - 2026-10-27
+### Added
+- Mesh Fleet includes its own pairing settings view and stores its token and paired peers with owner-only file permissions.
+- Remote pairing verifies the node and token, refreshes live telemetry, supports mDNS discovery, and persists fleet changes.
+
 ## [0.1.1] - 2026-10-26
 
 ### 🚀 Removed Dummy Mock Nodes & Real Hardware Telemetry

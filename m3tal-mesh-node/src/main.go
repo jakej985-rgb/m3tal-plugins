@@ -10,13 +10,14 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
 const (
 	CanonicalProcessName = "m3tal-mesh-node"
 	PluginName           = "mesh-node"
-	PluginVersion        = "0.1.1"
+	PluginVersion        = "0.1.2"
 )
 
 // RPCRequest represents standard JSON-RPC 2.0 request.
@@ -64,11 +65,14 @@ func setProcessName(name string) {
 
 func main() {
 	setProcessName(CanonicalProcessName)
+	go startNodeNetworkService()
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigChan
+		shutdownNodeNetwork()
+		time.Sleep(100 * time.Millisecond)
 		os.Exit(0)
 	}()
 
@@ -99,6 +103,7 @@ func handleRequest(req *RPCRequest) {
 		handleAction(req)
 	case "m3tal.shutdown":
 		sendResponse(req.ID, map[string]interface{}{"status": "ok"})
+		shutdownNodeNetwork()
 		os.Exit(0)
 	default:
 		sendError(req.ID, -32601, "Method not found", fmt.Sprintf("Unsupported method: %s", req.Method))
@@ -109,8 +114,8 @@ func handleInit(req *RPCRequest) {
 	result := map[string]interface{}{
 		"name":         PluginName,
 		"version":      PluginVersion,
-		"capabilities": []string{"collector", "actions"},
-		"tabs":         []map[string]interface{}{}, // Headless daemon: no UI tab
+		"capabilities": []string{"collector", "actions", "ui_view"},
+		"tabs":         []map[string]interface{}{},
 		"actions": []map[string]interface{}{
 			{
 				"id":          "get_telemetry",
@@ -124,6 +129,8 @@ func handleInit(req *RPCRequest) {
 				"description": "Respond to mesh discovery cluster beacon",
 				"confirm":     false,
 			},
+			{"id": "get_settings", "label": "Get Mesh Node Settings", "description": "Read sender configuration for its plugin settings page", "confirm": false},
+			{"id": "set_settings", "label": "Save Mesh Node Settings", "description": "Save sender configuration", "confirm": false},
 		},
 	}
 	sendResponse(req.ID, result)
@@ -266,7 +273,8 @@ func handleCollect(req *RPCRequest) {
 
 func handleAction(req *RPCRequest) {
 	var params struct {
-		ActionID string `json:"action_id"`
+		ActionID string         `json:"action_id"`
+		Args     map[string]any `json:"args"`
 	}
 
 	if req.Params != nil {
@@ -289,6 +297,26 @@ func handleAction(req *RPCRequest) {
 			"status":   "online",
 			"version":  PluginVersion,
 		})
+	case "set_settings":
+		cfg := loadNodeRuntimeConfig()
+		if value, ok := params.Args["pairing_token"].(string); ok {
+			cfg.PairingToken = strings.TrimSpace(value)
+		}
+		if value, ok := params.Args["listen_port"].(float64); ok {
+			cfg.ListenPort = int(value)
+		}
+		if value, ok := params.Args["broadcast_mdns"].(bool); ok {
+			cfg.BroadcastMDNS = value
+		}
+		if err := saveNodeRuntimeConfig(cfg); err != nil {
+			sendError(req.ID, -32010, "Settings save failed", err.Error())
+			return
+		}
+		sendResponse(req.ID, map[string]interface{}{"success": true, "message": "Settings saved. Restart the plugin if you changed its port or LAN discovery setting."})
+	case "get_settings":
+		cfg := loadNodeRuntimeConfig()
+		encoded, _ := json.Marshal(cfg)
+		sendResponse(req.ID, map[string]interface{}{"success": true, "message": string(encoded)})
 
 	default:
 		sendError(req.ID, -32601, "Unknown action", fmt.Sprintf("Unsupported action_id: %s", params.ActionID))
