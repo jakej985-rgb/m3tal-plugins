@@ -10,34 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.4.0] - 2026-10-26
 
 ### Added
-- Configurable recursive Compose project discovery, defaulting to `~/docker`.
-- Settings for new stack storage layout and backups.
-- Searchable project list, source paths, runtime service states, responsive layout, and edit/stop confirmations.
+- Configurable recursive Compose project discovery under `~/docker` by default, including symlinked search roots and host-wide registered projects.
+- Settings for the search folder, new-stack layout, and backups.
+- Searchable project list with source paths, runtime service states, responsive layout, and edit/stop confirmations.
+- Stable project selection for duplicate display names and registered projects that share Compose files.
 
 ### Changed
-- Existing projects save to their discovered Compose file; new stacks use the selected folder or flat-file layout.
-- Compose actions retain project names and all registered config files.
-- YAML validation and service extraction use a YAML parser.
-
-### Fixed
-- Stack names are validated before paths are created, and saved files are replaced atomically.
-- Replacements and backups preserve existing Compose file permissions, including mode 0600.
-- Existing projects are selected by their Compose file path, preventing display-name collisions from targeting the wrong file.
-- Local Compose actions leave declared and interpolated project names to Docker Compose.
-- Compose discovery follows a symlinked search root, filters unrelated and override YAML files, and keeps duplicate names deterministic.
-- Settings updates validate all values before applying any of them, and action lookup avoids a full discovery/status scan.
-- Registered secondary Compose files remain distinct save targets and are not listed as standalone projects.
-- Compose projects under ordinary folders named `dev`, `tmp`, or similar remain discoverable.
-- New project selection follows the saved file ID after refresh, and stack IDs are assigned in one place.
-- Flat-layout saves return the path actually written, even when a folder with the same name exists.
-- Save responses no longer retarget the editor after selection changes, and stale responses keep newer edits marked unsaved.
-- Registered projects sharing a configuration file receive distinct action IDs tied to their Compose project names.
-- Invalid initialization settings are reported to stderr.
-- Existing symlinked Compose files are replaced through their resolved targets, preserving the link and backing up the target.
-- Refresh rebinds a registered project selection to its local file identity after its Docker registry entry disappears.
-- SaveStack returns the actual path written, which is used directly for the UI's saved project identity.
-- Symlinked projects retain their discovered link identity in the UI while saves update the resolved target.
-- Removed the declared but unimplemented `auto_pull` option and synchronized the plugin version.
+- Existing projects save to their selected Compose file; new stacks use the selected folder or flat-file layout under the resolved search root.
+- Replacements and backups preserve file permissions and update symlink targets without replacing the links.
+- Compose actions retain registered project names and config files, while local Compose names and interpolation remain under Docker Compose control.
+- The editor keeps project selection and unsaved changes when saves and refreshes overlap.
+- YAML validation and service extraction use a YAML parser; unrelated and override YAML files are excluded from discovery.
+- Stack names and destinations are validated, settings updates apply atomically, and file replacements use atomic writes.
+- The unused `auto_pull` option was removed and the plugin version synchronized.
 
 ## [0.3.0] - 2026-10-26
 

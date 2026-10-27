@@ -699,7 +699,7 @@ func SaveStack(name, content string) (string, error) {
 		if !validStackName(name) {
 			return "", fmt.Errorf("invalid stack name")
 		}
-		root := getBaseComposeDir()
+		root := resolvedComposeRoot()
 		settingsMu.RLock()
 		layout := newStackLayout
 		settingsMu.RUnlock()
@@ -707,6 +707,9 @@ func SaveStack(name, content string) (string, error) {
 			filePath = filepath.Join(root, name+".yaml")
 		} else {
 			filePath = filepath.Join(root, name, "compose.yaml")
+		}
+		if isOverrideComposeFile(filepath.Base(filePath)) {
+			return "", fmt.Errorf("new stack path cannot use a Compose override filename")
 		}
 		if _, err := os.Lstat(filePath); err == nil {
 			return "", fmt.Errorf("a Compose file already exists there; select the existing project to edit it")

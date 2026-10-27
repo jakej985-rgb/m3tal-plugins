@@ -411,6 +411,66 @@ func TestFlatSaveReturnsItsWrittenPathWhenFolderNameIsOccupied(t *testing.T) {
 	}
 }
 
+func TestFlatSaveRejectsComposeOverrideFilename(t *testing.T) {
+	t.Setenv("M3TAL_COMPOSE_DIR", "")
+	root := t.TempDir()
+	settingsMu.Lock()
+	oldRoot, oldLayout, oldBackup := composeDirSetting, newStackLayout, backupOnSave
+	composeDirSetting, newStackLayout, backupOnSave = root, "flat", false
+	settingsMu.Unlock()
+	defer func() {
+		settingsMu.Lock()
+		composeDirSetting, newStackLayout, backupOnSave = oldRoot, oldLayout, oldBackup
+		settingsMu.Unlock()
+	}()
+	if _, err := SaveStack("api.override", "services:\n  api:\n    image: nginx\n"); err == nil {
+		t.Fatal("flat-layout override filename was accepted")
+	}
+	if _, err := os.Stat(filepath.Join(root, "api.override.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("rejected override destination was written: stat err=%v", err)
+	}
+}
+
+func TestNewStackUsesResolvedSymlinkedSearchRoot(t *testing.T) {
+	t.Setenv("M3TAL_COMPOSE_DIR", "")
+	target := t.TempDir()
+	link := filepath.Join(t.TempDir(), "docker")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	settingsMu.Lock()
+	oldRoot, oldLayout, oldBackup := composeDirSetting, newStackLayout, backupOnSave
+	composeDirSetting, newStackLayout, backupOnSave = link, "flat", false
+	settingsMu.Unlock()
+	defer func() {
+		settingsMu.Lock()
+		composeDirSetting, newStackLayout, backupOnSave = oldRoot, oldLayout, oldBackup
+		settingsMu.Unlock()
+	}()
+	oldProjectsSource := composeProjectsSource
+	composeProjectsSource = func() ([]composeProject, error) { return nil, nil }
+	defer func() { composeProjectsSource = oldProjectsSource }()
+
+	savedPath, err := SaveStack("new-api", "services:\n  api:\n    image: nginx\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := canonicalPath(filepath.Join(target, "new-api.yaml"))
+	if canonicalPath(savedPath) != want {
+		t.Fatalf("new stack was not written under the resolved root: got %q, want %q", savedPath, want)
+	}
+	if got := stackIDForSave("new-api", savedPath); got != want {
+		t.Fatalf("new stack ID does not match discovery path: got %q, want %q", got, want)
+	}
+	stacks, err := ListStacks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stacks) != 1 || stacks[0].ID != want {
+		t.Fatalf("new stack was not discoverable under its returned ID: %#v", stacks)
+	}
+}
+
 func TestRegisteredProjectsSharingConfigHaveDistinctActionIDs(t *testing.T) {
 	t.Setenv("M3TAL_COMPOSE_DIR", "")
 	root := t.TempDir()
