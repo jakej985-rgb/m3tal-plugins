@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.1] - 2026-10-27
+
+### Fixed
+- Align the node package version with the Mesh cluster metapackage dependency.
+
 ## [0.1.0] - 2026-10-26
 
 ### Overview & Highlights

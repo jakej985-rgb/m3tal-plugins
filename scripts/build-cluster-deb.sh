@@ -15,6 +15,20 @@ except Exception:
 fi
 
 CLEAN_VERSION=$(echo "$VERSION" | sed 's/^v//')
+
+NODE_VERSION=$(python3 -c "
+import yaml
+with open('m3tal-mesh-node/plugin.yaml') as f:
+    print(yaml.safe_load(f).get('metadata', {}).get('version', ''))
+")
+if [ -z "$NODE_VERSION" ]; then
+    echo "Error: unable to read m3tal-mesh-node version from plugin.yaml" >&2
+    exit 1
+fi
+if ! dpkg --compare-versions "${NODE_VERSION#v}" ge "$CLEAN_VERSION"; then
+    echo "Error: m3tal-mesh-node version $NODE_VERSION is older than cluster version $CLEAN_VERSION" >&2
+    exit 1
+fi
 PKG_NAME="m3tal-plugin-mesh-cluster"
 DEB_NAME="${PKG_NAME}_${CLEAN_VERSION}_amd64.deb"
 
