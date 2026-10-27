@@ -15,7 +15,7 @@ It provides a rich dark-mode micro-frontend embedded as a sub-tab within the **`
 - **Canonical Process Identity**: `m3tal-compose`
 - **Package Name**: `m3tal-plugin-compose`
 - **Dashboard UI Route**: `/containers` (Sub-Tab: `Compose Editor`, served at `/plugins/compose/`)
-- **Capabilities**: `collector`, `actions`, `ui_view`
+- **Capabilities**: `collector`, `actions`, `ui_view`, `settings`
 - **Execution Model**: Compiled directly to `bin/m3tal-compose` for direct host execution without `/tmp` symlinks.
 
 ---
@@ -23,16 +23,18 @@ It provides a rich dark-mode micro-frontend embedded as a sub-tab within the **`
 ## 2. Key Features
 
 - **Visual & YAML Editor**: Split-screen or full-editor view for `docker-compose.yml` / `compose.yaml` files.
-- **Service Generator**: Quick wizard to add services, image tags, container names, exposed port mappings, volumes, and environment variables.
-- **Syntax & Schema Validation**: Live client and server-side validation against Docker Compose specification schemas before deployment.
+- **Quick Service Add**: Append a starter Redis service to the current YAML file.
+- **YAML Validation**: Server-side YAML syntax and required `services` mapping validation before saving.
 - **Stack Lifecycle Controls**:
-  - `compose up -d`: Pulls images and launches containers in detached mode.
+  - `compose up -d`: Launches containers in detached mode.
   - `compose down`: Gracefully stops and cleans up stack networks and containers.
   - `compose restart`: Restarts all services within the stack.
-  - `compose pull`: Updates service images to latest tags.
   - `compose logs`: Fetches live tail output from all services in the active stack.
-- **Multi-Stack Directory Management**: Manages stacks in `/etc/m3tal/compose/` or user-defined directories.
-- **Template DB Integration**: Ready to import pre-configured templates from `m3tal-stacks`.
+- **Multi-Stack Directory Management**: Finds Compose files in the configured folder and lists projects registered with Docker Compose.
+
+### Project discovery and settings
+
+The plugin recursively searches `~/docker` for Compose projects by default and also lists projects registered with Docker Compose. Change the search folder in plugin settings. The existing `M3TAL_COMPOSE_DIR` environment variable overrides that setting when present. New projects use a per-stack folder by default (`<folder>/<name>/compose.yaml`); select **flat** to save them as `<folder>/<name>.yaml`. Existing projects remain in their original location when saved. Backups are enabled by default and use the `.bak` suffix.
 
 ---
 

@@ -5,13 +5,14 @@
   "properties": {
     "compose_dir": {
       "type": "string",
-      "default": "/etc/m3tal/compose",
-      "description": "Base directory for storing docker-compose stack definitions."
+      "default": "~/docker",
+      "description": "Folder searched recursively for Compose projects and used to store new stacks."
     },
-    "auto_pull": {
-      "type": "boolean",
-      "default": true,
-      "description": "Automatically pull newer container images when deploying stacks."
+    "new_stack_layout": {
+      "type": "string",
+      "enum": ["per_stack_folder", "flat"],
+      "default": "per_stack_folder",
+      "description": "Store new stacks in a subfolder or directly in the Compose folder."
     },
     "backup_on_save": {
       "type": "boolean",

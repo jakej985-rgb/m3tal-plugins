@@ -14,7 +14,7 @@ import (
 const (
 	CanonicalProcessName = "m3tal-compose"
 	PluginName           = "compose"
-	PluginVersion        = "0.2.2"
+	PluginVersion        = "0.4.0"
 )
 
 // RPCRequest represents standard JSON-RPC 2.0 request.
@@ -90,10 +90,26 @@ func handleRequest(req *RPCRequest) {
 }
 
 func handleInit(req *RPCRequest) {
+	var initParams struct {
+		Config map[string]interface{} `json:"config"`
+	}
+	if json.Unmarshal(req.Params, &initParams) == nil && len(initParams.Config) > 0 {
+		_ = SetPluginSettings(initParams.Config)
+	}
 	result := map[string]interface{}{
 		"name":         PluginName,
 		"version":      PluginVersion,
-		"capabilities": []string{"collector", "actions", "ui_view"},
+		"capabilities": []string{"collector", "actions", "ui_view", "settings"},
+		"settings": []map[string]interface{}{
+			{
+				"id": "compose_settings", "title": "Compose Projects", "description": "Project discovery and new stack storage settings",
+				"fields": []map[string]interface{}{
+					{"key": "compose_dir", "label": "Search folder", "type": "text", "default": "~/docker", "description": "Recursively search for Compose projects in this folder."},
+					{"key": "new_stack_layout", "label": "New stack layout", "type": "select", "default": "per_stack_folder", "options": []string{"per_stack_folder", "flat"}, "description": "Choose how new stack files are arranged under the search folder."},
+					{"key": "backup_on_save", "label": "Back up before saving", "type": "boolean", "default": true, "description": "Keep a .bak copy when replacing an existing Compose file."},
+				},
+			},
+		},
 		"tabs": []map[string]interface{}{
 			{
 				"id":             "compose_editor",
@@ -227,10 +243,11 @@ func formatServiceList(services []string) string {
 
 func handleAction(req *RPCRequest) {
 	var params struct {
-		ActionID string `json:"action_id"`
-		Stack    string `json:"stack"`
-		Content  string `json:"content,omitempty"`
-		Lines    int    `json:"lines,omitempty"`
+		ActionID string                 `json:"action_id"`
+		Stack    string                 `json:"stack"`
+		Content  string                 `json:"content,omitempty"`
+		Lines    int                    `json:"lines,omitempty"`
+		Args     map[string]interface{} `json:"args,omitempty"`
 	}
 
 	if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -239,6 +256,16 @@ func handleAction(req *RPCRequest) {
 	}
 
 	switch params.ActionID {
+	case "set_settings":
+		settings := params.Args
+		if config, ok := params.Args["config"].(map[string]interface{}); ok {
+			settings = config
+		}
+		if err := SetPluginSettings(settings); err != nil {
+			sendError(req.ID, -32602, "Invalid settings", err.Error())
+			return
+		}
+		sendResponse(req.ID, map[string]interface{}{"success": true, "message": "Compose settings saved"})
 	case "compose_up":
 		if params.Stack == "" {
 			sendError(req.ID, -32602, "Missing parameter", "stack name required")

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.0] - 2026-10-26
+
+### Added
+- Configurable recursive Compose project discovery, defaulting to `~/docker`.
+- Settings for new stack storage layout and backups.
+- Searchable project list, source paths, runtime service states, responsive layout, and edit/stop confirmations.
+
+### Changed
+- Existing projects save to their discovered Compose file; new stacks use the selected folder or flat-file layout.
+- Compose actions retain project names and all registered config files.
+- YAML validation and service extraction use a YAML parser.
+
+### Fixed
+- Stack names are validated before paths are created, and saved files are replaced atomically.
+- Removed the declared but unimplemented `auto_pull` option and synchronized the plugin version.
+
 ## [0.3.0] - 2026-10-26
 
 ### 🚀 Changes & Improvements

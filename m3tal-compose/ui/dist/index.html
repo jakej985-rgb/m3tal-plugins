@@ -80,6 +80,7 @@
     .stack-status-dot { width: 8px; height: 8px; border-radius: 50%; }
     .dot-running { background: var(--emerald); box-shadow: 0 0 6px var(--emerald); }
     .dot-stopped { background: var(--rose); }
+    .dot-partial { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
 
     /* Editor Area */
     .editor-pane { flex: 1; display: flex; flex-direction: column; background: var(--editor-bg); overflow: hidden; }
@@ -158,6 +159,11 @@
     .service-title { font-size: 0.85rem; font-weight: 700; color: var(--cyan); display: flex; justify-content: space-between; }
     .service-prop { font-size: 0.75rem; color: var(--text-muted); display: flex; justify-content: space-between; }
     .service-prop span:last-child { color: #fff; font-family: monospace; }
+    .stack-item:focus-visible, .tool-btn:focus-visible, .btn-new:focus-visible, #stackFilter:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+    .stack-item { gap: 8px; }
+    .stack-name { min-width: 0; }
+    .stack-name > span:last-child { overflow-wrap: anywhere; }
+    .service-state { border: 1px solid var(--border); border-radius: 999px; padding: 2px 7px; white-space: nowrap; }
 
     /* Console Drawer */
     .console-drawer {
@@ -202,6 +208,20 @@
       box-shadow: 0 4px 16px rgba(0,0,0,0.5);
       z-index: 100;
     }
+    @media (max-width: 760px) {
+      body { height: auto; min-height: 100vh; overflow: auto; }
+      header { padding: 10px 12px; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
+      .metrics { width: 100%; gap: 6px; flex-wrap: wrap; }
+      .metric-pill { padding: 5px 8px; font-size: .72rem; }
+      .workspace { flex-direction: column; overflow: visible; }
+      .sidebar { width: 100%; max-height: 34vh; border-right: 0; border-bottom: 1px solid var(--border); }
+      .editor-pane { min-height: 75vh; overflow: visible; }
+      .toolbar, .toolbar-left, .toolbar-right { flex-wrap: wrap; }
+      .toolbar { gap: 6px; }
+      .content-split { flex-direction: column; overflow: visible; }
+      .code-container, .visual-container { width: 100%; min-height: 320px; }
+      .console-drawer { min-height: 120px; }
+    }
   </style>
 </head>
 <body>
@@ -210,7 +230,7 @@
   <header>
     <div class="brand">
       <h1>📝 Compose Editor</h1>
-      <span class="badge">v0.2.2</span>
+      <span class="badge">v0.4.0</span>
       <span class="badge" id="categoryBadge">Containers / Compose</span>
     </div>
     <div class="metrics">
@@ -233,8 +253,9 @@
     <div class="sidebar">
       <div class="sidebar-header">
         <span class="sidebar-title">Compose Projects</span>
-        <button class="btn-new" onclick="createNewStack()">+ New Stack</button>
+        <div style="display:flex;gap:6px"><button class="btn-new" onclick="fetchStacks()" aria-label="Refresh projects">↻</button><button class="btn-new" onclick="createNewStack()">+ New Stack</button></div>
       </div>
+      <input id="stackFilter" type="search" placeholder="Filter projects…" aria-label="Filter Compose projects" oninput="renderStackList(currentStacks)" style="margin:10px 12px 0;padding:8px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px">
       <div class="stack-list" id="stackList">
         <div style="padding: 12px; font-size: 0.8rem; color: var(--text-muted);">Loading stacks...</div>
       </div>
@@ -255,6 +276,7 @@
           <button class="tool-btn" onclick="fetchLogs()">📋 Tail Logs</button>
         </div>
       </div>
+      <div id="stackLocation" style="padding:9px 16px;background:#10151c;color:var(--text-muted);font-size:.75rem;border-bottom:1px solid #30363d;overflow-wrap:anywhere">Select a project to view its Compose files.</div>
 
       <!-- Content Split: YAML + Visual Cards -->
       <div class="content-split">
@@ -289,6 +311,7 @@
     let activeToken = "";
     let activeStack = null;
     let currentStacks = [];
+    let yamlDirty = false;
 
     function getToken() {
       const params = new URLSearchParams(window.location.search);
@@ -321,6 +344,12 @@
           renderStackList(currentStacks);
           if (!activeStack && currentStacks.length > 0) {
             selectStack(currentStacks[0].name);
+          } else if (activeStack) {
+            const selected = currentStacks.find(s => s.name === activeStack);
+            if (selected) {
+              renderStackSummary(selected);
+              if (!yamlDirty) renderServiceCards(selected.services);
+            }
           }
         }
       } catch (err) {
@@ -340,6 +369,8 @@
     function renderStackList(stacks) {
       const container = document.getElementById('stackList');
       container.innerHTML = '';
+      const query = (document.getElementById('stackFilter')?.value || '').trim().toLowerCase();
+      stacks = (stacks || []).filter(s => `${s.name} ${s.path || ''}`.toLowerCase().includes(query));
       if (!stacks || stacks.length === 0) {
         container.innerHTML = '<div style="padding: 16px; color: var(--text-muted); font-size: 0.75rem; text-align: center;">No compose stacks found.<br>Click <strong>+ New Stack</strong> to create one.</div>';
         return;
@@ -349,26 +380,33 @@
         item.className = `stack-item ${activeStack === s.name ? 'active' : ''}`;
         item.onclick = () => selectStack(s.name);
         
-        const isRunning = s.status === 'running';
-        item.innerHTML = `
-          <div class="stack-name">
-            <span class="stack-status-dot ${isRunning ? 'dot-running' : 'dot-stopped'}"></span>
-            <span>${s.name}</span>
-          </div>
-          <span style="font-size: 0.7rem; color: var(--text-muted);">${s.services_count} svcs</span>
-        `;
+        const dotState = s.status === 'running' ? 'dot-running' : (s.status === 'partial' ? 'dot-partial' : 'dot-stopped');
+        const name = document.createElement('span'); name.textContent = s.name;
+        const dot = document.createElement('span'); dot.className = `stack-status-dot ${dotState}`;
+        const title = document.createElement('div'); title.className = 'stack-name'; title.append(dot, name);
+        const summary = document.createElement('span'); summary.style.cssText = 'font-size:.68rem;color:var(--text-muted)'; summary.textContent = `${s.services_count} · ${s.status}`;
+        item.append(title, summary);
         container.appendChild(item);
       });
     }
 
     function selectStack(name) {
+      if (yamlDirty && name === activeStack) return;
+      if (yamlDirty && !confirm('Discard unsaved Compose edits?')) return;
       activeStack = name;
+      yamlDirty = false;
       renderStackList(currentStacks);
       const stack = currentStacks.find(s => s.name === name);
       if (stack && stack.yaml_content) {
         document.getElementById('yamlEditor').value = stack.yaml_content;
+        renderStackSummary(stack);
         renderServiceCards(stack.services);
       }
+    }
+
+    function renderStackSummary(stack) {
+      const files = stack.config_files?.length ? stack.config_files.join(', ') : stack.path;
+      document.getElementById('stackLocation').textContent = `${files || 'No file path'} · ${stack.status} · ${stack.running_count || 0}/${stack.services_count || 0} running`;
     }
 
     function renderServiceCards(services) {
@@ -381,25 +419,18 @@
       services.forEach(svc => {
         const card = document.createElement('div');
         card.className = 'service-card';
-        card.innerHTML = `
-          <div class="service-title">
-            <span>📦 ${svc}</span>
-            <span style="font-size: 0.7rem; color: var(--emerald);">active</span>
-          </div>
-          <div class="service-prop">
-            <span>Type</span>
-            <span>container</span>
-          </div>
-          <div class="service-prop">
-            <span>Restart</span>
-            <span>unless-stopped</span>
-          </div>
-        `;
+        const title = document.createElement('div'); title.className = 'service-title';
+        const label = document.createElement('span'); label.textContent = `📦 ${svc}`;
+        const stack = currentStacks.find(s => s.name === activeStack);
+        const state = document.createElement('span'); state.className = 'service-state'; state.style.cssText = 'font-size:.7rem;color:var(--text-muted)';
+        state.textContent = stack?.service_states?.[svc] || 'not running';
+        title.append(label, state); card.append(title);
         container.appendChild(card);
       });
     }
 
     function onYamlEdited() {
+      yamlDirty = true;
       // Light re-parsing
       const content = document.getElementById('yamlEditor').value;
       const svcs = [];
@@ -421,6 +452,8 @@
         return;
       }
       const content = document.getElementById('yamlEditor').value;
+      if (yamlDirty && ['compose_up', 'compose_down', 'compose_restart'].includes(actionId) && !confirm('The editor has unsaved changes. Continue with the saved Compose file?')) return;
+      if (actionId === 'compose_down' && !confirm(`Stop services for “${activeStack}”?`)) return;
       logConsole(`Executing action '${actionId}' on stack '${activeStack}'...`);
 
       try {
@@ -439,6 +472,7 @@
         });
         const data = await res.json();
         if (data.result && (data.result.message || data.result.success)) {
+          if (actionId === 'save_stack') yamlDirty = false;
           showToast(data.result.message || `Action ${actionId} succeeded`);
           logConsole(data.result.message || `[SUCCESS] ${actionId}`);
           fetchStacks();
@@ -478,8 +512,12 @@
     }
 
     function createNewStack() {
+      if (yamlDirty && !confirm('Discard unsaved Compose edits before creating a new project?')) return;
       const name = prompt('Enter new stack name (e.g. database-stack):');
       if (!name) return;
+      if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(name)) { showToast('Use letters, numbers, dots, underscores, and hyphens in project names'); return; }
+      if (currentStacks.some(stack => stack.name === name)) { showToast('A project with that name is already listed'); return; }
+      yamlDirty = false;
       const initialYaml = `services:\n  app:\n    image: nginx:alpine\n    ports:\n      - "8080:80"\n    restart: unless-stopped\n`;
       currentStacks.push({
         name: name,
@@ -490,6 +528,7 @@
         yaml_content: initialYaml
       });
       selectStack(name);
+      yamlDirty = true;
       triggerAction('save_stack');
     }
 
