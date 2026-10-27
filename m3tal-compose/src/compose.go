@@ -465,7 +465,7 @@ var canonicalComposeFilenames = [...]string{"compose.yaml", "compose.yml", "dock
 // precedence decision before the file has been written.
 func preferredComposeFile(dir, assumePresent string) string {
 	entries, err := os.ReadDir(dir)
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return ""
 	}
 	existing := make(map[string]string, len(entries))

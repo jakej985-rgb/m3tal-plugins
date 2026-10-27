@@ -713,6 +713,40 @@ func TestSaveFlatStackRejectsShadowedCanonicalComposeFile(t *testing.T) {
 	}
 }
 
+func TestSaveFlatCanonicalComposeFileCreatesMissingSearchRoot(t *testing.T) {
+	t.Setenv("M3TAL_COMPOSE_DIR", "")
+	oldProjectsSource := composeProjectsSource
+	composeProjectsSource = func() ([]composeProject, error) { return nil, nil }
+	defer func() { composeProjectsSource = oldProjectsSource }()
+	for _, name := range []string{"compose", "docker-compose"} {
+		t.Run(name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "search-root")
+			settingsMu.Lock()
+			oldRoot, oldLayout, oldBackup := composeDirSetting, newStackLayout, backupOnSave
+			composeDirSetting, newStackLayout, backupOnSave = root, "flat", false
+			settingsMu.Unlock()
+			defer func() {
+				settingsMu.Lock()
+				composeDirSetting, newStackLayout, backupOnSave = oldRoot, oldLayout, oldBackup
+				settingsMu.Unlock()
+			}()
+
+			savedPath, err := SaveStack(name, "services:\n  app:\n    image: nginx\n")
+			if err != nil {
+				t.Fatalf("save with missing search folder failed: %v", err)
+			}
+			want := filepath.Join(root, name+".yaml")
+			if canonicalPath(savedPath) != canonicalPath(want) {
+				t.Fatalf("saved path = %q, want %q", savedPath, want)
+			}
+			stacks, err := ListStacks()
+			if err != nil || len(stacks) != 1 || canonicalPath(stacks[0].Path) != canonicalPath(want) {
+				t.Fatalf("new stack is not discoverable: stacks=%#v err=%v", stacks, err)
+			}
+		})
+	}
+}
+
 func TestSymlinkSearchRootAndDuplicateStackIDs(t *testing.T) {
 	t.Setenv("M3TAL_COMPOSE_DIR", "")
 	oldProjectsSource := composeProjectsSource
