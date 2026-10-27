@@ -690,6 +690,29 @@ func TestSaveStackRejectsIgnoredDirectoryNames(t *testing.T) {
 	}
 }
 
+func TestSaveFlatStackRejectsShadowedCanonicalComposeFile(t *testing.T) {
+	t.Setenv("M3TAL_COMPOSE_DIR", "")
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "compose.yaml"), []byte("services:\n  canonical:\n    image: alpine\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	settingsMu.Lock()
+	oldRoot, oldLayout, oldBackup := composeDirSetting, newStackLayout, backupOnSave
+	composeDirSetting, newStackLayout, backupOnSave = root, "flat", false
+	settingsMu.Unlock()
+	defer func() {
+		settingsMu.Lock()
+		composeDirSetting, newStackLayout, backupOnSave = oldRoot, oldLayout, oldBackup
+		settingsMu.Unlock()
+	}()
+	if _, err := SaveStack("docker-compose", "services:\n  legacy:\n    image: nginx\n"); err == nil {
+		t.Fatal("flat stack creation accepted a Compose file hidden by canonical precedence")
+	}
+	if _, err := os.Stat(filepath.Join(root, "docker-compose.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("shadowed flat Compose file was created: stat err=%v", err)
+	}
+}
+
 func TestSymlinkSearchRootAndDuplicateStackIDs(t *testing.T) {
 	t.Setenv("M3TAL_COMPOSE_DIR", "")
 	oldProjectsSource := composeProjectsSource

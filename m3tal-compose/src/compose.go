@@ -487,6 +487,24 @@ func pathDepth(root, path string) int {
 	return strings.Count(rel, string(os.PathSeparator)) + 1
 }
 
+func flatComposeDestinationIsShadowed(root, destination string) bool {
+	if filepath.Dir(destination) != root || !isComposeFile(filepath.Base(destination)) {
+		return false
+	}
+	for _, name := range []string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"} {
+		candidate := filepath.Join(root, name)
+		if canonicalPath(candidate) == canonicalPath(destination) {
+			return false
+		}
+		if _, err := os.Stat(candidate); err == nil {
+			return true
+		} else if !os.IsNotExist(err) {
+			return true
+		}
+	}
+	return false
+}
+
 func defaultComposeFiles(primary string) []string {
 	files := []string{primary}
 	candidates := []string{}
@@ -801,6 +819,9 @@ func SaveStack(name, content string) (string, error) {
 		}
 		if layout == "flat" {
 			filePath = filepath.Join(root, name+".yaml")
+			if flatComposeDestinationIsShadowed(root, filePath) {
+				return "", fmt.Errorf("flat Compose destination %q would be hidden by canonical file precedence", filePath)
+			}
 		} else {
 			filePath = filepath.Join(root, name, "compose.yaml")
 		}
