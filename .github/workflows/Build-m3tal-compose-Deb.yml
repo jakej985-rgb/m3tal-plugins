@@ -26,6 +26,13 @@ jobs:
           token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
+      - name: Require main branch for publishing
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Publishing can only run from main (selected ref: $GITHUB_REF)."
+            exit 1
+          fi
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -63,16 +70,18 @@ jobs:
             ./scripts/smart-bump.py --base "$BASE_REF" --plugin "m3tal-compose" --apply
           fi
 
-          VERSION=$(grep 'version:' m3tal-compose/plugin.yaml | head -n1 | awk '{print $2}' | tr -d '"')
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
           if [ -n "$(git status --porcelain m3tal-compose/)" ]; then
             git config user.name "m3tal-bot"
             git config user.email "bot@m3tal.io"
             git add m3tal-compose/
             git commit -m "chore(release): auto-bump m3tal-compose version and update CHANGELOG [skip ci]"
-            git push origin main
+            bash scripts/push-release-commit.sh origin main
           fi
+
+          # The push helper may rebase onto a newer release bump; publish the
+          # version from the final manifest that the package build will read.
+          VERSION=$(grep 'version:' m3tal-compose/plugin.yaml | head -n1 | awk '{print $2}' | tr -d '"')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build and Package m3tal-compose DEB
         id: package
