@@ -678,12 +678,43 @@ func ValidateYAML(content string) (bool, string, error) {
 	return true, fmt.Sprintf("YAML syntax is valid (%d services defined)", len(services)), nil
 }
 
+// ValidateComposeFragment accepts valid YAML fragments for existing projects,
+// whose services may be declared in a different config file.
+func ValidateComposeFragment(content string) (bool, string, error) {
+	if strings.TrimSpace(content) == "" {
+		return false, "YAML content is empty", nil
+	}
+	var root map[string]interface{}
+	if err := yaml.Unmarshal([]byte(content), &root); err != nil {
+		return false, "Invalid YAML: " + err.Error(), nil
+	}
+	if root == nil {
+		return false, "A Compose config mapping is required", nil
+	}
+	if services, found := root["services"]; found {
+		if _, ok := services.(map[string]interface{}); !ok {
+			return false, "A top-level 'services' value must be a mapping", nil
+		}
+	}
+	return true, "YAML fragment is valid", nil
+}
+
+// ValidateStackContent requires services for new stacks, but allows an
+// existing Compose config file to contribute only part of the project.
+func ValidateStackContent(identifier, content string) (bool, string, error) {
+	_, _, registered := parseRegisteredComposeID(identifier)
+	if filepath.IsAbs(identifier) || registered {
+		return ValidateComposeFragment(content)
+	}
+	return ValidateYAML(content)
+}
+
 // SaveStack saves or creates a compose stack definition.
 func SaveStack(name, content string) (string, error) {
 	if strings.TrimSpace(name) == "" {
 		return "", fmt.Errorf("stack name is required")
 	}
-	if valid, message, _ := ValidateYAML(content); !valid {
+	if valid, message, _ := ValidateStackContent(name, content); !valid {
 		return "", fmt.Errorf("%s", message)
 	}
 	mockMu.Lock()

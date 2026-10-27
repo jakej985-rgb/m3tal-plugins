@@ -547,6 +547,48 @@ func TestRegisteredProjectIDFailsWhenRegistryEntryDisappears(t *testing.T) {
 	}
 }
 
+func TestSaveRegisteredProjectPrimaryWithoutServices(t *testing.T) {
+	t.Setenv("M3TAL_COMPOSE_DIR", "")
+	root := t.TempDir()
+	primary := filepath.Join(root, "compose.yaml")
+	production := filepath.Join(root, "production.yaml")
+	if err := os.WriteFile(primary, []byte("networks:\n  app:\n    driver: bridge\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(production, []byte("services:\n  app:\n    image: nginx\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	settingsMu.Lock()
+	oldRoot, oldBackup := composeDirSetting, backupOnSave
+	composeDirSetting, backupOnSave = root, false
+	settingsMu.Unlock()
+	defer func() {
+		settingsMu.Lock()
+		composeDirSetting, backupOnSave = oldRoot, oldBackup
+		settingsMu.Unlock()
+	}()
+	oldProjectsSource := composeProjectsSource
+	composeProjectsSource = func() ([]composeProject, error) {
+		return []composeProject{{Name: "prod", ConfigFiles: strings.Join([]string{primary, production}, ",")}}, nil
+	}
+	defer func() { composeProjectsSource = oldProjectsSource }()
+
+	fragment := "networks:\n  app:\n    driver: bridge\n"
+	savedPath, err := SaveStack(registeredComposeID(primary, "prod"), fragment)
+	if err != nil {
+		t.Fatalf("saving service-less primary fragment failed: %v", err)
+	}
+	if canonicalPath(savedPath) != canonicalPath(primary) {
+		t.Fatalf("saved to %q, want primary config %q", savedPath, primary)
+	}
+	if content, err := os.ReadFile(primary); err != nil || string(content) != fragment {
+		t.Fatalf("primary config was not updated: content=%q err=%v", content, err)
+	}
+	if valid, _, _ := ValidateStackContent("new-stack", fragment); valid {
+		t.Fatal("new stack without services passed validation")
+	}
+}
+
 func TestNewStackLayoutsAndPathValidation(t *testing.T) {
 	t.Setenv("M3TAL_COMPOSE_DIR", "")
 	root := t.TempDir()

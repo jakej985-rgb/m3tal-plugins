@@ -321,7 +321,7 @@ func handleAction(req *RPCRequest) {
 		})
 
 	case "validate_yaml":
-		valid, msg, err := ValidateYAML(params.Content)
+		valid, msg, err := ValidateStackContent(params.Stack, params.Content)
 		if err != nil {
 			sendError(req.ID, -32001, "Validation failed", err.Error())
 			return
