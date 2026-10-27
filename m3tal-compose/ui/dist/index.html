@@ -313,6 +313,11 @@
     let currentStacks = [];
     let yamlDirty = false;
 
+    function stackKey(stack) { return stack.id || stack.name; }
+    function findStackBySelection(key) {
+      return currentStacks.find(stack => stackKey(stack) === key) || currentStacks.find(stack => stack.name === key);
+    }
+
     function getToken() {
       const params = new URLSearchParams(window.location.search);
       if (params.get('token')) return params.get('token');
@@ -343,12 +348,14 @@
           renderMetrics(data.result.metrics);
           renderStackList(currentStacks);
           if (!activeStack && currentStacks.length > 0) {
-            selectStack(currentStacks[0].name);
+            selectStack(stackKey(currentStacks[0]));
           } else if (activeStack) {
-            const selected = currentStacks.find(s => s.name === activeStack);
+            const selected = findStackBySelection(activeStack);
             if (selected) {
+              activeStack = stackKey(selected);
               renderStackSummary(selected);
               if (!yamlDirty) renderServiceCards(selected.services);
+              renderStackList(currentStacks);
             }
           }
         }
@@ -376,15 +383,17 @@
         return;
       }
       stacks.forEach(s => {
+        const key = stackKey(s);
+        const duplicateName = currentStacks.filter(stack => stack.name === s.name).length > 1;
         const item = document.createElement('div');
-        item.className = `stack-item ${activeStack === s.name ? 'active' : ''}`;
-        item.onclick = () => selectStack(s.name);
+        item.className = `stack-item ${activeStack === key ? 'active' : ''}`;
+        item.onclick = () => selectStack(key);
         
         const dotState = s.status === 'running' ? 'dot-running' : (s.status === 'partial' ? 'dot-partial' : 'dot-stopped');
         const name = document.createElement('span'); name.textContent = s.name;
         const dot = document.createElement('span'); dot.className = `stack-status-dot ${dotState}`;
         const title = document.createElement('div'); title.className = 'stack-name'; title.append(dot, name);
-        const summary = document.createElement('span'); summary.style.cssText = 'font-size:.68rem;color:var(--text-muted)'; summary.textContent = `${s.services_count} · ${s.status}`;
+        const summary = document.createElement('span'); summary.style.cssText = 'font-size:.68rem;color:var(--text-muted);overflow-wrap:anywhere;text-align:right'; summary.textContent = duplicateName ? `${s.services_count} · ${s.status} · ${s.path}` : `${s.services_count} · ${s.status}`;
         item.append(title, summary);
         container.appendChild(item);
       });
@@ -393,10 +402,11 @@
     function selectStack(name) {
       if (yamlDirty && name === activeStack) return;
       if (yamlDirty && !confirm('Discard unsaved Compose edits?')) return;
-      activeStack = name;
+      const selectedStack = findStackBySelection(name);
+      activeStack = selectedStack ? stackKey(selectedStack) : name;
       yamlDirty = false;
       renderStackList(currentStacks);
-      const stack = currentStacks.find(s => s.name === name);
+      const stack = selectedStack;
       if (stack && stack.yaml_content) {
         document.getElementById('yamlEditor').value = stack.yaml_content;
         renderStackSummary(stack);
@@ -421,7 +431,7 @@
         card.className = 'service-card';
         const title = document.createElement('div'); title.className = 'service-title';
         const label = document.createElement('span'); label.textContent = `📦 ${svc}`;
-        const stack = currentStacks.find(s => s.name === activeStack);
+        const stack = findStackBySelection(activeStack);
         const state = document.createElement('span'); state.className = 'service-state'; state.style.cssText = 'font-size:.7rem;color:var(--text-muted)';
         state.textContent = stack?.service_states?.[svc] || 'not running';
         title.append(label, state); card.append(title);
@@ -453,8 +463,9 @@
       }
       const content = document.getElementById('yamlEditor').value;
       if (yamlDirty && ['compose_up', 'compose_down', 'compose_restart'].includes(actionId) && !confirm('The editor has unsaved changes. Continue with the saved Compose file?')) return;
-      if (actionId === 'compose_down' && !confirm(`Stop services for “${activeStack}”?`)) return;
-      logConsole(`Executing action '${actionId}' on stack '${activeStack}'...`);
+      const selected = findStackBySelection(activeStack);
+      if (actionId === 'compose_down' && !confirm(`Stop services for “${selected?.name || activeStack}”?`)) return;
+      logConsole(`Executing action '${actionId}' on stack '${selected?.name || activeStack}'...`);
 
       try {
         const res = await fetch('/api/v2/plugins/compose/action', {
@@ -475,7 +486,7 @@
           if (actionId === 'save_stack') yamlDirty = false;
           showToast(data.result.message || `Action ${actionId} succeeded`);
           logConsole(data.result.message || `[SUCCESS] ${actionId}`);
-          fetchStacks();
+          await fetchStacks();
         } else if (data.error) {
           logConsole(`[ERROR] ${data.error.message}: ${data.error.data || ''}`);
           showToast(`Error: ${data.error.message}`);
@@ -487,7 +498,8 @@
 
     async function fetchLogs() {
       if (!activeStack) return;
-      logConsole(`Fetching logs for '${activeStack}'...`);
+      const selected = findStackBySelection(activeStack);
+      logConsole(`Fetching logs for '${selected?.name || activeStack}'...`);
       try {
         const res = await fetch('/api/v2/plugins/compose/action', {
           method: 'POST',
@@ -516,10 +528,11 @@
       const name = prompt('Enter new stack name (e.g. database-stack):');
       if (!name) return;
       if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(name)) { showToast('Use letters, numbers, dots, underscores, and hyphens in project names'); return; }
-      if (currentStacks.some(stack => stack.name === name)) { showToast('A project with that name is already listed'); return; }
+      if (currentStacks.some(stack => stack.name === name || stack.project_name === name)) { showToast('A project with that name or Compose project name is already listed'); return; }
       yamlDirty = false;
       const initialYaml = `services:\n  app:\n    image: nginx:alpine\n    ports:\n      - "8080:80"\n    restart: unless-stopped\n`;
       currentStacks.push({
+        id: name,
         name: name,
         services: ['app'],
         services_count: 1,

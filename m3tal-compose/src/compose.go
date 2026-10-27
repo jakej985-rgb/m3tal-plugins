@@ -17,6 +17,7 @@ import (
 
 // StackInfo represents metadata and state of a docker compose project.
 type StackInfo struct {
+	ID            string            `json:"id"`
 	Name          string            `json:"name"`
 	Path          string            `json:"path"`
 	Services      []string          `json:"services"`
@@ -118,89 +119,165 @@ func expandUserPath(path string) string {
 }
 
 func SetPluginSettings(settings map[string]interface{}) error {
-	settingsMu.Lock()
-	defer settingsMu.Unlock()
+	var newDir *string
+	var newLayout *string
+	var newBackup *bool
 	if value, ok := settings["compose_dir"]; ok {
 		dir, valid := value.(string)
 		if !valid || strings.TrimSpace(dir) == "" {
 			return fmt.Errorf("compose_dir must be a non-empty path")
 		}
-		composeDirSetting = expandUserPath(strings.TrimSpace(dir))
+		expandedDir := expandUserPath(strings.TrimSpace(dir))
+		newDir = &expandedDir
 	}
 	if value, ok := settings["new_stack_layout"]; ok {
 		layout, valid := value.(string)
 		if !valid || (layout != "per_stack_folder" && layout != "flat") {
 			return fmt.Errorf("new_stack_layout must be 'per_stack_folder' or 'flat'")
 		}
-		newStackLayout = layout
+		newLayout = &layout
 	}
 	if value, ok := settings["backup_on_save"]; ok {
 		backup, valid := value.(bool)
 		if !valid {
 			return fmt.Errorf("backup_on_save must be a boolean")
 		}
-		backupOnSave = backup
+		newBackup = &backup
+	}
+	settingsMu.Lock()
+	defer settingsMu.Unlock()
+	if newDir != nil {
+		composeDirSetting = *newDir
+	}
+	if newLayout != nil {
+		newStackLayout = *newLayout
+	}
+	if newBackup != nil {
+		backupOnSave = *newBackup
 	}
 	return nil
 }
 
-// resolveStackPath returns the first Compose file for a discovered stack.
-func resolveStackPath(name string) string {
-	files, _, err := resolveStackFiles(name)
-	if err == nil && len(files) > 0 {
-		return files[0]
-	}
-	return ""
+type composeProject struct {
+	Name        string `json:"Name"`
+	Status      string `json:"Status"`
+	ConfigFiles string `json:"ConfigFiles"`
 }
 
-func resolveStackFiles(name string) ([]string, string, error) {
-	if info, found := findStack(name); found {
-		files := info.ConfigFiles
-		if len(files) == 0 && info.Path != "" {
-			files = []string{info.Path}
-		}
-		project := info.ProjectName
-		if project == "" {
-			project = name
-		}
-		return files, project, nil
-	}
-	if !validStackName(name) {
-		return nil, "", fmt.Errorf("invalid stack name")
-	}
-	baseDir := getBaseComposeDir()
-	stackDir := filepath.Join(baseDir, name)
-
-	for _, candidateName := range []string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"} {
-		candidate := filepath.Join(stackDir, candidateName)
-		if _, err := os.Stat(candidate); err == nil {
-			return []string{candidate}, name, nil
-		}
-	}
-
-	// Query host-wide compose registry for matching project name
+func dockerComposeProjects() ([]composeProject, error) {
 	cmd := exec.Command("docker", "compose", "ls", "-a", "--format", "json")
-	if out, err := cmd.Output(); err == nil && len(out) > 0 {
-		var projects []struct {
-			Name        string `json:"Name"`
-			ConfigFiles string `json:"ConfigFiles"`
-		}
-		if err := json.Unmarshal(out, &projects); err == nil {
-			for _, p := range projects {
-				if p.Name == name && p.ConfigFiles != "" {
-					files := strings.Split(p.ConfigFiles, ",")
-					if len(files) > 0 {
-						primary := strings.TrimSpace(files[0])
-						if primary != "" {
-							return normalizeConfigFiles(files), p.Name, nil
-						}
-					}
-				}
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	var projects []composeProject
+	if err := json.Unmarshal(out, &projects); err != nil {
+		return nil, err
+	}
+	return projects, nil
+}
+
+var composeProjectsSource = dockerComposeProjects
+
+func resolvedComposeRoot() string {
+	root := getBaseComposeDir()
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
+	return canonicalPath(root)
+}
+
+func canonicalPath(path string) string {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	return filepath.Clean(absolute)
+}
+
+func pathWithin(root, path string) bool {
+	relative, err := filepath.Rel(root, path)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator)) && !filepath.IsAbs(relative)
+}
+
+func isOverrideComposeFile(name string) bool {
+	name = strings.ToLower(name)
+	return strings.Contains(name, ".override.")
+}
+
+func allowedComposePath(root, path string) bool {
+	if !pathWithin(root, path) || isOverrideComposeFile(filepath.Base(path)) {
+		return false
+	}
+	if isComposeFile(filepath.Base(path)) {
+		return true
+	}
+	return filepath.Dir(path) == root && (strings.EqualFold(filepath.Ext(path), ".yaml") || strings.EqualFold(filepath.Ext(path), ".yml"))
+}
+
+func registeredProjectForPath(projects []composeProject, path string) (composeProject, []string, bool) {
+	path = canonicalPath(path)
+	for _, project := range projects {
+		files := normalizeConfigFiles(strings.Split(project.ConfigFiles, ","))
+		for _, file := range files {
+			if canonicalPath(file) == path {
+				return project, files, true
 			}
 		}
 	}
+	return composeProject{}, nil, false
+}
 
-	return nil, "", fmt.Errorf("compose file for stack %q not found", name)
+// resolveStackFiles resolves a stack by its stable Compose-file ID. Legacy
+// callers may pass a safe new-stack name, which is resolved only in the root.
+func resolveStackFiles(identifier string) ([]string, string, error) {
+	root := resolvedComposeRoot()
+	projects, _ := composeProjectsSource()
+	if filepath.IsAbs(identifier) {
+		path := canonicalPath(identifier)
+		if project, files, found := registeredProjectForPath(projects, path); found {
+			return files, project.Name, nil
+		}
+		if !allowedComposePath(root, path) {
+			return nil, "", fmt.Errorf("Compose file is not in the search folder or a registered project")
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return nil, "", fmt.Errorf("Compose file not found: %s", path)
+		}
+		return defaultComposeFiles(path), flatFileProjectName(path, root, string(content)), nil
+	}
+	if !validStackName(identifier) {
+		return nil, "", fmt.Errorf("invalid stack name")
+	}
+	for _, candidate := range []string{
+		filepath.Join(root, identifier, "compose.yaml"),
+		filepath.Join(root, identifier, "compose.yml"),
+		filepath.Join(root, identifier, "docker-compose.yaml"),
+		filepath.Join(root, identifier, "docker-compose.yml"),
+		filepath.Join(root, identifier+".yaml"),
+		filepath.Join(root, identifier+".yml"),
+	} {
+		if _, err := os.Stat(candidate); err == nil && allowedComposePath(root, canonicalPath(candidate)) {
+			if project, files, found := registeredProjectForPath(projects, candidate); found {
+				return files, project.Name, nil
+			}
+			content, readErr := os.ReadFile(candidate)
+			if readErr != nil {
+				return nil, "", readErr
+			}
+			return defaultComposeFiles(candidate), flatFileProjectName(canonicalPath(candidate), root, string(content)), nil
+		}
+	}
+	for _, project := range projects {
+		if project.Name == identifier {
+			files := normalizeConfigFiles(strings.Split(project.ConfigFiles, ","))
+			if len(files) > 0 {
+				return files, project.Name, nil
+			}
+		}
+	}
+	return nil, "", fmt.Errorf("Compose project %q not found", identifier)
 }
 
 func validStackName(name string) bool {
@@ -225,19 +302,6 @@ func normalizeConfigFiles(files []string) []string {
 	return result
 }
 
-func findStack(name string) (StackInfo, bool) {
-	stacks, err := ListStacks()
-	if err != nil {
-		return StackInfo{}, false
-	}
-	for _, stack := range stacks {
-		if stack.Name == name || stack.ProjectName == name {
-			return stack, true
-		}
-	}
-	return StackInfo{}, false
-}
-
 // ListStacks returns all discovered compose stacks.
 func ListStacks() ([]StackInfo, error) {
 	mockMu.RLock()
@@ -248,8 +312,7 @@ func ListStacks() ([]StackInfo, error) {
 	mockMu.RUnlock()
 
 	results := make(map[string]StackInfo)
-	seenNames := make(map[string]bool)
-	baseDir := getBaseComposeDir()
+	baseDir := resolvedComposeRoot()
 	_ = filepath.WalkDir(baseDir, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return nil
@@ -260,7 +323,7 @@ func ListStacks() ([]StackInfo, error) {
 			}
 			return nil
 		}
-		flatFile := filepath.Dir(path) == baseDir && (strings.EqualFold(filepath.Ext(entry.Name()), ".yaml") || strings.EqualFold(filepath.Ext(entry.Name()), ".yml"))
+		flatFile := filepath.Dir(path) == baseDir && !isOverrideComposeFile(entry.Name()) && (strings.EqualFold(filepath.Ext(entry.Name()), ".yaml") || strings.EqualFold(filepath.Ext(entry.Name()), ".yml"))
 		if !isComposeFile(entry.Name()) && !flatFile {
 			return nil
 		}
@@ -283,60 +346,43 @@ func ListStacks() ([]StackInfo, error) {
 		if err != nil {
 			return nil
 		}
+		if flatFile && len(extractServices(string(content))) == 0 {
+			return nil
+		}
 		name := filepath.Base(filepath.Dir(path))
 		if filepath.Dir(path) == baseDir {
 			name = strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
+			if isComposeFile(entry.Name()) {
+				name = filepath.Base(baseDir)
+			}
 		}
-		projectName := extractComposeProjectName(string(content))
-		if projectName == "" {
-			projectName = normalizeProjectName(name)
-		} else {
-			projectName = normalizeProjectName(projectName)
+		info := inspectStack(name, defaultComposeFiles(path), flatFileProjectName(path, baseDir, string(content)), string(content))
+		// Expose a literal top-level Compose name for UI duplicate detection.
+		// Local actions still omit -p so Compose can handle interpolation itself.
+		if declaredName := extractStaticComposeProjectName(string(content)); declaredName != "" {
+			info.ProjectName = declaredName
 		}
-		info := inspectStack(name, defaultComposeFiles(path), projectName, string(content))
-		key, _ := filepath.Abs(path)
-		if key == "" {
-			key = filepath.Clean(path)
-		}
+		key := canonicalPath(path)
+		info.ID = key
 		results[key] = info
-		seenNames[projectName] = true
 		return nil
 	})
 
 	// 2. Discover host-wide compose projects using docker compose ls -a
-	cmd := exec.Command("docker", "compose", "ls", "-a", "--format", "json")
-	if out, err := cmd.Output(); err == nil && len(out) > 0 {
-		var composeProjects []struct {
-			Name        string `json:"Name"`
-			Status      string `json:"Status"`
-			ConfigFiles string `json:"ConfigFiles"`
-		}
-		if err := json.Unmarshal(out, &composeProjects); err == nil {
-			for _, cp := range composeProjects {
-				if cp.ConfigFiles == "" {
-					continue
-				}
-				files := normalizeConfigFiles(strings.Split(cp.ConfigFiles, ","))
-				if len(files) == 0 {
-					continue
-				}
-				key, _ := filepath.Abs(files[0])
-				if key == "" {
-					key = filepath.Clean(files[0])
-				}
-				if seenNames[cp.Name] {
-					if _, found := results[key]; !found {
-						continue
-					}
-				}
-				content, err := os.ReadFile(files[0])
-				if err != nil {
-					continue
-				}
-				info := inspectStack(cp.Name, files, cp.Name, string(content))
-				results[key] = info
-				seenNames[cp.Name] = true
+	if composeProjects, err := composeProjectsSource(); err == nil {
+		for _, cp := range composeProjects {
+			files := normalizeConfigFiles(strings.Split(cp.ConfigFiles, ","))
+			if len(files) == 0 {
+				continue
 			}
+			content, err := os.ReadFile(files[0])
+			if err != nil {
+				continue
+			}
+			info := inspectStack(cp.Name, files, cp.Name, string(content))
+			key := canonicalPath(files[0])
+			info.ID = key
+			results[key] = info
 		}
 	}
 
@@ -345,7 +391,13 @@ func ListStacks() ([]StackInfo, error) {
 	for _, stack := range results {
 		stacks = append(stacks, stack)
 	}
-	sort.Slice(stacks, func(i, j int) bool { return strings.ToLower(stacks[i].Name) < strings.ToLower(stacks[j].Name) })
+	sort.Slice(stacks, func(i, j int) bool {
+		left, right := strings.ToLower(stacks[i].Name), strings.ToLower(stacks[j].Name)
+		if left == right {
+			return stacks[i].ID < stacks[j].ID
+		}
+		return left < right
+	})
 	return stacks, nil
 }
 
@@ -371,17 +423,6 @@ func pathDepth(root, path string) int {
 	return strings.Count(rel, string(os.PathSeparator)) + 1
 }
 
-func extractComposeProjectName(content string) string {
-	var config map[string]interface{}
-	if yaml.Unmarshal([]byte(content), &config) != nil {
-		return ""
-	}
-	if name, ok := config["name"].(string); ok {
-		return strings.TrimSpace(name)
-	}
-	return ""
-}
-
 func defaultComposeFiles(primary string) []string {
 	files := []string{primary}
 	candidates := []string{}
@@ -405,16 +446,37 @@ func defaultComposeFiles(primary string) []string {
 	return files
 }
 
-func normalizeProjectName(name string) string {
+func flatFileProjectName(path, root, content string) string {
+	if filepath.Dir(path) != root || isComposeFile(filepath.Base(path)) {
+		return ""
+	}
+	var config map[string]interface{}
+	if yaml.Unmarshal([]byte(content), &config) != nil {
+		return ""
+	}
+	if _, hasComposeName := config["name"]; hasComposeName {
+		return ""
+	}
+	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	var normalized strings.Builder
-	for _, char := range strings.ToLower(strings.TrimSpace(name)) {
+	for _, char := range strings.ToLower(name) {
 		if char >= 'a' && char <= 'z' || char >= '0' && char <= '9' || char == '_' || char == '-' {
 			normalized.WriteRune(char)
-		} else {
-			normalized.WriteRune('-')
 		}
 	}
-	return strings.Trim(normalized.String(), "-.")
+	return strings.Trim(normalized.String(), "-_")
+}
+
+func extractStaticComposeProjectName(content string) string {
+	var config map[string]interface{}
+	if yaml.Unmarshal([]byte(content), &config) != nil {
+		return ""
+	}
+	name, ok := config["name"].(string)
+	if !ok || strings.Contains(name, "$") {
+		return ""
+	}
+	return strings.TrimSpace(name)
 }
 
 func inspectStack(name string, files []string, projectName, yamlContent string) StackInfo {
@@ -463,6 +525,7 @@ func inspectStack(name string, files []string, projectName, yamlContent string) 
 		updatedAt = stat.ModTime().Format("2006-01-02 15:04:05")
 	}
 	return StackInfo{
+		ID:            canonicalPath(path),
 		Name:          name,
 		Path:          path,
 		ConfigFiles:   files,
@@ -548,8 +611,21 @@ func SaveStack(name, content string) error {
 	mockMu.Unlock()
 
 	filePath := ""
-	if existing, found := findStack(name); found {
-		filePath = existing.Path
+	mode := os.FileMode(0644)
+	if filepath.IsAbs(name) {
+		files, _, err := resolveStackFiles(name)
+		if err != nil {
+			return err
+		}
+		if len(files) == 0 {
+			return fmt.Errorf("no Compose file selected")
+		}
+		filePath = files[0]
+		info, err := os.Stat(filePath)
+		if err != nil {
+			return fmt.Errorf("stat existing Compose file: %w", err)
+		}
+		mode = info.Mode().Perm()
 	} else {
 		if !validStackName(name) {
 			return fmt.Errorf("invalid stack name")
@@ -563,6 +639,11 @@ func SaveStack(name, content string) error {
 		} else {
 			filePath = filepath.Join(root, name, "compose.yaml")
 		}
+		if _, err := os.Lstat(filePath); err == nil {
+			return fmt.Errorf("a Compose file already exists there; select the existing project to edit it")
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("check new Compose path: %w", err)
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
 		return fmt.Errorf("failed to create compose directory: %w", err)
@@ -572,14 +653,14 @@ func SaveStack(name, content string) error {
 	settingsMu.RUnlock()
 	if shouldBackup {
 		if old, err := os.ReadFile(filePath); err == nil {
-			if err := atomicWriteFile(filePath+".bak", old, 0644); err != nil {
+			if err := atomicWriteFile(filePath+".bak", old, mode); err != nil {
 				return fmt.Errorf("failed to back up compose file: %w", err)
 			}
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("failed to read compose file: %w", err)
 		}
 	}
-	return atomicWriteFile(filePath, []byte(content), 0644)
+	return atomicWriteFile(filePath, []byte(content), mode)
 }
 
 func atomicWriteFile(path string, content []byte, mode os.FileMode) error {

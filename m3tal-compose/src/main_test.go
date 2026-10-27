@@ -98,12 +98,18 @@ func TestYAMLValidationAndFlowStyleServices(t *testing.T) {
 
 func TestConfiguredRecursiveDiscoveryAndSaveExisting(t *testing.T) {
 	t.Setenv("M3TAL_COMPOSE_DIR", "")
+	oldProjectsSource := composeProjectsSource
+	composeProjectsSource = func() ([]composeProject, error) { return nil, nil }
+	defer func() { composeProjectsSource = oldProjectsSource }()
 	root := t.TempDir()
 	composePath := filepath.Join(root, "nested", "api service", "compose.yaml")
 	if err := os.MkdirAll(filepath.Dir(composePath), 0755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(composePath, []byte("name: api-project\nservices:\n  old:\n    image: alpine\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(composePath, 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(filepath.Dir(composePath), "docker-compose.yml"), []byte("services:\n  ignored:\n    image: alpine\n"), 0644); err != nil {
@@ -115,6 +121,16 @@ func TestConfiguredRecursiveDiscoveryAndSaveExisting(t *testing.T) {
 	}
 	flatPath := filepath.Join(root, "flat-stack.yaml")
 	if err := os.WriteFile(flatPath, []byte("services:\n  flat:\n    image: alpine\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	rootComposePath := filepath.Join(root, "compose.yaml")
+	if err := os.WriteFile(rootComposePath, []byte("services:\n  root-app:\n    image: alpine\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "compose.override.yaml"), []byte("services:\n  ignored-override:\n    image: alpine\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "settings.yaml"), []byte("theme: dark\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	settingsMu.Lock()
@@ -133,12 +149,21 @@ func TestConfiguredRecursiveDiscoveryAndSaveExisting(t *testing.T) {
 	}
 	found := false
 	flatFound := false
+	rootComposeFound := false
+	var existing StackInfo
 	for _, stack := range stacks {
-		if stack.Name == "api service" && stack.ProjectName == "api-project" && stack.Path == composePath && len(stack.ConfigFiles) == 2 && stack.ConfigFiles[1] == overridePath {
+		if stack.Name == "api service" && stack.ProjectName == "api-project" && stack.Path == composePath && stack.ID == canonicalPath(composePath) && len(stack.ConfigFiles) == 2 && stack.ConfigFiles[1] == overridePath {
 			found = true
+			existing = stack
 		}
 		if stack.Name == "flat-stack" && stack.Path == flatPath {
 			flatFound = true
+		}
+		if stack.Name == filepath.Base(root) && stack.Path == rootComposePath {
+			rootComposeFound = true
+		}
+		if stack.Name == "settings" || stack.Name == "compose.override" || stack.Name == "ignored-override" {
+			t.Fatalf("unrelated/override YAML was listed as a project: %#v", stack)
 		}
 	}
 	if !found {
@@ -147,9 +172,26 @@ func TestConfiguredRecursiveDiscoveryAndSaveExisting(t *testing.T) {
 	if !flatFound {
 		t.Fatalf("flat Compose file was not discovered: %s", flatPath)
 	}
+	if got := flatFileProjectName(filepath.Join(root, "api service.yaml"), root, "services: { web: { image: nginx } }\n"); got != "apiservice" {
+		t.Fatalf("flat file project name does not match Compose normalization: %q", got)
+	}
+	if got := flatFileProjectName(filepath.Join(root, "dynamic.yaml"), root, "name: ${STACK_NAME:-prod}\nservices: { web: { image: nginx } }\n"); got != "" {
+		t.Fatalf("dynamic Compose project name should be left to Compose, got %q", got)
+	}
+	if !rootComposeFound {
+		t.Fatal("valid root compose.yaml was not discovered with the root folder name")
+	}
 
 	content := "services:\n  api:\n    image: nginx:alpine\n"
-	if err := SaveStack("api service", content); err != nil {
+	// A new stack named after an existing file's Compose name must not update that file.
+	if err := SaveStack("api-project", content); err != nil {
+		t.Fatal(err)
+	}
+	untouched, err := os.ReadFile(composePath)
+	if err != nil || string(untouched) != "name: api-project\nservices:\n  old:\n    image: alpine\n" {
+		t.Fatalf("new-stack alias overwrote existing project: content=%q err=%v", untouched, err)
+	}
+	if err := SaveStack(existing.ID, content); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(composePath)
@@ -161,6 +203,15 @@ func TestConfiguredRecursiveDiscoveryAndSaveExisting(t *testing.T) {
 	}
 	if _, err := os.Stat(composePath + ".bak"); err != nil {
 		t.Fatalf("expected backup of existing file: %v", err)
+	}
+	for _, path := range []string{composePath, composePath + ".bak"} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != 0600 {
+			t.Fatalf("expected restrictive mode 0600 on %s, got %04o", path, got)
+		}
 	}
 }
 
@@ -200,6 +251,67 @@ func TestNewStackLayoutsAndPathValidation(t *testing.T) {
 	}
 }
 
+func TestSymlinkSearchRootAndDuplicateStackIDs(t *testing.T) {
+	t.Setenv("M3TAL_COMPOSE_DIR", "")
+	oldProjectsSource := composeProjectsSource
+	composeProjectsSource = func() ([]composeProject, error) { return nil, nil }
+	defer func() { composeProjectsSource = oldProjectsSource }()
+	target := t.TempDir()
+	first := filepath.Join(target, "a", "app", "compose.yaml")
+	second := filepath.Join(target, "b", "app", "compose.yaml")
+	for _, path := range []string{first, second} {
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("services:\n  web:\n    image: nginx\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := filepath.Join(t.TempDir(), "docker-link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	settingsMu.Lock()
+	oldRoot := composeDirSetting
+	composeDirSetting = link
+	settingsMu.Unlock()
+	defer func() { settingsMu.Lock(); composeDirSetting = oldRoot; settingsMu.Unlock() }()
+	stacks, err := ListStacks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var matches []StackInfo
+	for _, stack := range stacks {
+		if stack.Name == "app" {
+			matches = append(matches, stack)
+		}
+	}
+	if len(matches) != 2 {
+		t.Fatalf("expected both duplicate display names, got %d (%#v)", len(matches), stacks)
+	}
+	if matches[0].ID == "" || matches[1].ID == "" || matches[0].ID == matches[1].ID {
+		t.Fatalf("expected distinct stable stack IDs, got %#v", matches)
+	}
+	if matches[0].ID >= matches[1].ID {
+		t.Fatalf("duplicate stacks are not deterministically ordered: %q then %q", matches[0].ID, matches[1].ID)
+	}
+	updated := "services:\n  first-only:\n    image: nginx\n"
+	if err := SaveStack(matches[0].ID, updated); err != nil {
+		t.Fatal(err)
+	}
+	firstContent, err := os.ReadFile(matches[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondContent, err := os.ReadFile(matches[1].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(firstContent) != updated || strings.Contains(string(secondContent), "first-only") {
+		t.Fatalf("path ID did not target only its project: first=%q second=%q", firstContent, secondContent)
+	}
+}
+
 func TestSettingsEnvelopeAndComposeArguments(t *testing.T) {
 	t.Setenv("M3TAL_COMPOSE_DIR", "")
 	settingsMu.RLock()
@@ -210,6 +322,21 @@ func TestSettingsEnvelopeAndComposeArguments(t *testing.T) {
 		composeDirSetting, newStackLayout, backupOnSave = oldRoot, oldLayout, oldBackup
 		settingsMu.Unlock()
 	}()
+	settingsMu.Lock()
+	composeDirSetting, newStackLayout, backupOnSave = "/original/root", "per_stack_folder", true
+	settingsMu.Unlock()
+	if err := SetPluginSettings(map[string]interface{}{"compose_dir": "/partial/change", "new_stack_layout": "unsupported"}); err == nil {
+		t.Fatal("expected invalid layout to fail")
+	}
+	if got := getBaseComposeDir(); got != "/original/root" {
+		t.Fatalf("invalid settings partially changed the root: %s", got)
+	}
+	settingsMu.RLock()
+	gotLayout := newStackLayout
+	settingsMu.RUnlock()
+	if gotLayout != "per_stack_folder" {
+		t.Fatalf("invalid settings partially changed layout: %s", gotLayout)
+	}
 	params, err := json.Marshal(map[string]interface{}{"action_id": "set_settings", "args": map[string]interface{}{"config": map[string]interface{}{"compose_dir": "~/docker-test", "new_stack_layout": "flat", "backup_on_save": false}}})
 	if err != nil {
 		t.Fatal(err)
@@ -224,8 +351,35 @@ func TestSettingsEnvelopeAndComposeArguments(t *testing.T) {
 	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("unexpected compose arguments: %#v", args)
 	}
-	if got := normalizeProjectName("Monster-Lab"); got != "monster-lab" {
-		t.Fatalf("unexpected normalized Compose project name: %q", got)
+	// Local stacks must leave project-name interpolation to Docker Compose.
+	root := t.TempDir()
+	t.Setenv("M3TAL_COMPOSE_DIR", "")
+	settingsMu.Lock()
+	composeDirSetting = root
+	settingsMu.Unlock()
+	path := filepath.Join(root, "my folder", "compose.yaml")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("name: ${STACK_NAME:-prod}\nservices:\n  app:\n    image: nginx\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	oldProjectsSource := composeProjectsSource
+	lookupCount := 0
+	composeProjectsSource = func() ([]composeProject, error) { lookupCount++; return nil, nil }
+	defer func() { composeProjectsSource = oldProjectsSource }()
+	files, project, err := resolveStackFiles(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project != "" {
+		t.Fatalf("local Compose name expression was forced as project name %q", project)
+	}
+	if lookupCount != 1 {
+		t.Fatalf("target resolution performed %d registry lookups, want 1", lookupCount)
+	}
+	if got := composeArgs(files, project); strings.Contains(strings.Join(got, " "), "-p") {
+		t.Fatalf("local Compose interpolation was overridden: %#v", got)
 	}
 }
 

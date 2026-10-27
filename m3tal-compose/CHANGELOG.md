@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Stack names are validated before paths are created, and saved files are replaced atomically.
+- Replacements and backups preserve existing Compose file permissions, including mode 0600.
+- Existing projects are selected by their Compose file path, preventing display-name collisions from targeting the wrong file.
+- Local Compose actions leave declared and interpolated project names to Docker Compose.
+- Compose discovery follows a symlinked search root, filters unrelated and override YAML files, and keeps duplicate names deterministic.
+- Settings updates validate all values before applying any of them, and action lookup avoids a full discovery/status scan.
 - Removed the declared but unimplemented `auto_pull` option and synchronized the plugin version.
 
 ## [0.3.0] - 2026-10-26
