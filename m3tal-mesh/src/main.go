@@ -72,6 +72,7 @@ type MeshNode struct {
 var (
 	nodeMutex   sync.RWMutex
 	remoteNodes = make([]MeshNode, 0)
+	refreshMu   sync.Mutex
 )
 
 func setProcessName(name string) {
@@ -201,7 +202,12 @@ func getLocalNode() MeshNode {
 }
 
 func getAllNodes() []MeshNode {
-	refreshRemotePeers()
+	if refreshMu.TryLock() {
+		go func() {
+			defer refreshMu.Unlock()
+			refreshRemotePeers()
+		}()
+	}
 	nodeMutex.RLock()
 	defer nodeMutex.RUnlock()
 
@@ -474,27 +480,13 @@ func handleAction(req *RPCRequest) {
 			return
 		}
 
-		nodeMutex.Lock()
-		found := false
-		newRemotes := make([]MeshNode, 0, len(remoteNodes))
-		for _, n := range remoteNodes {
-			if n.ID == nodeID {
-				found = true
-				continue
-			}
-			newRemotes = append(newRemotes, n)
-		}
-		if found {
-			remoteNodes = newRemotes
-		}
-		nodeMutex.Unlock()
-
-		if !found {
-			sendError(req.ID, -32602, "Not found", fmt.Sprintf("Node %s not found", nodeID))
+		found, err := persistPeerRemoval(nodeID)
+		if err != nil {
+			sendError(req.ID, -32003, "Could not save fleet changes", err.Error())
 			return
 		}
-		if err := savePeers(snapshotPeers()); err != nil {
-			sendError(req.ID, -32003, "Could not save fleet changes", err.Error())
+		if !found {
+			sendError(req.ID, -32602, "Not found", fmt.Sprintf("Node %s not found", nodeID))
 			return
 		}
 
@@ -533,22 +525,29 @@ func handleAction(req *RPCRequest) {
 			return
 		}
 		updated.ID, updated.Name, updated.Role = target.ID, target.Name, target.Role
-		upsertPeer(updated)
-		_ = savePeers(snapshotPeers())
+		if err := persistPeerUpsert(updated); err != nil {
+			sendError(req.ID, -32005, "Could not save node status", err.Error())
+			return
+		}
 		sendResponse(req.ID, map[string]interface{}{"success": true, "node_id": nodeID, "ping_ms": updated.PingMs, "status": updated.Status})
 
 	case "scan_network":
+		if loadMeshConfig().PairingToken == "" {
+			sendResponse(req.ID, map[string]interface{}{"success": true, "discovered": 0, "nodes": []MeshNode{}, "message": "Set the shared pairing token in Mesh Settings to verify discovered nodes."})
+			return
+		}
 		discovered, err := discoverAndVerifyPeers()
 		if err != nil {
 			sendError(req.ID, -32001, "LAN scan failed", err.Error())
 			return
 		}
-		encoded, _ := json.Marshal(discovered)
-		sendResponse(req.ID, map[string]interface{}{"success": true, "discovered": len(discovered), "message": string(encoded)})
+		sendResponse(req.ID, map[string]interface{}{"success": true, "discovered": len(discovered), "nodes": discovered})
 	case "set_settings":
 		cfg := loadMeshConfig()
 		if value, ok := raw.Args["pairing_token"].(string); ok {
-			cfg.PairingToken = strings.TrimSpace(value)
+			if value = strings.TrimSpace(value); value != "" {
+				cfg.PairingToken = value
+			}
 		}
 		if value, ok := raw.Args["listen_port"].(float64); ok {
 			cfg.ListenPort = int(value)
@@ -559,16 +558,10 @@ func handleAction(req *RPCRequest) {
 		}
 		sendResponse(req.ID, map[string]interface{}{"success": true, "message": "Mesh settings saved"})
 	case "get_fleet":
-		encoded, err := json.Marshal(getAllNodes())
-		if err != nil {
-			sendError(req.ID, -32011, "Could not read fleet", err.Error())
-			return
-		}
-		sendResponse(req.ID, map[string]interface{}{"success": true, "message": string(encoded)})
+		sendResponse(req.ID, map[string]interface{}{"success": true, "nodes": getAllNodes()})
 	case "get_settings":
 		cfg := loadMeshConfig()
-		encoded, _ := json.Marshal(cfg)
-		sendResponse(req.ID, map[string]interface{}{"success": true, "message": string(encoded)})
+		sendResponse(req.ID, map[string]interface{}{"success": true, "has_pairing_token": cfg.PairingToken != "", "listen_port": cfg.ListenPort})
 
 	default:
 		sendError(req.ID, -32601, "Unknown action", fmt.Sprintf("Unsupported action_id: %s", action))

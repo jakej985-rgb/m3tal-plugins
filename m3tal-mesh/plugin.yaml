@@ -30,7 +30,7 @@ spec:
     title: "Mesh Fleet"
     sidebar: true
     order: 30
-    roles: ["admin", "viewer"]
+    roles: ["admin"]
 
   rpc:
     protocol: "jsonrpc-2.0"

@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 	"unsafe"
 )
 
@@ -65,14 +64,15 @@ func setProcessName(name string) {
 
 func main() {
 	setProcessName(CanonicalProcessName)
-	go startNodeNetworkService()
+	if err := startNodeNetworkService(); err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+	}
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigChan
 		shutdownNodeNetwork()
-		time.Sleep(100 * time.Millisecond)
 		os.Exit(0)
 	}()
 

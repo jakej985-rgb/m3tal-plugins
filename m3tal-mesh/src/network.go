@@ -2,10 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -43,6 +47,7 @@ type remoteResponse struct {
 }
 
 var peerSaveMu sync.Mutex
+var peerMutationMu sync.Mutex
 
 func meshConfigPath() string {
 	home, err := os.UserHomeDir()
@@ -160,10 +165,20 @@ func normalizeNodeAddress(address string, defaultPort int) (string, error) {
 		}
 		return net.JoinHostPort(host, port), nil
 	}
-	if strings.Count(address, ":") > 1 && net.ParseIP(address) != nil {
-		return net.JoinHostPort(address, strconv.Itoa(defaultPort)), nil
-	}
 	return net.JoinHostPort(address, strconv.Itoa(defaultPort)), nil
+}
+
+func requestProof(token, nonce string) string {
+	mac := hmac.New(sha256.New, []byte(token))
+	_, _ = io.WriteString(mac, "GET\n/api/v1/telemetry\n"+nonce)
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func responseProof(token, nonce string, body []byte) string {
+	sum := sha256.Sum256(body)
+	mac := hmac.New(sha256.New, []byte(token))
+	_, _ = io.WriteString(mac, nonce+"\n"+hex.EncodeToString(sum[:]))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 func fetchRemote(address, token string, port int) (MeshNode, error) {
@@ -174,12 +189,23 @@ func fetchRemote(address, token string, port int) (MeshNode, error) {
 	if err != nil {
 		return MeshNode{}, err
 	}
-	client := &http.Client{Timeout: 4 * time.Second}
-	req, err := http.NewRequest(http.MethodGet, "http://"+endpoint+"/api/v1/telemetry", nil)
+	client := &http.Client{
+		Timeout: 4 * time.Second,
+		// The peer's self-signed TLS certificate is ephemeral. The response
+		// HMAC below authenticates the peer before any telemetry is accepted.
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}},
+	}
+	req, err := http.NewRequest(http.MethodGet, "https://"+endpoint+"/api/v1/telemetry", nil)
 	if err != nil {
 		return MeshNode{}, fmt.Errorf("invalid node address: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	nonceBytes := make([]byte, 32)
+	if _, err := rand.Read(nonceBytes); err != nil {
+		return MeshNode{}, fmt.Errorf("could not create authentication challenge: %w", err)
+	}
+	nonce := hex.EncodeToString(nonceBytes)
+	req.Header.Set("X-M3TAL-Nonce", nonce)
+	req.Header.Set("X-M3TAL-Proof", requestProof(token, nonce))
 	started := time.Now()
 	resp, err := client.Do(req)
 	latency := int(time.Since(started).Milliseconds())
@@ -196,8 +222,16 @@ func fetchRemote(address, token string, port int) (MeshNode, error) {
 	if resp.StatusCode != http.StatusOK {
 		return MeshNode{}, fmt.Errorf("%s is not a compatible m3tal-mesh-node (HTTP %d)", address, resp.StatusCode)
 	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return MeshNode{}, fmt.Errorf("could not read telemetry from %s: %w", address, err)
+	}
+	expected := responseProof(token, nonce, body)
+	if !hmac.Equal([]byte(expected), []byte(resp.Header.Get("X-M3TAL-Proof"))) {
+		return MeshNode{}, fmt.Errorf("%s failed mesh node authentication", address)
+	}
 	var payload remoteResponse
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	if err := json.Unmarshal(body, &payload); err != nil {
 		return MeshNode{}, fmt.Errorf("%s returned invalid telemetry: %w", address, err)
 	}
 	hostname := payload.Hostname
@@ -232,6 +266,9 @@ func pairAndPersistPeer(address, name, role, token string) (MeshNode, error) {
 	if token == "" {
 		token = cfg.PairingToken
 	}
+	if cfg.PairingToken != "" && token != cfg.PairingToken {
+		return MeshNode{}, fmt.Errorf("this mesh uses one shared pairing token; configure the same token in Mesh Settings before pairing")
+	}
 	node, err := fetchRemote(address, token, cfg.ListenPort)
 	if err != nil {
 		return MeshNode{}, err
@@ -242,14 +279,13 @@ func pairAndPersistPeer(address, name, role, token string) (MeshNode, error) {
 	if role != "" {
 		node.Role = role
 	}
-	if token != cfg.PairingToken {
+	if cfg.PairingToken == "" {
 		cfg.PairingToken = token
 		if err := saveMeshConfig(cfg); err != nil {
 			return MeshNode{}, fmt.Errorf("could not save pairing token: %w", err)
 		}
 	}
-	upsertPeer(node)
-	if err := savePeers(snapshotPeers()); err != nil {
+	if err := persistPeerUpsert(node); err != nil {
 		return MeshNode{}, fmt.Errorf("could not save paired node: %w", err)
 	}
 	return node, nil
@@ -258,7 +294,7 @@ func pairAndPersistPeer(address, name, role, token string) (MeshNode, error) {
 func discoverAndVerifyPeers() ([]MeshNode, error) {
 	cfg := loadMeshConfig()
 	if cfg.PairingToken == "" {
-		return nil, fmt.Errorf("set the pairing token in Mesh Settings before scanning")
+		return []MeshNode{}, nil
 	}
 	resolver, err := zeroconf.NewResolver(zeroconf.SelectIPTraffic(zeroconf.IPv4))
 	if err != nil {
@@ -283,7 +319,7 @@ func discoverAndVerifyPeers() ([]MeshNode, error) {
 			}
 		}
 	}
-	var discovered []MeshNode
+	discovered := make([]MeshNode, 0)
 	for {
 		select {
 		case entry := <-entries:
@@ -320,6 +356,55 @@ func discoverAndVerifyPeers() ([]MeshNode, error) {
 	}
 }
 
+func persistPeerUpsert(node MeshNode) error {
+	peerMutationMu.Lock()
+	defer peerMutationMu.Unlock()
+	peers := snapshotPeers()
+	updated := false
+	for i := range peers {
+		if peers[i].ID == node.ID || strings.EqualFold(peers[i].IP, node.IP) {
+			peers[i] = node
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		peers = append(peers, node)
+	}
+	if err := savePeers(peers); err != nil {
+		return err
+	}
+	nodeMutex.Lock()
+	remoteNodes = peers
+	nodeMutex.Unlock()
+	return nil
+}
+
+func persistPeerRemoval(nodeID string) (bool, error) {
+	peerMutationMu.Lock()
+	defer peerMutationMu.Unlock()
+	peers := snapshotPeers()
+	updated := make([]MeshNode, 0, len(peers))
+	found := false
+	for _, peer := range peers {
+		if peer.ID == nodeID {
+			found = true
+			continue
+		}
+		updated = append(updated, peer)
+	}
+	if !found {
+		return false, nil
+	}
+	if err := savePeers(updated); err != nil {
+		return false, err
+	}
+	nodeMutex.Lock()
+	remoteNodes = updated
+	nodeMutex.Unlock()
+	return true, nil
+}
+
 func snapshotPeers() []MeshNode {
 	nodeMutex.RLock()
 	defer nodeMutex.RUnlock()
@@ -341,23 +426,28 @@ func upsertPeer(node MeshNode) {
 func refreshRemotePeers() {
 	cfg := loadMeshConfig()
 	peers := snapshotPeers()
+	var wg sync.WaitGroup
 	for _, existing := range peers {
-		updated, err := fetchRemote(existing.IP, cfg.PairingToken, cfg.ListenPort)
-		nodeMutex.Lock()
-		for i := range remoteNodes {
-			if remoteNodes[i].ID == existing.ID {
-				if err == nil {
-					updated.ID = existing.ID
-					updated.Name = existing.Name
-					updated.Role = existing.Role
-					remoteNodes[i] = updated
-				} else {
-					remoteNodes[i].Status = "offline"
-					remoteNodes[i].LastSeen = "unreachable"
+		existing := existing
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			updated, err := fetchRemote(existing.IP, cfg.PairingToken, cfg.ListenPort)
+			nodeMutex.Lock()
+			defer nodeMutex.Unlock()
+			for i := range remoteNodes {
+				if remoteNodes[i].ID == existing.ID {
+					if err == nil {
+						updated.ID, updated.Name, updated.Role = existing.ID, existing.Name, existing.Role
+						remoteNodes[i] = updated
+					} else {
+						remoteNodes[i].Status = "offline"
+						remoteNodes[i].LastSeen = "unreachable"
+					}
+					break
 				}
-				break
 			}
-		}
-		nodeMutex.Unlock()
+		}()
 	}
+	wg.Wait()
 }
