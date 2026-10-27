@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Existing projects save to their selected Compose file; new stacks use the selected folder or flat-file layout under the resolved search root.
 - Replacements and backups preserve file permissions and update symlink targets without replacing the links.
 - Compose actions retain registered project names and config files, while local Compose names and interpolation remain under Docker Compose control.
+- Registered project actions can still resolve validated local files while the UI catches up with Docker registry changes.
 - The editor keeps project selection and unsaved changes when saves and refreshes overlap.
 - YAML validation and service extraction use a YAML parser; unrelated and override YAML files are excluded from discovery.
 - Stack names and destinations are validated, settings updates apply atomically, and file replacements use atomic writes.

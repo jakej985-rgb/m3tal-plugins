@@ -513,6 +513,47 @@ func TestRegisteredProjectsSharingConfigHaveDistinctActionIDs(t *testing.T) {
 	}
 }
 
+func TestRegisteredProjectIDFallsBackLocallyAfterRegistryEntryDisappears(t *testing.T) {
+	t.Setenv("M3TAL_COMPOSE_DIR", "")
+	target := t.TempDir()
+	composePath := filepath.Join(target, "foo", "compose.yaml")
+	if err := os.MkdirAll(filepath.Dir(composePath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(composePath, []byte("services:\n  app:\n    image: alpine\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "docker")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	settingsMu.Lock()
+	oldRoot := composeDirSetting
+	composeDirSetting = link
+	settingsMu.Unlock()
+	defer func() { settingsMu.Lock(); composeDirSetting = oldRoot; settingsMu.Unlock() }()
+	oldProjectsSource := composeProjectsSource
+	composeProjectsSource = func() ([]composeProject, error) { return nil, nil }
+	defer func() { composeProjectsSource = oldProjectsSource }()
+
+	registeredID := registeredComposeID(filepath.Join(link, "foo", "compose.yaml"), "prod")
+	files, projectName, err := resolveStackFiles(registeredID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || canonicalPath(files[0]) != canonicalPath(composePath) || projectName != "prod" {
+		t.Fatalf("registered ID did not fall back to its validated local file and project name: files=%#v project=%q", files, projectName)
+	}
+	args := composeArgs(files, projectName)
+	if strings.Join(args, " ") != "compose -p prod -f "+composePath {
+		t.Fatalf("fallback would target the wrong Compose project: %#v", args)
+	}
+	outsideID := registeredComposeID(filepath.Join(t.TempDir(), "outside.yaml"), "outside")
+	if _, _, err := resolveStackFiles(outsideID); err == nil {
+		t.Fatal("registered ID outside the search folder was accepted after registry removal")
+	}
+}
+
 func TestNewStackLayoutsAndPathValidation(t *testing.T) {
 	t.Setenv("M3TAL_COMPOSE_DIR", "")
 	root := t.TempDir()
