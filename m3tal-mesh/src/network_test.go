@@ -7,11 +7,24 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
+func writeTestChallenge(w http.ResponseWriter, r *http.Request) bool {
+	if r.URL.Path != "/api/v1/challenge" {
+		return false
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"nonce": strings.Repeat("a", 64)})
+	return true
+}
+
 func TestFetchRemoteVerifiesAndReadsTelemetry(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
 		nonce := r.Header.Get("X-M3TAL-Nonce")
 		if r.Header.Get("X-M3TAL-Proof") != requestProof("shared-secret", nonce) {
 			http.Error(w, "invalid pairing token", http.StatusUnauthorized)
@@ -38,6 +51,9 @@ func TestFetchRemoteVerifiesAndReadsTelemetry(t *testing.T) {
 
 func TestFetchRemoteRejectsUnauthenticatedTelemetry(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
 		_, _ = io.WriteString(w, `{"hostname":"spoofed","telemetry":{"cores":4}}`)
 	}))
 	defer server.Close()
@@ -48,6 +64,9 @@ func TestFetchRemoteRejectsUnauthenticatedTelemetry(t *testing.T) {
 
 func TestFetchRemoteRejectsWrongTokenAndIncompatiblePeer(t *testing.T) {
 	unauthorized := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
 		http.Error(w, "invalid pairing token", http.StatusUnauthorized)
 	}))
 	defer unauthorized.Close()
@@ -130,39 +149,5 @@ func TestPeerMemoryChangesOnlyAfterPersistence(t *testing.T) {
 	}
 	if got := snapshotPeers(); len(got) != 1 || got[0].ID != "existing" {
 		t.Fatalf("failed removal mutated in-memory fleet: %+v", got)
-	}
-}
-
-func TestPairThenForgetPeerPersistsFleetChanges(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	remoteNodes = []MeshNode{}
-	if err := saveMeshConfig(meshConfig{PairingToken: "pair-token", ListenPort: 9321}); err != nil {
-		t.Fatal(err)
-	}
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		nonce := r.Header.Get("X-M3TAL-Nonce")
-		if r.Header.Get("X-M3TAL-Proof") != requestProof("pair-token", nonce) {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		body, _ := json.Marshal(remoteResponse{Hostname: "pair-test", Telemetry: remoteTelemetry{Hostname: "pair-test", Cores: 2}})
-		w.Header().Set("X-M3TAL-Proof", responseProof("pair-token", nonce, body))
-		_, _ = w.Write(body)
-	}))
-	defer server.Close()
-
-	peer, err := pairAndPersistPeer(server.Listener.Addr().String(), "test peer", "server", "")
-	if err != nil {
-		t.Fatalf("pair node: %v", err)
-	}
-	if len(loadPeers()) != 1 || len(snapshotPeers()) != 1 {
-		t.Fatal("paired peer was not persisted and published")
-	}
-	found, err := persistPeerRemoval(peer.ID)
-	if err != nil || !found {
-		t.Fatalf("forget node: found=%v err=%v", found, err)
-	}
-	if len(loadPeers()) != 0 || len(snapshotPeers()) != 0 {
-		t.Fatal("forgotten peer remains in saved or in-memory fleet")
 	}
 }

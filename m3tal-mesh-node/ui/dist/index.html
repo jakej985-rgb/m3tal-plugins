@@ -25,13 +25,17 @@
     const auth = new URLSearchParams(location.search).get('token') || '';
     const endpoint = `/api/v2/plugins/mesh-node/action?token=${encodeURIComponent(auth)}`;
     const statusEl = document.getElementById('status');
+    let hasPairingToken = false;
     async function load() {
       try {
         const res = await fetch(endpoint, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'get_settings',args:{}})});
         const body = await res.json();
         if (!res.ok || body.status !== 'success') throw new Error(body.error?.message || 'Could not load sender settings');
-        const cfg = JSON.parse(body.data?.message || '{}');
-        document.getElementById('pairing-token').value = cfg.pairing_token || '';
+        const cfg = body.data || {};
+        const tokenInput = document.getElementById('pairing-token');
+        hasPairingToken = !!cfg.has_pairing_token;
+        tokenInput.value = '';
+        tokenInput.placeholder = hasPairingToken ? 'Configured — leave blank to keep current' : 'Enter a shared secret';
         document.getElementById('listen-port').value = cfg.listen_port || 9321;
         document.getElementById('broadcast-mdns').checked = cfg.broadcast_mdns !== false;
       } catch (err) { statusEl.textContent = err.message; statusEl.className = 'status error'; }
@@ -50,6 +54,9 @@
         const body = await res.json();
         if (!res.ok || body.status !== 'success' || body.data?.success === false) throw new Error(body.error?.message || body.data?.error || 'Could not save sender settings');
         statusEl.textContent = 'Saved. The pairing token takes effect immediately; restart Mesh Node after changing the port or LAN discovery setting.';
+        hasPairingToken = hasPairingToken || !!config.pairing_token;
+        document.getElementById('pairing-token').value = '';
+        document.getElementById('pairing-token').placeholder = hasPairingToken ? 'Configured — leave blank to keep current' : 'Enter a shared secret';
         statusEl.className = 'status success';
       } catch (err) { statusEl.textContent = err.message; statusEl.className = 'status error'; }
       finally { button.disabled = false; }

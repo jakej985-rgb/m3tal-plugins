@@ -300,7 +300,9 @@ func handleAction(req *RPCRequest) {
 	case "set_settings":
 		cfg := loadNodeRuntimeConfig()
 		if value, ok := params.Args["pairing_token"].(string); ok {
-			cfg.PairingToken = strings.TrimSpace(value)
+			if value = strings.TrimSpace(value); value != "" {
+				cfg.PairingToken = value
+			}
 		}
 		if value, ok := params.Args["listen_port"].(float64); ok {
 			cfg.ListenPort = int(value)
@@ -315,8 +317,12 @@ func handleAction(req *RPCRequest) {
 		sendResponse(req.ID, map[string]interface{}{"success": true, "message": "Settings saved. Restart the plugin if you changed its port or LAN discovery setting."})
 	case "get_settings":
 		cfg := loadNodeRuntimeConfig()
-		encoded, _ := json.Marshal(cfg)
-		sendResponse(req.ID, map[string]interface{}{"success": true, "message": string(encoded)})
+		sendResponse(req.ID, map[string]interface{}{
+			"success":           true,
+			"has_pairing_token": cfg.PairingToken != "",
+			"listen_port":       cfg.ListenPort,
+			"broadcast_mdns":    cfg.BroadcastMDNS,
+		})
 
 	default:
 		sendError(req.ID, -32601, "Unknown action", fmt.Sprintf("Unsupported action_id: %s", params.ActionID))

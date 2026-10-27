@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
@@ -191,22 +190,44 @@ func fetchRemote(address, token string, port int) (MeshNode, error) {
 	}
 	client := &http.Client{
 		Timeout: 4 * time.Second,
-		// The peer's self-signed TLS certificate is ephemeral. The response
-		// HMAC below authenticates the peer before any telemetry is accepted.
+		// The peer's ephemeral TLS certificate is authenticated by a
+		// sender-issued one-time challenge and the response HMAC.
 		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}},
+	}
+	started := time.Now()
+	challengeReq, err := http.NewRequest(http.MethodPost, "https://"+endpoint+"/api/v1/challenge", nil)
+	if err != nil {
+		return MeshNode{}, fmt.Errorf("invalid node address: %w", err)
+	}
+	challengeResp, err := client.Do(challengeReq)
+	if err != nil {
+		return MeshNode{}, fmt.Errorf("cannot reach %s: %w", address, err)
+	}
+	if challengeResp.StatusCode != http.StatusOK {
+		challengeResp.Body.Close()
+		if challengeResp.StatusCode == http.StatusServiceUnavailable {
+			return MeshNode{}, fmt.Errorf("pairing token is not configured on %s", address)
+		}
+		return MeshNode{}, fmt.Errorf("%s is not a compatible m3tal-mesh-node (HTTP %d)", address, challengeResp.StatusCode)
+	}
+	var challenge struct {
+		Nonce string `json:"nonce"`
+	}
+	if err := json.NewDecoder(io.LimitReader(challengeResp.Body, 4096)).Decode(&challenge); err != nil {
+		challengeResp.Body.Close()
+		return MeshNode{}, fmt.Errorf("%s returned an invalid pairing challenge: %w", address, err)
+	}
+	challengeResp.Body.Close()
+	if len(challenge.Nonce) != 64 {
+		return MeshNode{}, fmt.Errorf("%s returned an invalid pairing challenge", address)
 	}
 	req, err := http.NewRequest(http.MethodGet, "https://"+endpoint+"/api/v1/telemetry", nil)
 	if err != nil {
 		return MeshNode{}, fmt.Errorf("invalid node address: %w", err)
 	}
-	nonceBytes := make([]byte, 32)
-	if _, err := rand.Read(nonceBytes); err != nil {
-		return MeshNode{}, fmt.Errorf("could not create authentication challenge: %w", err)
-	}
-	nonce := hex.EncodeToString(nonceBytes)
+	nonce := challenge.Nonce
 	req.Header.Set("X-M3TAL-Nonce", nonce)
 	req.Header.Set("X-M3TAL-Proof", requestProof(token, nonce))
-	started := time.Now()
 	resp, err := client.Do(req)
 	latency := int(time.Since(started).Milliseconds())
 	if err != nil {

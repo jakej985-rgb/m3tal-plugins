@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -26,7 +25,10 @@ func TestTelemetryEndpointRequiresConfiguredToken(t *testing.T) {
 		t.Fatalf("unauthorized request status = %d, want %d", unauthorized.StatusCode, http.StatusUnauthorized)
 	}
 
-	nonce := fmt.Sprintf("%064x", 1)
+	nonce, err := issueNodeChallenge()
+	if err != nil {
+		t.Fatal(err)
+	}
 	req, _ := http.NewRequest(http.MethodGet, server.URL+"/api/v1/telemetry", nil)
 	req.Header.Set("X-M3TAL-Nonce", nonce)
 	req.Header.Set("X-M3TAL-Proof", nodeRequestProof("mesh-secret", nonce))
@@ -51,6 +53,18 @@ func TestTelemetryEndpointRequiresConfiguredToken(t *testing.T) {
 	}
 	if resp.Header.Get("X-M3TAL-Proof") != nodeResponseProof("mesh-secret", nonce, body) {
 		t.Fatal("authenticated response proof is missing or invalid")
+	}
+
+	replay, _ := http.NewRequest(http.MethodGet, server.URL+"/api/v1/telemetry", nil)
+	replay.Header.Set("X-M3TAL-Nonce", nonce)
+	replay.Header.Set("X-M3TAL-Proof", nodeRequestProof("mesh-secret", nonce))
+	replayResp, err := http.DefaultClient.Do(replay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replayResp.Body.Close()
+	if replayResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("replayed challenge status = %d, want %d", replayResp.StatusCode, http.StatusUnauthorized)
 	}
 }
 
