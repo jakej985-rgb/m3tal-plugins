@@ -10,20 +10,17 @@
       "collector",
       "actions",
       "ui_view",
-      "ui_widget",
       "websocket_stream"
     ],
-    "version": "0.6.0",
+    "version": "0.1.0",
     "status": "available",
-    "has_deb": true,
-    "deb_filename": "m3tal-plugin-docker-monitor_0.6.0_amd64.deb",
     "apt_command": "sudo apt install -y m3tal-plugin-docker-monitor"
   },
   {
-    "name": "compose",
+    "name": "stack-orchestrator",
     "title": "Compose Stacks",
-    "process_name": "m3tal-compose",
-    "package_name": "m3tal-plugin-compose",
+    "process_name": "m3tal-stacks",
+    "package_name": "m3tal-plugin-stacks",
     "category": "Compose Stacks",
     "description": "Multi-service compose stack orchestration, live health checks, and lifecycle deployment.",
     "capabilities": [
@@ -31,61 +28,9 @@
       "actions",
       "ui_view"
     ],
-    "version": "0.3.0",
-    "status": "available",
-    "has_deb": true,
-    "deb_filename": "m3tal-plugin-compose_0.3.0_amd64.deb",
-    "apt_command": "sudo apt install -y m3tal-plugin-compose"
-  },
-  {
-    "name": "mesh",
-    "title": "Cluster & Mesh Federation",
-    "process_name": "m3tal-mesh",
-    "package_name": "m3tal-plugin-mesh-cluster",
-    "category": "Networking & Fleet",
-    "description": "Local network discovery, multi-node clustering, and telemetry federation across M3TAL workstations, servers, and NAS nodes.",
-    "capabilities": [
-      "collector",
-      "actions",
-      "ui_view"
-    ],
-    "version": "0.1.1",
-    "status": "available",
-    "has_deb": true,
-    "deb_filename": "m3tal-plugin-mesh-cluster_0.1.1_amd64.deb",
-    "apt_command": "sudo apt install -y m3tal-plugin-mesh-cluster",
-    "modes": [
-      {
-        "id": "cluster",
-        "label": "Cluster",
-        "subLabel": "Full Peer",
-        "description": "Full peer (Send + Receive). Broadcasts local machine metrics AND renders the multi-node fleet dashboard. Recommended for primary workstations.",
-        "package_name": "m3tal-plugin-mesh-cluster",
-        "deb_filename": "m3tal-plugin-mesh-cluster_0.1.1_amd64.deb",
-        "apt_command": "sudo apt install -y m3tal-plugin-mesh-cluster",
-        "process_name": "m3tal-mesh"
-      },
-      {
-        "id": "mesh",
-        "label": "Mesh",
-        "subLabel": "Viewer",
-        "description": "Reader & dashboard UI. Scans LAN to view and monitor other connected M3TAL nodes from your desktop.",
-        "package_name": "m3tal-plugin-mesh",
-        "deb_filename": "m3tal-plugin-mesh_0.1.1_amd64.deb",
-        "apt_command": "sudo apt install -y m3tal-plugin-mesh",
-        "process_name": "m3tal-mesh"
-      },
-      {
-        "id": "node",
-        "label": "Node",
-        "subLabel": "Sender",
-        "description": "Headless sender daemon. Broadcasts CPU, GPU, and disk metrics without running a GUI. Ideal for servers & NAS.",
-        "package_name": "m3tal-plugin-mesh-node",
-        "deb_filename": "m3tal-plugin-mesh-node_0.1.0_amd64.deb",
-        "apt_command": "sudo apt install -y m3tal-plugin-mesh-node",
-        "process_name": "m3tal-mesh-node"
-      }
-    ]
+    "version": "0.1.0",
+    "status": "planned",
+    "apt_command": "sudo apt install -y m3tal-plugin-stacks"
   },
   {
     "name": "ai-engine",
