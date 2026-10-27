@@ -133,6 +133,13 @@ func TestConfiguredRecursiveDiscoveryAndSaveExisting(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "settings.yaml"), []byte("theme: dark\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	devComposePath := filepath.Join(root, "dev", "compose.yaml")
+	if err := os.MkdirAll(filepath.Dir(devComposePath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(devComposePath, []byte("services:\n  dev-app:\n    image: alpine\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	settingsMu.Lock()
 	oldRoot, oldLayout, oldBackup := composeDirSetting, newStackLayout, backupOnSave
 	composeDirSetting, newStackLayout, backupOnSave = root, "per_stack_folder", true
@@ -150,6 +157,7 @@ func TestConfiguredRecursiveDiscoveryAndSaveExisting(t *testing.T) {
 	found := false
 	flatFound := false
 	rootComposeFound := false
+	devStackFound := false
 	var existing StackInfo
 	for _, stack := range stacks {
 		if stack.Name == "api service" && stack.ProjectName == "api-project" && stack.Path == composePath && stack.ID == canonicalPath(composePath) && len(stack.ConfigFiles) == 2 && stack.ConfigFiles[1] == overridePath {
@@ -161,6 +169,9 @@ func TestConfiguredRecursiveDiscoveryAndSaveExisting(t *testing.T) {
 		}
 		if stack.Name == filepath.Base(root) && stack.Path == rootComposePath {
 			rootComposeFound = true
+		}
+		if stack.Name == "dev" && stack.Path == devComposePath {
+			devStackFound = true
 		}
 		if stack.Name == "settings" || stack.Name == "compose.override" || stack.Name == "ignored-override" {
 			t.Fatalf("unrelated/override YAML was listed as a project: %#v", stack)
@@ -180,6 +191,9 @@ func TestConfiguredRecursiveDiscoveryAndSaveExisting(t *testing.T) {
 	}
 	if !rootComposeFound {
 		t.Fatal("valid root compose.yaml was not discovered with the root folder name")
+	}
+	if !devStackFound {
+		t.Fatal("Compose project in a folder named dev was incorrectly excluded")
 	}
 
 	content := "services:\n  api:\n    image: nginx:alpine\n"
@@ -212,6 +226,89 @@ func TestConfiguredRecursiveDiscoveryAndSaveExisting(t *testing.T) {
 		if got := info.Mode().Perm(); got != 0600 {
 			t.Fatalf("expected restrictive mode 0600 on %s, got %04o", path, got)
 		}
+	}
+}
+
+func TestRegisteredSecondaryComposeFileIsNotStandaloneAndSavePreservesTarget(t *testing.T) {
+	t.Setenv("M3TAL_COMPOSE_DIR", "")
+	root := t.TempDir()
+	primary := filepath.Join(root, "app", "compose.yaml")
+	secondary := filepath.Join(root, "production.yaml")
+	for path, content := range map[string]string{
+		primary:   "services:\n  app:\n    image: alpine\n",
+		secondary: "services:\n  production:\n    image: nginx\n",
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	settingsMu.Lock()
+	oldRoot, oldLayout, oldBackup := composeDirSetting, newStackLayout, backupOnSave
+	composeDirSetting, newStackLayout, backupOnSave = root, "per_stack_folder", true
+	settingsMu.Unlock()
+	defer func() {
+		settingsMu.Lock()
+		composeDirSetting, newStackLayout, backupOnSave = oldRoot, oldLayout, oldBackup
+		settingsMu.Unlock()
+	}()
+	oldProjectsSource := composeProjectsSource
+	composeProjectsSource = func() ([]composeProject, error) {
+		return []composeProject{{Name: "app", ConfigFiles: primary + "," + secondary}}, nil
+	}
+	defer func() { composeProjectsSource = oldProjectsSource }()
+
+	stacks, err := ListStacks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stacks) != 1 || stacks[0].ID != canonicalPath(primary) {
+		t.Fatalf("registered secondary file appeared as a standalone stack: %#v", stacks)
+	}
+	updated := "services:\n  production:\n    image: busybox\n"
+	if err := SaveStack(secondary, updated); err != nil {
+		t.Fatal(err)
+	}
+	primaryContent, err := os.ReadFile(primary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondaryContent, err := os.ReadFile(secondary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(primaryContent) != "services:\n  app:\n    image: alpine\n" || string(secondaryContent) != updated {
+		t.Fatalf("save did not preserve the selected secondary file: primary=%q secondary=%q", primaryContent, secondaryContent)
+	}
+	backupInfo, err := os.Stat(secondary + ".bak")
+	if err != nil || backupInfo.Mode().Perm() != 0600 {
+		t.Fatalf("secondary file backup did not preserve restrictive permissions: info=%v err=%v", backupInfo, err)
+	}
+}
+
+func TestSavedStackIDUsesCreatedFilePath(t *testing.T) {
+	t.Setenv("M3TAL_COMPOSE_DIR", "")
+	root := t.TempDir()
+	settingsMu.Lock()
+	oldRoot, oldLayout, oldBackup := composeDirSetting, newStackLayout, backupOnSave
+	composeDirSetting, newStackLayout, backupOnSave = root, "per_stack_folder", false
+	settingsMu.Unlock()
+	defer func() {
+		settingsMu.Lock()
+		composeDirSetting, newStackLayout, backupOnSave = oldRoot, oldLayout, oldBackup
+		settingsMu.Unlock()
+	}()
+	oldProjectsSource := composeProjectsSource
+	composeProjectsSource = func() ([]composeProject, error) { return nil, nil }
+	defer func() { composeProjectsSource = oldProjectsSource }()
+	if err := SaveStack("fresh-project", "services:\n  app:\n    image: nginx\n"); err != nil {
+		t.Fatal(err)
+	}
+	want := canonicalPath(filepath.Join(root, "fresh-project", "compose.yaml"))
+	if got := savedStackID("fresh-project"); got != want {
+		t.Fatalf("saved stack ID mismatch: got %q, want %q", got, want)
 	}
 }
 

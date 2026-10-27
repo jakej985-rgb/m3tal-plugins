@@ -313,18 +313,34 @@ func ListStacks() ([]StackInfo, error) {
 
 	results := make(map[string]StackInfo)
 	baseDir := resolvedComposeRoot()
+	composeProjects, projectsErr := composeProjectsSource()
+	if projectsErr != nil {
+		composeProjects = nil
+	}
+	registeredSecondaries := make(map[string]bool)
+	for _, project := range composeProjects {
+		files := normalizeConfigFiles(strings.Split(project.ConfigFiles, ","))
+		if len(files) > 1 {
+			for _, file := range files[1:] {
+				registeredSecondaries[canonicalPath(file)] = true
+			}
+		}
+	}
 	_ = filepath.WalkDir(baseDir, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return nil
 		}
 		if entry.IsDir() {
-			if path != baseDir && (entry.Type()&os.ModeSymlink != 0 || ignoredComposeDir(entry.Name()) || pathDepth(baseDir, path) > 10) {
+			if path != baseDir && (entry.Type()&os.ModeSymlink != 0 || ignoredComposeDir(entry.Name()) || isSystemComposeDirectory(path) || pathDepth(baseDir, path) > 10) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
 		flatFile := filepath.Dir(path) == baseDir && !isOverrideComposeFile(entry.Name()) && (strings.EqualFold(filepath.Ext(entry.Name()), ".yaml") || strings.EqualFold(filepath.Ext(entry.Name()), ".yml"))
 		if !isComposeFile(entry.Name()) && !flatFile {
+			return nil
+		}
+		if registeredSecondaries[canonicalPath(path)] {
 			return nil
 		}
 		// Choose one canonical Compose file per project folder. Flat files are
@@ -363,13 +379,12 @@ func ListStacks() ([]StackInfo, error) {
 			info.ProjectName = declaredName
 		}
 		key := canonicalPath(path)
-		info.ID = key
 		results[key] = info
 		return nil
 	})
 
 	// 2. Discover host-wide compose projects using docker compose ls -a
-	if composeProjects, err := composeProjectsSource(); err == nil {
+	if projectsErr == nil {
 		for _, cp := range composeProjects {
 			files := normalizeConfigFiles(strings.Split(cp.ConfigFiles, ","))
 			if len(files) == 0 {
@@ -381,7 +396,6 @@ func ListStacks() ([]StackInfo, error) {
 			}
 			info := inspectStack(cp.Name, files, cp.Name, string(content))
 			key := canonicalPath(files[0])
-			info.ID = key
 			results[key] = info
 		}
 	}
@@ -410,10 +424,19 @@ func isComposeFile(name string) bool {
 }
 func ignoredComposeDir(name string) bool {
 	switch name {
-	case ".git", "node_modules", "vendor", ".cache", ".local", ".config", ".npm", ".venv", "venv", "proc", "sys", "dev", "run", "tmp":
+	case ".git", "node_modules", "vendor", ".cache", ".local", ".config", ".npm", ".venv", "venv":
 		return true
 	}
 	return strings.HasPrefix(name, ".")
+}
+
+func isSystemComposeDirectory(path string) bool {
+	switch filepath.Clean(path) {
+	case "/dev", "/proc", "/run", "/sys", "/tmp":
+		return true
+	default:
+		return false
+	}
 }
 func pathDepth(root, path string) int {
 	rel, err := filepath.Rel(root, path)
@@ -613,14 +636,11 @@ func SaveStack(name, content string) error {
 	filePath := ""
 	mode := os.FileMode(0644)
 	if filepath.IsAbs(name) {
-		files, _, err := resolveStackFiles(name)
+		_, _, err := resolveStackFiles(name)
 		if err != nil {
 			return err
 		}
-		if len(files) == 0 {
-			return fmt.Errorf("no Compose file selected")
-		}
-		filePath = files[0]
+		filePath = canonicalPath(name)
 		info, err := os.Stat(filePath)
 		if err != nil {
 			return fmt.Errorf("stat existing Compose file: %w", err)
@@ -661,6 +681,17 @@ func SaveStack(name, content string) error {
 		}
 	}
 	return atomicWriteFile(filePath, []byte(content), mode)
+}
+
+func savedStackID(identifier string) string {
+	if filepath.IsAbs(identifier) {
+		return canonicalPath(identifier)
+	}
+	files, _, err := resolveStackFiles(identifier)
+	if err != nil || len(files) == 0 {
+		return ""
+	}
+	return canonicalPath(files[0])
 }
 
 func atomicWriteFile(path string, content []byte, mode os.FileMode) error {

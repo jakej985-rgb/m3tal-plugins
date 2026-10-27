@@ -315,7 +315,7 @@
 
     function stackKey(stack) { return stack.id || stack.name; }
     function findStackBySelection(key) {
-      return currentStacks.find(stack => stackKey(stack) === key) || currentStacks.find(stack => stack.name === key);
+      return currentStacks.find(stack => stackKey(stack) === key);
     }
 
     function getToken() {
@@ -483,7 +483,10 @@
         });
         const data = await res.json();
         if (data.result && (data.result.message || data.result.success)) {
-          if (actionId === 'save_stack') yamlDirty = false;
+          if (actionId === 'save_stack') {
+            yamlDirty = false;
+            if (data.result.stack_id) activeStack = data.result.stack_id;
+          }
           showToast(data.result.message || `Action ${actionId} succeeded`);
           logConsole(data.result.message || `[SUCCESS] ${actionId}`);
           await fetchStacks();

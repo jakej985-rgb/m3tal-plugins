@@ -311,7 +311,11 @@ func handleAction(req *RPCRequest) {
 			sendError(req.ID, -32001, "Save stack failed", err.Error())
 			return
 		}
-		sendResponse(req.ID, map[string]interface{}{"success": true, "message": fmt.Sprintf("Stack '%s' saved successfully", params.Stack)})
+		sendResponse(req.ID, map[string]interface{}{
+			"success":  true,
+			"message":  fmt.Sprintf("Stack '%s' saved successfully", params.Stack),
+			"stack_id": savedStackID(params.Stack),
+		})
 
 	case "validate_yaml":
 		valid, msg, err := ValidateYAML(params.Content)

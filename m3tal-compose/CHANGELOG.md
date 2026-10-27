@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Local Compose actions leave declared and interpolated project names to Docker Compose.
 - Compose discovery follows a symlinked search root, filters unrelated and override YAML files, and keeps duplicate names deterministic.
 - Settings updates validate all values before applying any of them, and action lookup avoids a full discovery/status scan.
+- Registered secondary Compose files remain distinct save targets and are not listed as standalone projects.
+- Compose projects under ordinary folders named `dev`, `tmp`, or similar remain discoverable.
+- New project selection follows the saved file ID after refresh, and stack IDs are assigned in one place.
 - Removed the declared but unimplemented `auto_pull` option and synchronized the plugin version.
 
 ## [0.3.0] - 2026-10-26
