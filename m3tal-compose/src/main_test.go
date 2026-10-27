@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -711,6 +712,51 @@ func TestSettingsEnvelopeAndComposeArguments(t *testing.T) {
 	}
 	if got := composeArgs(files, project); strings.Contains(strings.Join(got, " "), "-p") {
 		t.Fatalf("local Compose interpolation was overridden: %#v", got)
+	}
+}
+
+func TestCountRunningServicesIncludesLiveReplicaForPartialService(t *testing.T) {
+	states, running := composeServiceStateSummary("api:running\napi:restarting\n")
+	if running != 1 {
+		t.Fatalf("running service count = %d, want 1 for a service with one live replica", running)
+	}
+	if states["api"] != "partial" {
+		t.Fatalf("aggregated service state = %q, want partial", states["api"])
+	}
+}
+
+func TestAtomicWriteFilePreservesExistingOwner(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "compose.yaml")
+	if err := os.WriteFile(path, []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if os.Geteuid() == 0 {
+		// Give the existing file a distinct owner to exercise the root save case.
+		if err := os.Chown(path, 1234, 1234); err != nil {
+			t.Skipf("cannot set test owner: %v", err)
+		}
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicWriteFile(path, []byte("new"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeOwner, beforeOK := before.Sys().(*syscall.Stat_t)
+	afterOwner, afterOK := after.Sys().(*syscall.Stat_t)
+	if !beforeOK || !afterOK {
+		t.Fatal("could not inspect file ownership")
+	}
+	if beforeOwner.Uid != afterOwner.Uid || beforeOwner.Gid != afterOwner.Gid {
+		t.Fatalf("atomic replacement changed owner: before %d:%d, after %d:%d", beforeOwner.Uid, beforeOwner.Gid, afterOwner.Uid, afterOwner.Gid)
+	}
+	if after.Mode().Perm() != 0600 {
+		t.Fatalf("atomic replacement changed permissions: got %04o, want 0600", after.Mode().Perm())
 	}
 }
 

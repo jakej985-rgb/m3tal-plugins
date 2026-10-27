@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -555,25 +556,15 @@ func inspectStack(id, name string, files []string, projectName, yamlContent stri
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if err := cmd.Run(); err == nil && out.Len() > 0 {
-		lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-		for _, line := range lines {
-			parts := strings.SplitN(line, ":", 2)
-			if len(parts) == 2 {
-				service := strings.TrimSpace(parts[0])
-				state := strings.TrimSpace(parts[1])
-				if previous, found := serviceStates[service]; found && !strings.EqualFold(previous, state) {
-					serviceStates[service] = "partial"
-				} else if !found {
-					serviceStates[service] = state
-				}
-			}
-		}
+		serviceStates, running = composeServiceStateSummary(out.String())
+		hasPartialService := false
 		for _, state := range serviceStates {
-			if strings.EqualFold(state, "running") {
-				running++
+			if !strings.EqualFold(state, "running") {
+				hasPartialService = true
+				break
 			}
 		}
-		if running >= len(services) && len(services) > 0 {
+		if running >= len(services) && len(services) > 0 && !hasPartialService {
 			status = "running"
 		} else if running > 0 {
 			status = "partial"
@@ -602,6 +593,53 @@ func inspectStack(id, name string, files []string, projectName, yamlContent stri
 		UpdatedAt:     updatedAt,
 		YAMLContent:   yamlContent,
 	}
+}
+
+// composeServiceStateSummary aggregates replica states by service and counts
+// services that have at least one running replica.
+func composeServiceStateSummary(output string) (map[string]string, int) {
+	replicasByService := make(map[string][]string)
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		service := strings.TrimSpace(parts[0])
+		state := strings.TrimSpace(parts[1])
+		if service == "" || state == "" {
+			continue
+		}
+		replicasByService[service] = append(replicasByService[service], state)
+	}
+	serviceStates := make(map[string]string, len(replicasByService))
+	runningServices := 0
+	for service, replicaStates := range replicasByService {
+		firstState := replicaStates[0]
+		allSameState := true
+		allReplicasRunning := true
+		serviceHasRunningReplica := false
+		for _, replicaState := range replicaStates {
+			if !strings.EqualFold(firstState, replicaState) {
+				allSameState = false
+			}
+			if strings.EqualFold(replicaState, "running") {
+				serviceHasRunningReplica = true
+			} else {
+				allReplicasRunning = false
+			}
+		}
+		state := firstState
+		if !allSameState {
+			state = "partial"
+		} else if allReplicasRunning {
+			state = "running"
+		}
+		serviceStates[service] = state
+		if serviceHasRunningReplica {
+			runningServices++
+		}
+	}
+	return serviceStates, runningServices
 }
 
 func extractServices(yamlContent string) []string {
@@ -779,11 +817,40 @@ func atomicWriteFile(path string, content []byte, mode os.FileMode) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close temporary file: %w", err)
 	}
+	if err := preserveFileOwnership(tmpName, path); err != nil {
+		return err
+	}
 	if err := os.Chmod(tmpName, mode); err != nil {
 		return fmt.Errorf("set temporary file mode: %w", err)
 	}
 	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("replace file: %w", err)
+	}
+	return nil
+}
+
+func preserveFileOwnership(tempPath, destinationPath string) error {
+	destinationInfo, err := os.Stat(destinationPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read existing Compose file ownership: %w", err)
+	}
+	tempInfo, err := os.Stat(tempPath)
+	if err != nil {
+		return fmt.Errorf("read temporary Compose file ownership: %w", err)
+	}
+	destinationOwner, destinationOK := destinationInfo.Sys().(*syscall.Stat_t)
+	tempOwner, tempOK := tempInfo.Sys().(*syscall.Stat_t)
+	if !destinationOK || !tempOK {
+		return fmt.Errorf("cannot determine Compose file ownership")
+	}
+	if destinationOwner.Uid == tempOwner.Uid && destinationOwner.Gid == tempOwner.Gid {
+		return nil
+	}
+	if err := os.Chown(tempPath, int(destinationOwner.Uid), int(destinationOwner.Gid)); err != nil {
+		return fmt.Errorf("preserve Compose file ownership: %w", err)
 	}
 	return nil
 }
