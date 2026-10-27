@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 set -e
 
-OUTPUT_DIR="${1:-.}"
-mkdir -p "$OUTPUT_DIR"
-
 VERSION="0.1.0"
 if [ -f "m3tal-mesh/plugin.yaml" ]; then
     VERSION=$(python3 -c "
@@ -33,7 +30,7 @@ if ! dpkg --compare-versions "${NODE_VERSION#v}" ge "$CLEAN_VERSION"; then
     exit 1
 fi
 PKG_NAME="m3tal-plugin-mesh-cluster"
-DEB_NAME="$OUTPUT_DIR/${PKG_NAME}_${CLEAN_VERSION}_amd64.deb"
+DEB_NAME="${PKG_NAME}_${CLEAN_VERSION}_amd64.deb"
 
 echo "📦 Packaging $PKG_NAME v${CLEAN_VERSION} (Metapackage)..."
 
