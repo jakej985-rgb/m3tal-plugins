@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.5.0] - 2026-10-27
+
+### 🚀 Changes & Improvements
+- **fix(compose): allow flat save in missing search root** (`d39ddef`)
+- **fix(compose): unify discovery and selection matching** (`233bbfa`)
+- **fix(compose): reject shadowed flat destinations** (`a689ecc`)
+- **fix(compose): tighten root discovery and defaults** (`f0c33f4`)
+- **fix(compose): preserve multi-file project behavior** (`5b01cef`)
+- **fix(compose): preserve replica and file ownership state** (`152e382`)
+- **fix(compose): address project identity findings** (`d584363`)
+- **fix(compose): resolve stopped project actions locally** (`480d888`)
+- **fix(compose): validate flat destinations and root paths** (`5f2f81b`)
+- **fix(compose): preserve symlink selection identity** (`bd576a3`)
+- **fix(compose): retain symlink and refresh targets** (`c7b4d01`)
+- **fix(compose): guard save and project selection races** (`6ba8a6f`)
+- **fix(compose): preserve secondary file selections** (`9c16739`)
+- **fix(compose): address review findings** (`4b028c8`)
+- **feat(compose): improve project discovery and editor** (`0147e46`)
+
+---
+
 ## [0.4.0] - 2026-10-26
 
 ### Added
