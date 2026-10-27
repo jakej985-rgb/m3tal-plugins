@@ -230,6 +230,49 @@ func TestConfiguredRecursiveDiscoveryAndSaveExisting(t *testing.T) {
 	}
 }
 
+func TestRootComposeFilenamesUseCanonicalPrecedence(t *testing.T) {
+	t.Setenv("M3TAL_COMPOSE_DIR", "")
+	root := t.TempDir()
+	primary := filepath.Join(root, "compose.yaml")
+	legacy := filepath.Join(root, "docker-compose.yml")
+	if err := os.WriteFile(primary, []byte("services:\n  canonical:\n    image: alpine\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacy, []byte("services:\n  legacy:\n    image: nginx\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	settingsMu.Lock()
+	oldRoot := composeDirSetting
+	composeDirSetting = root
+	settingsMu.Unlock()
+	defer func() { settingsMu.Lock(); composeDirSetting = oldRoot; settingsMu.Unlock() }()
+	oldProjectsSource := composeProjectsSource
+	composeProjectsSource = func() ([]composeProject, error) { return nil, nil }
+	defer func() { composeProjectsSource = oldProjectsSource }()
+
+	stacks, err := ListStacks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stacks) != 1 || stacks[0].Path != primary {
+		t.Fatalf("root Compose files did not use canonical precedence: %#v", stacks)
+	}
+	if stacks[0].ProjectName != normalizeComposeProjectName(filepath.Base(root)) {
+		t.Fatalf("root Compose project name = %q, want effective default %q", stacks[0].ProjectName, normalizeComposeProjectName(filepath.Base(root)))
+	}
+}
+
+func TestDiscoveredComposeProjectNameUsesDirectoryDefault(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "foo", "compose.yaml")
+	if got := discoveredComposeProjectName(path, root, "services:\n  app:\n    image: nginx\n"); got != "foo" {
+		t.Fatalf("effective default project name = %q, want foo", got)
+	}
+	if got := discoveredComposeProjectName(path, root, "name: ${PROJECT_NAME:-prod}\nservices:\n  app:\n    image: nginx\n"); got != "" {
+		t.Fatalf("dynamic project name should not be inferred, got %q", got)
+	}
+}
+
 func TestRegisteredSecondaryComposeFileIsNotStandaloneAndSavePreservesTarget(t *testing.T) {
 	t.Setenv("M3TAL_COMPOSE_DIR", "")
 	root := t.TempDir()
@@ -622,6 +665,28 @@ func TestNewStackLayoutsAndPathValidation(t *testing.T) {
 	}
 	if _, err := SaveStack("../escape", content); err == nil {
 		t.Fatal("path traversal stack name was accepted")
+	}
+}
+
+func TestSaveStackRejectsIgnoredDirectoryNames(t *testing.T) {
+	t.Setenv("M3TAL_COMPOSE_DIR", "")
+	root := t.TempDir()
+	settingsMu.Lock()
+	oldRoot, oldLayout, oldBackup := composeDirSetting, newStackLayout, backupOnSave
+	composeDirSetting, newStackLayout, backupOnSave = root, "per_stack_folder", false
+	settingsMu.Unlock()
+	defer func() {
+		settingsMu.Lock()
+		composeDirSetting, newStackLayout, backupOnSave = oldRoot, oldLayout, oldBackup
+		settingsMu.Unlock()
+	}()
+	for _, name := range []string{"vendor", "venv"} {
+		if _, err := SaveStack(name, "services:\n  app:\n    image: nginx\n"); err == nil {
+			t.Errorf("SaveStack accepted ignored directory name %q", name)
+		}
+		if _, err := os.Stat(filepath.Join(root, name)); !os.IsNotExist(err) {
+			t.Errorf("ignored destination %q was created: stat err=%v", name, err)
+		}
 	}
 }
 

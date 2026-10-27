@@ -379,7 +379,7 @@ func ListStacks() ([]StackInfo, error) {
 			}
 			return nil
 		}
-		flatFile := filepath.Dir(path) == baseDir && !isOverrideComposeFile(entry.Name()) && (strings.EqualFold(filepath.Ext(entry.Name()), ".yaml") || strings.EqualFold(filepath.Ext(entry.Name()), ".yml"))
+		flatFile := filepath.Dir(path) == baseDir && !isComposeFile(entry.Name()) && !isOverrideComposeFile(entry.Name()) && (strings.EqualFold(filepath.Ext(entry.Name()), ".yaml") || strings.EqualFold(filepath.Ext(entry.Name()), ".yml"))
 		if !isComposeFile(entry.Name()) && !flatFile {
 			return nil
 		}
@@ -416,11 +416,10 @@ func ListStacks() ([]StackInfo, error) {
 			}
 		}
 		info := inspectStack(canonicalPath(path), name, defaultComposeFiles(path), flatFileProjectName(path, baseDir, string(content)), string(content))
-		// Expose a literal top-level Compose name for UI duplicate detection.
+		// Expose the effective default project name when no explicit name is
+		// declared, so the UI can recognize equivalent local and registered IDs.
 		// Local actions still omit -p so Compose can handle interpolation itself.
-		if declaredName := extractStaticComposeProjectName(string(content)); declaredName != "" {
-			info.ProjectName = declaredName
-		}
+		info.ProjectName = discoveredComposeProjectName(path, baseDir, string(content))
 		results[info.ID] = info
 		return nil
 	})
@@ -523,6 +522,27 @@ func flatFileProjectName(path, root, content string) string {
 		return ""
 	}
 	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	return normalizeComposeProjectName(name)
+}
+
+func discoveredComposeProjectName(path, root, content string) string {
+	var config map[string]interface{}
+	if yaml.Unmarshal([]byte(content), &config) != nil || config == nil {
+		return ""
+	}
+	if _, explicitlyNamed := config["name"]; explicitlyNamed {
+		return extractStaticComposeProjectName(content)
+	}
+	if filepath.Dir(path) == root {
+		if isComposeFile(filepath.Base(path)) {
+			return normalizeComposeProjectName(filepath.Base(root))
+		}
+		return flatFileProjectName(path, root, content)
+	}
+	return normalizeComposeProjectName(filepath.Base(filepath.Dir(path)))
+}
+
+func normalizeComposeProjectName(name string) string {
 	var normalized strings.Builder
 	for _, char := range strings.ToLower(name) {
 		if char >= 'a' && char <= 'z' || char >= '0' && char <= '9' || char == '_' || char == '-' {
@@ -776,6 +796,9 @@ func SaveStack(name, content string) (string, error) {
 		settingsMu.RLock()
 		layout := newStackLayout
 		settingsMu.RUnlock()
+		if layout != "flat" && ignoredComposeDir(name) {
+			return "", fmt.Errorf("stack name %q maps to a directory excluded from Compose discovery", name)
+		}
 		if layout == "flat" {
 			filePath = filepath.Join(root, name+".yaml")
 		} else {
@@ -878,6 +901,11 @@ func preserveFileOwnership(tempPath, destinationPath string) error {
 		return fmt.Errorf("cannot determine Compose file ownership")
 	}
 	if destinationOwner.Uid == tempOwner.Uid && destinationOwner.Gid == tempOwner.Gid {
+		return nil
+	}
+	if os.Geteuid() != 0 {
+		// A non-root process cannot preserve another owner's UID/GID. Allow the
+		// atomic replacement to proceed, as directory-writable saves did before.
 		return nil
 	}
 	if err := os.Chown(tempPath, int(destinationOwner.Uid), int(destinationOwner.Gid)); err != nil {
