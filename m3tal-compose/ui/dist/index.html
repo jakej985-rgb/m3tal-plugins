@@ -312,6 +312,7 @@
     let activeStack = null;
     let currentStacks = [];
     let yamlDirty = false;
+    let editorRevision = 0;
 
     function stackKey(stack) { return stack.id || stack.name; }
     function findStackBySelection(key) {
@@ -404,6 +405,7 @@
       if (yamlDirty && !confirm('Discard unsaved Compose edits?')) return;
       const selectedStack = findStackBySelection(name);
       activeStack = selectedStack ? stackKey(selectedStack) : name;
+      editorRevision++;
       yamlDirty = false;
       renderStackList(currentStacks);
       const stack = selectedStack;
@@ -440,6 +442,7 @@
     }
 
     function onYamlEdited() {
+      editorRevision++;
       yamlDirty = true;
       // Light re-parsing
       const content = document.getElementById('yamlEditor').value;
@@ -461,11 +464,13 @@
         showToast('Please select a stack first');
         return;
       }
-      const content = document.getElementById('yamlEditor').value;
       if (yamlDirty && ['compose_up', 'compose_down', 'compose_restart'].includes(actionId) && !confirm('The editor has unsaved changes. Continue with the saved Compose file?')) return;
-      const selected = findStackBySelection(activeStack);
-      if (actionId === 'compose_down' && !confirm(`Stop services for “${selected?.name || activeStack}”?`)) return;
-      logConsole(`Executing action '${actionId}' on stack '${selected?.name || activeStack}'...`);
+      const submittedStack = activeStack;
+      const submittedRevision = editorRevision;
+      const content = document.getElementById('yamlEditor').value;
+      const selected = findStackBySelection(submittedStack);
+      if (actionId === 'compose_down' && !confirm(`Stop services for “${selected?.name || submittedStack}”?`)) return;
+      logConsole(`Executing action '${actionId}' on stack '${selected?.name || submittedStack}'...`);
 
       try {
         const res = await fetch('/api/v2/plugins/compose/action', {
@@ -477,15 +482,16 @@
           },
           body: JSON.stringify({
             action_id: actionId,
-            stack: activeStack,
+            stack: submittedStack,
             content: content
           })
         });
         const data = await res.json();
         if (data.result && (data.result.message || data.result.success)) {
           if (actionId === 'save_stack') {
-            yamlDirty = false;
-            if (data.result.stack_id) activeStack = data.result.stack_id;
+            const selectionIsCurrent = activeStack === submittedStack;
+            if (selectionIsCurrent && data.result.stack_id) activeStack = data.result.stack_id;
+            if (selectionIsCurrent && editorRevision === submittedRevision) yamlDirty = false;
           }
           showToast(data.result.message || `Action ${actionId} succeeded`);
           logConsole(data.result.message || `[SUCCESS] ${actionId}`);

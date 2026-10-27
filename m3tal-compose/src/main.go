@@ -94,7 +94,9 @@ func handleInit(req *RPCRequest) {
 		Config map[string]interface{} `json:"config"`
 	}
 	if json.Unmarshal(req.Params, &initParams) == nil && len(initParams.Config) > 0 {
-		_ = SetPluginSettings(initParams.Config)
+		if err := SetPluginSettings(initParams.Config); err != nil {
+			fmt.Fprintf(os.Stderr, "m3tal-compose: invalid initialization settings: %v\n", err)
+		}
 	}
 	result := map[string]interface{}{
 		"name":         PluginName,

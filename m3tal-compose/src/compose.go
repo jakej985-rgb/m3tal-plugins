@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -164,6 +165,30 @@ type composeProject struct {
 	ConfigFiles string `json:"ConfigFiles"`
 }
 
+const registeredComposeIDPrefix = "compose-project:"
+
+func registeredComposeID(path, projectName string) string {
+	encodedPath := base64.RawURLEncoding.EncodeToString([]byte(canonicalPath(path)))
+	encodedName := base64.RawURLEncoding.EncodeToString([]byte(projectName))
+	return registeredComposeIDPrefix + encodedPath + "." + encodedName
+}
+
+func parseRegisteredComposeID(identifier string) (string, string, bool) {
+	if !strings.HasPrefix(identifier, registeredComposeIDPrefix) {
+		return "", "", false
+	}
+	parts := strings.SplitN(strings.TrimPrefix(identifier, registeredComposeIDPrefix), ".", 2)
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	pathBytes, pathErr := base64.RawURLEncoding.DecodeString(parts[0])
+	nameBytes, nameErr := base64.RawURLEncoding.DecodeString(parts[1])
+	if pathErr != nil || nameErr != nil || !filepath.IsAbs(string(pathBytes)) || len(nameBytes) == 0 {
+		return "", "", false
+	}
+	return string(pathBytes), string(nameBytes), true
+}
+
 func dockerComposeProjects() ([]composeProject, error) {
 	cmd := exec.Command("docker", "compose", "ls", "-a", "--format", "json")
 	out, err := cmd.Output()
@@ -233,6 +258,15 @@ func registeredProjectForPath(projects []composeProject, path string) (composePr
 func resolveStackFiles(identifier string) ([]string, string, error) {
 	root := resolvedComposeRoot()
 	projects, _ := composeProjectsSource()
+	if primary, projectName, ok := parseRegisteredComposeID(identifier); ok {
+		for _, project := range projects {
+			files := normalizeConfigFiles(strings.Split(project.ConfigFiles, ","))
+			if project.Name == projectName && len(files) > 0 && canonicalPath(files[0]) == canonicalPath(primary) {
+				return files, project.Name, nil
+			}
+		}
+		return nil, "", fmt.Errorf("registered Compose project %q not found", projectName)
+	}
 	if filepath.IsAbs(identifier) {
 		path := canonicalPath(identifier)
 		if project, files, found := registeredProjectForPath(projects, path); found {
@@ -318,8 +352,12 @@ func ListStacks() ([]StackInfo, error) {
 		composeProjects = nil
 	}
 	registeredSecondaries := make(map[string]bool)
+	registeredPrimaries := make(map[string]bool)
 	for _, project := range composeProjects {
 		files := normalizeConfigFiles(strings.Split(project.ConfigFiles, ","))
+		if len(files) > 0 {
+			registeredPrimaries[canonicalPath(files[0])] = true
+		}
 		if len(files) > 1 {
 			for _, file := range files[1:] {
 				registeredSecondaries[canonicalPath(file)] = true
@@ -340,7 +378,7 @@ func ListStacks() ([]StackInfo, error) {
 		if !isComposeFile(entry.Name()) && !flatFile {
 			return nil
 		}
-		if registeredSecondaries[canonicalPath(path)] {
+		if registeredSecondaries[canonicalPath(path)] || registeredPrimaries[canonicalPath(path)] {
 			return nil
 		}
 		// Choose one canonical Compose file per project folder. Flat files are
@@ -372,14 +410,13 @@ func ListStacks() ([]StackInfo, error) {
 				name = filepath.Base(baseDir)
 			}
 		}
-		info := inspectStack(name, defaultComposeFiles(path), flatFileProjectName(path, baseDir, string(content)), string(content))
+		info := inspectStack(canonicalPath(path), name, defaultComposeFiles(path), flatFileProjectName(path, baseDir, string(content)), string(content))
 		// Expose a literal top-level Compose name for UI duplicate detection.
 		// Local actions still omit -p so Compose can handle interpolation itself.
 		if declaredName := extractStaticComposeProjectName(string(content)); declaredName != "" {
 			info.ProjectName = declaredName
 		}
-		key := canonicalPath(path)
-		results[key] = info
+		results[info.ID] = info
 		return nil
 	})
 
@@ -394,9 +431,9 @@ func ListStacks() ([]StackInfo, error) {
 			if err != nil {
 				continue
 			}
-			info := inspectStack(cp.Name, files, cp.Name, string(content))
-			key := canonicalPath(files[0])
-			results[key] = info
+			id := registeredComposeID(files[0], cp.Name)
+			info := inspectStack(id, cp.Name, files, cp.Name, string(content))
+			results[id] = info
 		}
 	}
 
@@ -502,7 +539,7 @@ func extractStaticComposeProjectName(content string) string {
 	return strings.TrimSpace(name)
 }
 
-func inspectStack(name string, files []string, projectName, yamlContent string) StackInfo {
+func inspectStack(id, name string, files []string, projectName, yamlContent string) StackInfo {
 	services := extractServices(yamlContent)
 	status := "stopped"
 	running := 0
@@ -548,7 +585,7 @@ func inspectStack(name string, files []string, projectName, yamlContent string) 
 		updatedAt = stat.ModTime().Format("2006-01-02 15:04:05")
 	}
 	return StackInfo{
-		ID:            canonicalPath(path),
+		ID:            id,
 		Name:          name,
 		Path:          path,
 		ConfigFiles:   files,
@@ -646,6 +683,20 @@ func SaveStack(name, content string) error {
 			return fmt.Errorf("stat existing Compose file: %w", err)
 		}
 		mode = info.Mode().Perm()
+	} else if _, _, registered := parseRegisteredComposeID(name); registered {
+		files, _, err := resolveStackFiles(name)
+		if err != nil {
+			return err
+		}
+		if len(files) == 0 {
+			return fmt.Errorf("no Compose file selected")
+		}
+		filePath = files[0]
+		info, err := os.Stat(filePath)
+		if err != nil {
+			return fmt.Errorf("stat existing Compose file: %w", err)
+		}
+		mode = info.Mode().Perm()
 	} else {
 		if !validStackName(name) {
 			return fmt.Errorf("invalid stack name")
@@ -687,11 +738,17 @@ func savedStackID(identifier string) string {
 	if filepath.IsAbs(identifier) {
 		return canonicalPath(identifier)
 	}
-	files, _, err := resolveStackFiles(identifier)
-	if err != nil || len(files) == 0 {
-		return ""
+	if _, _, ok := parseRegisteredComposeID(identifier); ok {
+		return identifier
 	}
-	return canonicalPath(files[0])
+	settingsMu.RLock()
+	layout := newStackLayout
+	settingsMu.RUnlock()
+	root := resolvedComposeRoot()
+	if layout == "flat" {
+		return canonicalPath(filepath.Join(root, identifier+".yaml"))
+	}
+	return canonicalPath(filepath.Join(root, identifier, "compose.yaml"))
 }
 
 func atomicWriteFile(path string, content []byte, mode os.FileMode) error {

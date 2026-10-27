@@ -264,7 +264,7 @@ func TestRegisteredSecondaryComposeFileIsNotStandaloneAndSavePreservesTarget(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(stacks) != 1 || stacks[0].ID != canonicalPath(primary) {
+	if len(stacks) != 1 || stacks[0].ID != registeredComposeID(primary, "app") {
 		t.Fatalf("registered secondary file appeared as a standalone stack: %#v", stacks)
 	}
 	updated := "services:\n  production:\n    image: busybox\n"
@@ -309,6 +309,83 @@ func TestSavedStackIDUsesCreatedFilePath(t *testing.T) {
 	want := canonicalPath(filepath.Join(root, "fresh-project", "compose.yaml"))
 	if got := savedStackID("fresh-project"); got != want {
 		t.Fatalf("saved stack ID mismatch: got %q, want %q", got, want)
+	}
+}
+
+func TestFlatSaveReturnsItsWrittenPathWhenFolderNameIsOccupied(t *testing.T) {
+	t.Setenv("M3TAL_COMPOSE_DIR", "")
+	root := t.TempDir()
+	existingPath := filepath.Join(root, "foo", "compose.yaml")
+	if err := os.MkdirAll(filepath.Dir(existingPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	original := "services:\n  app:\n    image: alpine\n"
+	if err := os.WriteFile(existingPath, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+	settingsMu.Lock()
+	oldRoot, oldLayout, oldBackup := composeDirSetting, newStackLayout, backupOnSave
+	composeDirSetting, newStackLayout, backupOnSave = root, "flat", false
+	settingsMu.Unlock()
+	defer func() {
+		settingsMu.Lock()
+		composeDirSetting, newStackLayout, backupOnSave = oldRoot, oldLayout, oldBackup
+		settingsMu.Unlock()
+	}()
+	oldProjectsSource := composeProjectsSource
+	composeProjectsSource = func() ([]composeProject, error) {
+		return []composeProject{{Name: "prod", ConfigFiles: existingPath}}, nil
+	}
+	defer func() { composeProjectsSource = oldProjectsSource }()
+	if err := SaveStack("foo", "services:\n  fresh:\n    image: nginx\n"); err != nil {
+		t.Fatal(err)
+	}
+	want := canonicalPath(filepath.Join(root, "foo.yaml"))
+	if got := savedStackID("foo"); got != want {
+		t.Fatalf("saved flat stack ID points to the wrong project: got %q, want %q", got, want)
+	}
+	got, err := os.ReadFile(existingPath)
+	if err != nil || string(got) != original {
+		t.Fatalf("flat save modified the existing folder project: content=%q err=%v", got, err)
+	}
+}
+
+func TestRegisteredProjectsSharingConfigHaveDistinctActionIDs(t *testing.T) {
+	t.Setenv("M3TAL_COMPOSE_DIR", "")
+	root := t.TempDir()
+	primary := filepath.Join(root, "shared", "compose.yaml")
+	if err := os.MkdirAll(filepath.Dir(primary), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(primary, []byte("services:\n  app:\n    image: alpine\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	settingsMu.Lock()
+	oldRoot := composeDirSetting
+	composeDirSetting = root
+	settingsMu.Unlock()
+	defer func() { settingsMu.Lock(); composeDirSetting = oldRoot; settingsMu.Unlock() }()
+	oldProjectsSource := composeProjectsSource
+	composeProjectsSource = func() ([]composeProject, error) {
+		return []composeProject{
+			{Name: "alpha", ConfigFiles: primary},
+			{Name: "beta", ConfigFiles: primary},
+		}, nil
+	}
+	defer func() { composeProjectsSource = oldProjectsSource }()
+
+	stacks, err := ListStacks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stacks) != 2 || stacks[0].ID == stacks[1].ID {
+		t.Fatalf("projects sharing a file did not get distinct identities: %#v", stacks)
+	}
+	for _, stack := range stacks {
+		_, projectName, err := resolveStackFiles(stack.ID)
+		if err != nil || projectName != stack.ProjectName {
+			t.Fatalf("action ID resolved to the wrong Compose project: stack=%#v project=%q err=%v", stack, projectName, err)
+		}
 	}
 }
 
