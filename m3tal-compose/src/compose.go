@@ -752,6 +752,9 @@ func stackIDForSave(identifier, savedPath string) string {
 	if primary, projectName, ok := parseRegisteredComposeID(identifier); ok {
 		return registeredComposeID(primary, projectName)
 	}
+	if filepath.IsAbs(identifier) {
+		return canonicalPath(identifier)
+	}
 	return canonicalPath(savedPath)
 }
 

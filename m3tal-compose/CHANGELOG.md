@@ -36,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Existing symlinked Compose files are replaced through their resolved targets, preserving the link and backing up the target.
 - Refresh rebinds a registered project selection to its local file identity after its Docker registry entry disappears.
 - SaveStack returns the actual path written, which is used directly for the UI's saved project identity.
+- Symlinked projects retain their discovered link identity in the UI while saves update the resolved target.
 - Removed the declared but unimplemented `auto_pull` option and synchronized the plugin version.
 
 ## [0.3.0] - 2026-10-26

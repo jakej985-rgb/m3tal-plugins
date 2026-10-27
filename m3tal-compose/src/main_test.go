@@ -335,7 +335,15 @@ func TestSaveFollowsComposeFileSymlinkAndKeepsLink(t *testing.T) {
 		t.Fatalf("target backup did not preserve file mode: info=%v err=%v", backup, err)
 	}
 	if canonicalPath(savedPath) != canonicalPath(target) {
-		t.Fatalf("SaveStack returned %q, want resolved target %q", savedPath, target)
+		t.Fatalf("SaveStack did not report the resolved write target: got %q, want %q", savedPath, target)
+	}
+	returnedID := stackIDForSave(stacks[0].ID, savedPath)
+	if returnedID != stacks[0].ID {
+		t.Fatalf("save response changed the discovered link identity: got %q, want %q", returnedID, stacks[0].ID)
+	}
+	files, _, err := resolveStackFiles(returnedID)
+	if err != nil || len(files) == 0 || canonicalPath(files[0]) != stacks[0].ID {
+		t.Fatalf("returned selection ID is not usable for future actions: files=%#v err=%v", files, err)
 	}
 }
 
