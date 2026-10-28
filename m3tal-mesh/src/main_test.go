@@ -79,3 +79,56 @@ func TestPairThenForgetActionsPersistFleet(t *testing.T) {
 		t.Fatalf("forget action left peer in fleet: saved=%+v memory=%+v", peers, snapshotPeers())
 	}
 }
+
+func TestGetSettingsReturnsFlat(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := saveMeshConfig(meshConfig{PairingToken: "test-token", ListenPort: 4242}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := runActionForTest(t, 1, `{"action":"get_settings","args":{}}`)
+	if resp.Error != nil {
+		t.Fatalf("get_settings failed: %s", resp.Error.Message)
+	}
+	encoded, _ := json.Marshal(resp.Result)
+	var result map[string]interface{}
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		t.Fatalf("decode result: %v", err)
+	}
+	// Verify flat structure — no nested "data" key
+	if _, hasData := result["data"]; hasData {
+		t.Fatal("get_settings must not nest fields under \"data\"; Core already wraps the result")
+	}
+	if result["success"] != true {
+		t.Fatalf("expected success=true, got %v", result["success"])
+	}
+	if result["has_pairing_token"] != true {
+		t.Fatalf("expected has_pairing_token=true, got %v", result["has_pairing_token"])
+	}
+	if port, ok := result["listen_port"].(float64); !ok || int(port) != 4242 {
+		t.Fatalf("expected listen_port=4242, got %v", result["listen_port"])
+	}
+}
+
+func TestGetSettingsNoPairingToken(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := saveMeshConfig(meshConfig{PairingToken: "", ListenPort: 9321}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := runActionForTest(t, 1, `{"action":"get_settings","args":{}}`)
+	if resp.Error != nil {
+		t.Fatalf("get_settings failed: %s", resp.Error.Message)
+	}
+	encoded, _ := json.Marshal(resp.Result)
+	var result map[string]interface{}
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		t.Fatalf("decode result: %v", err)
+	}
+	if result["has_pairing_token"] != false {
+		t.Fatalf("expected has_pairing_token=false with empty token, got %v", result["has_pairing_token"])
+	}
+	if port, ok := result["listen_port"].(float64); !ok || int(port) != 9321 {
+		t.Fatalf("expected listen_port=9321, got %v", result["listen_port"])
+	}
+}
