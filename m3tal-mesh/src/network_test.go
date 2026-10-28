@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeTestChallenge(w http.ResponseWriter, r *http.Request) bool {
@@ -26,7 +27,8 @@ func TestFetchRemoteVerifiesAndReadsTelemetry(t *testing.T) {
 			return
 		}
 		nonce := r.Header.Get("X-M3TAL-Nonce")
-		if r.Header.Get("X-M3TAL-Proof") != requestProof("shared-secret", nonce) {
+		clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
+		if r.Header.Get("X-M3TAL-Proof") != requestProof("shared-secret", nonce, clientNonce) {
 			http.Error(w, "invalid pairing token", http.StatusUnauthorized)
 			return
 		}
@@ -35,7 +37,7 @@ func TestFetchRemoteVerifiesAndReadsTelemetry(t *testing.T) {
 			Name: "mesh-server", Hostname: "mesh-server",
 			Telemetry: remoteTelemetry{Hostname: "mesh-server", Cores: 8, Load1m: 2, RAMTotalGB: 32, StorageTotalGB: 1000},
 		})
-		w.Header().Set("X-M3TAL-Proof", responseProof("shared-secret", nonce, body))
+		w.Header().Set("X-M3TAL-Proof", responseProof("shared-secret", nonce, clientNonce, body))
 		_, _ = w.Write(body)
 	}))
 	defer server.Close()
@@ -149,5 +151,75 @@ func TestPeerMemoryChangesOnlyAfterPersistence(t *testing.T) {
 	}
 	if got := snapshotPeers(); len(got) != 1 || got[0].ID != "existing" {
 		t.Fatalf("failed removal mutated in-memory fleet: %+v", got)
+	}
+}
+
+func TestRefreshPreservesMetadataFromConcurrentRepair(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := saveMeshConfig(meshConfig{PairingToken: "refresh-token", ListenPort: 9321}); err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
+		nonce := r.Header.Get("X-M3TAL-Nonce")
+		clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
+		if r.Header.Get("X-M3TAL-Proof") != requestProof("refresh-token", nonce, clientNonce) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		close(started)
+		<-release
+		body, _ := json.Marshal(remoteResponse{Hostname: "refresh-test", Telemetry: remoteTelemetry{Hostname: "refresh-test", Cores: 2}})
+		w.Header().Set("X-M3TAL-Proof", responseProof("refresh-token", nonce, clientNonce, body))
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+
+	remoteNodes = []MeshNode{{ID: "node-refresh", Name: "Old name", Role: "server", IP: server.Listener.Addr().String()}}
+	done := make(chan struct{})
+	go func() {
+		refreshRemotePeers()
+		close(done)
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("refresh did not reach the peer")
+	}
+	repaired := snapshotPeers()[0]
+	repaired.Name, repaired.Role = "Updated name", "workstation"
+	if err := persistPeerUpsert(repaired); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("refresh did not finish")
+	}
+	peers := snapshotPeers()
+	if len(peers) != 1 || peers[0].Name != "Updated name" || peers[0].Role != "workstation" {
+		t.Fatalf("refresh overwrote repaired metadata: %+v", peers)
+	}
+}
+
+func TestFetchRemoteRejectsReplayedResponseProof(t *testing.T) {
+	capturedBody, _ := json.Marshal(remoteResponse{Hostname: "mesh-server", Telemetry: remoteTelemetry{Hostname: "mesh-server", Cores: 4}})
+	capturedProof := responseProof("shared-secret", strings.Repeat("a", 64), strings.Repeat("b", 64), capturedBody)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-M3TAL-Proof", capturedProof)
+		_, _ = w.Write(capturedBody)
+	}))
+	defer server.Close()
+	if _, err := fetchRemote(server.Listener.Addr().String(), "shared-secret", 9321); err == nil {
+		t.Fatal("expected a replayed response proof to be rejected")
 	}
 }

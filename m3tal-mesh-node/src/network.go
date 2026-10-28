@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -88,7 +89,15 @@ func startNodeNetworkService() error {
 	mux.HandleFunc("/api/v1/challenge", nodeChallengeHandler)
 	mux.HandleFunc("/api/v1/telemetry", nodeTelemetryHandler)
 
-	server := &http.Server{Addr: ":" + strconv.Itoa(cfg.ListenPort), Handler: mux, ReadHeaderTimeout: 4 * time.Second}
+	server := &http.Server{
+		Addr:              ":" + strconv.Itoa(cfg.ListenPort),
+		Handler:           mux,
+		ReadHeaderTimeout: 4 * time.Second,
+		ReadTimeout:       5 * time.Second,
+		WriteTimeout:      5 * time.Second,
+		IdleTimeout:       45 * time.Second,
+		MaxHeaderBytes:    32 * 1024,
+	}
 	certificate, err := createNodeCertificate()
 	if err != nil {
 		return fmt.Errorf("mesh-node TLS certificate: %w", err)
@@ -164,8 +173,9 @@ func nodeTelemetryHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	nonce := r.Header.Get("X-M3TAL-Nonce")
+	clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
 	supplied := r.Header.Get("X-M3TAL-Proof")
-	if !consumeNodeChallenge(nonce) || subtle.ConstantTimeCompare([]byte(supplied), []byte(nodeRequestProof(current.PairingToken, nonce))) != 1 {
+	if !validNodeNonce(clientNonce) || !consumeNodeChallenge(nonce) || subtle.ConstantTimeCompare([]byte(supplied), []byte(nodeRequestProof(current.PairingToken, nonce, clientNonce))) != 1 {
 		http.Error(w, "invalid pairing token", http.StatusUnauthorized)
 		return
 	}
@@ -179,7 +189,7 @@ func nodeTelemetryHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-M3TAL-Proof", nodeResponseProof(current.PairingToken, nonce, body))
+	w.Header().Set("X-M3TAL-Proof", nodeResponseProof(current.PairingToken, nonce, clientNonce, body))
 	_, _ = w.Write(body)
 }
 
@@ -188,7 +198,11 @@ func nodeChallengeHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	nonce, err := issueNodeChallenge()
+	clientIP, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		clientIP = r.RemoteAddr
+	}
+	nonce, err := issueNodeChallenge(clientIP)
 	if err != nil {
 		http.Error(w, "could not create challenge", http.StatusInternalServerError)
 		return
@@ -203,10 +217,15 @@ var (
 	nodeMDNSServer   *zeroconf.Server
 	nodeServerMu     sync.Mutex
 	nodeChallengeMu  sync.Mutex
-	nodeChallenges   = make(map[string]time.Time)
+	nodeChallenges   = make(map[string]nodeChallenge)
 )
 
-func issueNodeChallenge() (string, error) {
+type nodeChallenge struct {
+	expires time.Time
+	client  string
+}
+
+func issueNodeChallenge(client string) (string, error) {
 	bytes := make([]byte, 32)
 	if _, err := rand.Read(bytes); err != nil {
 		return "", err
@@ -215,39 +234,65 @@ func issueNodeChallenge() (string, error) {
 	now := time.Now()
 	nodeChallengeMu.Lock()
 	defer nodeChallengeMu.Unlock()
-	for known, expires := range nodeChallenges {
-		if now.After(expires) {
+	var clientCount int
+	var oldestClientNonce string
+	var oldestClientExpiry time.Time
+	var oldestNonce string
+	var oldestExpiry time.Time
+	for known, challenge := range nodeChallenges {
+		if now.After(challenge.expires) {
 			delete(nodeChallenges, known)
+			continue
+		}
+		if oldestNonce == "" || challenge.expires.Before(oldestExpiry) {
+			oldestNonce, oldestExpiry = known, challenge.expires
+		}
+		if challenge.client == client {
+			clientCount++
+			if oldestClientNonce == "" || challenge.expires.Before(oldestClientExpiry) {
+				oldestClientNonce, oldestClientExpiry = known, challenge.expires
+			}
 		}
 	}
-	if len(nodeChallenges) >= 1024 {
-		return "", fmt.Errorf("too many outstanding pairing challenges")
+	if clientCount >= 16 && oldestClientNonce != "" {
+		delete(nodeChallenges, oldestClientNonce)
 	}
-	nodeChallenges[nonce] = now.Add(30 * time.Second)
+	if len(nodeChallenges) >= 4096 && oldestNonce != "" {
+		delete(nodeChallenges, oldestNonce)
+	}
+	nodeChallenges[nonce] = nodeChallenge{expires: now.Add(30 * time.Second), client: client}
 	return nonce, nil
 }
 
+func validNodeNonce(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
+}
+
 func consumeNodeChallenge(nonce string) bool {
-	if len(nonce) != 64 {
+	if !validNodeNonce(nonce) {
 		return false
 	}
 	nodeChallengeMu.Lock()
-	expires, ok := nodeChallenges[nonce]
+	challenge, ok := nodeChallenges[nonce]
 	delete(nodeChallenges, nonce)
 	nodeChallengeMu.Unlock()
-	return ok && time.Now().Before(expires)
+	return ok && time.Now().Before(challenge.expires)
 }
 
-func nodeRequestProof(token, nonce string) string {
+func nodeRequestProof(token, nonce, clientNonce string) string {
 	mac := hmac.New(sha256.New, []byte(token))
-	_, _ = io.WriteString(mac, "GET\n/api/v1/telemetry\n"+nonce)
+	_, _ = io.WriteString(mac, "GET\n/api/v1/telemetry\n"+nonce+"\n"+clientNonce)
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-func nodeResponseProof(token, nonce string, body []byte) string {
+func nodeResponseProof(token, nonce, clientNonce string, body []byte) string {
 	sum := sha256.Sum256(body)
 	mac := hmac.New(sha256.New, []byte(token))
-	_, _ = io.WriteString(mac, nonce+"\n"+hex.EncodeToString(sum[:]))
+	_, _ = io.WriteString(mac, nonce+"\n"+clientNonce+"\n"+hex.EncodeToString(sum[:]))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 

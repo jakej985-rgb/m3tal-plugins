@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -25,13 +26,15 @@ func TestTelemetryEndpointRequiresConfiguredToken(t *testing.T) {
 		t.Fatalf("unauthorized request status = %d, want %d", unauthorized.StatusCode, http.StatusUnauthorized)
 	}
 
-	nonce, err := issueNodeChallenge()
+	nonce, err := issueNodeChallenge("127.0.0.1")
 	if err != nil {
 		t.Fatal(err)
 	}
+	clientNonce := strings.Repeat("b", 64)
 	req, _ := http.NewRequest(http.MethodGet, server.URL+"/api/v1/telemetry", nil)
 	req.Header.Set("X-M3TAL-Nonce", nonce)
-	req.Header.Set("X-M3TAL-Proof", nodeRequestProof("mesh-secret", nonce))
+	req.Header.Set("X-M3TAL-Client-Nonce", clientNonce)
+	req.Header.Set("X-M3TAL-Proof", nodeRequestProof("mesh-secret", nonce, clientNonce))
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -51,13 +54,14 @@ func TestTelemetryEndpointRequiresConfiguredToken(t *testing.T) {
 	if payload["hostname"] == "" || payload["telemetry"] == nil {
 		t.Fatalf("missing node identity or telemetry: %#v", payload)
 	}
-	if resp.Header.Get("X-M3TAL-Proof") != nodeResponseProof("mesh-secret", nonce, body) {
+	if resp.Header.Get("X-M3TAL-Proof") != nodeResponseProof("mesh-secret", nonce, clientNonce, body) {
 		t.Fatal("authenticated response proof is missing or invalid")
 	}
 
 	replay, _ := http.NewRequest(http.MethodGet, server.URL+"/api/v1/telemetry", nil)
 	replay.Header.Set("X-M3TAL-Nonce", nonce)
-	replay.Header.Set("X-M3TAL-Proof", nodeRequestProof("mesh-secret", nonce))
+	replay.Header.Set("X-M3TAL-Client-Nonce", clientNonce)
+	replay.Header.Set("X-M3TAL-Proof", nodeRequestProof("mesh-secret", nonce, clientNonce))
 	replayResp, err := http.DefaultClient.Do(replay)
 	if err != nil {
 		t.Fatal(err)
@@ -65,6 +69,22 @@ func TestTelemetryEndpointRequiresConfiguredToken(t *testing.T) {
 	defer replayResp.Body.Close()
 	if replayResp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("replayed challenge status = %d, want %d", replayResp.StatusCode, http.StatusUnauthorized)
+	}
+
+	nonce, err = issueNodeChallenge("127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingClient, _ := http.NewRequest(http.MethodGet, server.URL+"/api/v1/telemetry", nil)
+	missingClient.Header.Set("X-M3TAL-Nonce", nonce)
+	missingClient.Header.Set("X-M3TAL-Proof", nodeRequestProof("mesh-secret", nonce, clientNonce))
+	missingResp, err := http.DefaultClient.Do(missingClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer missingResp.Body.Close()
+	if missingResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("missing client nonce status = %d, want %d", missingResp.StatusCode, http.StatusUnauthorized)
 	}
 }
 

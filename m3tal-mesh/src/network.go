@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
@@ -47,6 +48,16 @@ type remoteResponse struct {
 
 var peerSaveMu sync.Mutex
 var peerMutationMu sync.Mutex
+
+var meshHTTPClient = &http.Client{
+	Timeout: 4 * time.Second,
+	Transport: &http.Transport{
+		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12},
+		IdleConnTimeout:     30 * time.Second,
+		MaxIdleConns:        64,
+		MaxIdleConnsPerHost: 8,
+	},
+}
 
 func meshConfigPath() string {
 	home, err := os.UserHomeDir()
@@ -167,16 +178,32 @@ func normalizeNodeAddress(address string, defaultPort int) (string, error) {
 	return net.JoinHostPort(address, strconv.Itoa(defaultPort)), nil
 }
 
-func requestProof(token, nonce string) string {
+func validMeshNonce(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
+}
+
+func newMeshNonce() (string, error) {
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(bytes), nil
+}
+
+func requestProof(token, nonce, clientNonce string) string {
 	mac := hmac.New(sha256.New, []byte(token))
-	_, _ = io.WriteString(mac, "GET\n/api/v1/telemetry\n"+nonce)
+	_, _ = io.WriteString(mac, "GET\n/api/v1/telemetry\n"+nonce+"\n"+clientNonce)
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-func responseProof(token, nonce string, body []byte) string {
+func responseProof(token, nonce, clientNonce string, body []byte) string {
 	sum := sha256.Sum256(body)
 	mac := hmac.New(sha256.New, []byte(token))
-	_, _ = io.WriteString(mac, nonce+"\n"+hex.EncodeToString(sum[:]))
+	_, _ = io.WriteString(mac, nonce+"\n"+clientNonce+"\n"+hex.EncodeToString(sum[:]))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
@@ -188,18 +215,12 @@ func fetchRemote(address, token string, port int) (MeshNode, error) {
 	if err != nil {
 		return MeshNode{}, err
 	}
-	client := &http.Client{
-		Timeout: 4 * time.Second,
-		// The peer's ephemeral TLS certificate is authenticated by a
-		// sender-issued one-time challenge and the response HMAC.
-		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}},
-	}
 	started := time.Now()
 	challengeReq, err := http.NewRequest(http.MethodPost, "https://"+endpoint+"/api/v1/challenge", nil)
 	if err != nil {
 		return MeshNode{}, fmt.Errorf("invalid node address: %w", err)
 	}
-	challengeResp, err := client.Do(challengeReq)
+	challengeResp, err := meshHTTPClient.Do(challengeReq)
 	if err != nil {
 		return MeshNode{}, fmt.Errorf("cannot reach %s: %w", address, err)
 	}
@@ -218,8 +239,12 @@ func fetchRemote(address, token string, port int) (MeshNode, error) {
 		return MeshNode{}, fmt.Errorf("%s returned an invalid pairing challenge: %w", address, err)
 	}
 	challengeResp.Body.Close()
-	if len(challenge.Nonce) != 64 {
+	if !validMeshNonce(challenge.Nonce) {
 		return MeshNode{}, fmt.Errorf("%s returned an invalid pairing challenge", address)
+	}
+	clientNonce, err := newMeshNonce()
+	if err != nil {
+		return MeshNode{}, fmt.Errorf("could not create pairing challenge: %w", err)
 	}
 	req, err := http.NewRequest(http.MethodGet, "https://"+endpoint+"/api/v1/telemetry", nil)
 	if err != nil {
@@ -227,8 +252,9 @@ func fetchRemote(address, token string, port int) (MeshNode, error) {
 	}
 	nonce := challenge.Nonce
 	req.Header.Set("X-M3TAL-Nonce", nonce)
-	req.Header.Set("X-M3TAL-Proof", requestProof(token, nonce))
-	resp, err := client.Do(req)
+	req.Header.Set("X-M3TAL-Client-Nonce", clientNonce)
+	req.Header.Set("X-M3TAL-Proof", requestProof(token, nonce, clientNonce))
+	resp, err := meshHTTPClient.Do(req)
 	latency := int(time.Since(started).Milliseconds())
 	if err != nil {
 		return MeshNode{}, fmt.Errorf("cannot reach %s: %w", address, err)
@@ -247,7 +273,7 @@ func fetchRemote(address, token string, port int) (MeshNode, error) {
 	if err != nil {
 		return MeshNode{}, fmt.Errorf("could not read telemetry from %s: %w", address, err)
 	}
-	expected := responseProof(token, nonce, body)
+	expected := responseProof(token, nonce, clientNonce, body)
 	if !hmac.Equal([]byte(expected), []byte(resp.Header.Get("X-M3TAL-Proof"))) {
 		return MeshNode{}, fmt.Errorf("%s failed mesh node authentication", address)
 	}
@@ -458,8 +484,12 @@ func refreshRemotePeers() {
 			defer nodeMutex.Unlock()
 			for i := range remoteNodes {
 				if remoteNodes[i].ID == existing.ID {
+					// A concurrent re-pair may have changed the display metadata
+					// while this telemetry request was in flight. Keep the latest
+					// name and role from the live fleet entry.
+					name, role := remoteNodes[i].Name, remoteNodes[i].Role
 					if err == nil {
-						updated.ID, updated.Name, updated.Role = existing.ID, existing.Name, existing.Role
+						updated.ID, updated.Name, updated.Role = existing.ID, name, role
 						remoteNodes[i] = updated
 					} else {
 						remoteNodes[i].Status = "offline"
