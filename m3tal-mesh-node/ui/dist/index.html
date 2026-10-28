@@ -31,7 +31,10 @@
         const res = await fetch(endpoint, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'get_settings',args:{}})});
         const body = await res.json();
         if (!res.ok || body.status !== 'success') throw new Error(body.error?.message || 'Could not load sender settings');
-        const cfg = body.data || {};
+          const cfg = {
+          ...(body.data?.payload ?? {}),
+          ...(body.data ?? {})
+        };
         const tokenInput = document.getElementById('pairing-token');
         hasPairingToken = !!cfg.has_pairing_token;
         tokenInput.value = '';
@@ -52,7 +55,21 @@
       try {
         const res = await fetch(endpoint, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'set_settings',args:config})});
         const body = await res.json();
-        if (!res.ok || body.status !== 'success' || body.data?.success === false) throw new Error(body.error?.message || body.data?.error || 'Could not save sender settings');
+        const actionData = {
+          ...(body.data?.payload ?? {}),
+          ...(body.data ?? {})
+        };
+        if (
+          !res.ok ||
+          body.status !== 'success' ||
+          actionData.success === false
+        ) {
+          throw new Error(
+            body.error?.message ||
+            actionData.error ||
+            'Could not save sender settings'
+          );
+        }
         statusEl.textContent = 'Saved. The pairing token takes effect immediately; restart Mesh Node after changing the port or LAN discovery setting.';
         hasPairingToken = hasPairingToken || !!config.pairing_token;
         document.getElementById('pairing-token').value = '';
