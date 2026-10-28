@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
@@ -255,24 +254,13 @@ func TestDiscoveryConcurrentVerification(t *testing.T) {
 	defer fastServer.Close()
 
 	candidates := []string{slowServer.Listener.Addr().String(), fastServer.Listener.Addr().String()}
-	var wg sync.WaitGroup
-	mu := sync.Mutex{}
-	discovered := make([]MeshNode, 0)
-	for _, address := range candidates {
-		address := address
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			node, err := fetchRemote(address, "discovery-token", 9321)
-			if err == nil {
-				mu.Lock()
-				discovered = append(discovered, node)
-				mu.Unlock()
-			}
-		}()
-	}
-	wg.Wait()
+	start := time.Now()
+	discovered := verifyCandidates(candidates, "discovery-token", 9321)
+	elapsed := time.Since(start)
 	if len(discovered) != 1 || discovered[0].Name != "fast-node" {
 		t.Fatalf("concurrent verification failed to find fast node: %+v", discovered)
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("concurrent verification took too long: %v (expected < 5s)", elapsed)
 	}
 }

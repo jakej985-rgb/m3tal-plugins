@@ -395,26 +395,30 @@ func discoverAndVerifyPeers() ([]MeshNode, error) {
 				candidates = append(candidates, address)
 			}
 		case <-ctx.Done():
-			var wg sync.WaitGroup
-			mu := sync.Mutex{}
-			discovered := make([]MeshNode, 0)
-			for _, address := range candidates {
-				address := address
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					node, err := fetchRemote(address, cfg.PairingToken, cfg.ListenPort)
-					if err == nil {
-						mu.Lock()
-						discovered = append(discovered, node)
-						mu.Unlock()
-					}
-				}()
-			}
-			wg.Wait()
-			return discovered, nil
+			return verifyCandidates(candidates, cfg.PairingToken, cfg.ListenPort), nil
 		}
 	}
+}
+
+func verifyCandidates(candidates []string, token string, port int) []MeshNode {
+	var wg sync.WaitGroup
+	mu := sync.Mutex{}
+	discovered := make([]MeshNode, 0)
+	for _, address := range candidates {
+		address := address
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			node, err := fetchRemote(address, token, port)
+			if err == nil {
+				mu.Lock()
+				discovered = append(discovered, node)
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	return discovered
 }
 
 func persistPeerUpsert(node MeshNode) error {
