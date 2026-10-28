@@ -476,17 +476,7 @@ func snapshotPeers() []MeshNode {
 	return append([]MeshNode(nil), remoteNodes...)
 }
 
-func upsertPeer(node MeshNode) {
-	nodeMutex.Lock()
-	defer nodeMutex.Unlock()
-	for i := range remoteNodes {
-		if remoteNodes[i].ID == node.ID || strings.EqualFold(remoteNodes[i].IP, node.IP) {
-			remoteNodes[i] = node
-			return
-		}
-	}
-	remoteNodes = append(remoteNodes, node)
-}
+
 
 func refreshRemotePeers() {
 	cfg := loadMeshConfig()

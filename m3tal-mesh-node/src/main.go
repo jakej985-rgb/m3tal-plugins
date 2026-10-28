@@ -16,7 +16,7 @@ import (
 const (
 	CanonicalProcessName = "m3tal-mesh-node"
 	PluginName           = "mesh-node"
-	PluginVersion        = "0.1.2"
+	PluginVersion        = "0.1.4"
 )
 
 // RPCRequest represents standard JSON-RPC 2.0 request.
