@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.4] - 2026-10-28
+
+### Fixed
+- Version bump to align with m3tal-mesh cluster metapackage
+
 ## [0.1.3] - 2026-10-28
 
 ### Fixed

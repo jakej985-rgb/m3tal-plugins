@@ -366,7 +366,7 @@ func discoverAndVerifyPeers() ([]MeshNode, error) {
 			}
 		}
 	}
-	discovered := make([]MeshNode, 0)
+	candidates := make([]string, 0)
 	for {
 		select {
 		case entry := <-entries:
@@ -392,12 +392,26 @@ func discoverAndVerifyPeers() ([]MeshNode, error) {
 					continue
 				}
 				addresses[address] = true
-				node, err := fetchRemote(address, cfg.PairingToken, cfg.ListenPort)
-				if err == nil {
-					discovered = append(discovered, node)
-				}
+				candidates = append(candidates, address)
 			}
 		case <-ctx.Done():
+			var wg sync.WaitGroup
+			mu := sync.Mutex{}
+			discovered := make([]MeshNode, 0)
+			for _, address := range candidates {
+				address := address
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					node, err := fetchRemote(address, cfg.PairingToken, cfg.ListenPort)
+					if err == nil {
+						mu.Lock()
+						discovered = append(discovered, node)
+						mu.Unlock()
+					}
+				}()
+			}
+			wg.Wait()
 			return discovered, nil
 		}
 	}

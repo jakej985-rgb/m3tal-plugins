@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -221,5 +222,57 @@ func TestFetchRemoteRejectsReplayedResponseProof(t *testing.T) {
 	defer server.Close()
 	if _, err := fetchRemote(server.Listener.Addr().String(), "shared-secret", 9321); err == nil {
 		t.Fatal("expected a replayed response proof to be rejected")
+	}
+}
+
+func TestDiscoveryConcurrentVerification(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := saveMeshConfig(meshConfig{PairingToken: "discovery-token", ListenPort: 9321}); err != nil {
+		t.Fatal(err)
+	}
+	slowServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
+		time.Sleep(5 * time.Second)
+		http.Error(w, "too slow", http.StatusRequestTimeout)
+	}))
+	defer slowServer.Close()
+	fastServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
+		nonce := r.Header.Get("X-M3TAL-Nonce")
+		clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
+		if r.Header.Get("X-M3TAL-Proof") != requestProof("discovery-token", nonce, clientNonce) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		body, _ := json.Marshal(remoteResponse{Hostname: "fast-node", Telemetry: remoteTelemetry{Hostname: "fast-node", Cores: 4}})
+		w.Header().Set("X-M3TAL-Proof", responseProof("discovery-token", nonce, clientNonce, body))
+		_, _ = w.Write(body)
+	}))
+	defer fastServer.Close()
+
+	candidates := []string{slowServer.Listener.Addr().String(), fastServer.Listener.Addr().String()}
+	var wg sync.WaitGroup
+	mu := sync.Mutex{}
+	discovered := make([]MeshNode, 0)
+	for _, address := range candidates {
+		address := address
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			node, err := fetchRemote(address, "discovery-token", 9321)
+			if err == nil {
+				mu.Lock()
+				discovered = append(discovered, node)
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	if len(discovered) != 1 || discovered[0].Name != "fast-node" {
+		t.Fatalf("concurrent verification failed to find fast node: %+v", discovered)
 	}
 }

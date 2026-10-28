@@ -2,7 +2,7 @@ apiVersion: m3tal.io/v1alpha1
 kind: Plugin
 metadata:
   name: mesh
-  version: "0.1.3"
+  version: "0.1.4"
   title: "Mesh Fleet"
   description: "Personal Cloud & Local Network Fleet Federation, peer discovery, and multi-node hardware telemetry reader"
   author: "jakej985-rgb"

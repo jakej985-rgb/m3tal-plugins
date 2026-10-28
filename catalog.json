@@ -44,10 +44,10 @@
       "actions",
       "ui_view"
     ],
-    "version": "0.1.2",
+    "version": "0.1.4",
     "status": "available",
     "has_deb": true,
-    "deb_filename": "m3tal-plugin-mesh-cluster_0.1.2_amd64.deb",
+    "deb_filename": "m3tal-plugin-mesh-cluster_0.1.4_amd64.deb",
     "apt_command": "sudo apt install -y m3tal-plugin-mesh-cluster",
     "modes": [
       {
@@ -56,7 +56,7 @@
         "subLabel": "Full Peer",
         "description": "Full peer (Send + Receive). Broadcasts local machine metrics AND renders the multi-node fleet dashboard. Recommended for primary workstations.",
         "package_name": "m3tal-plugin-mesh-cluster",
-        "deb_filename": "m3tal-plugin-mesh-cluster_0.1.2_amd64.deb",
+        "deb_filename": "m3tal-plugin-mesh-cluster_0.1.4_amd64.deb",
         "apt_command": "sudo apt install -y m3tal-plugin-mesh-cluster",
         "process_name": "m3tal-mesh"
       },
@@ -66,7 +66,7 @@
         "subLabel": "Viewer",
         "description": "Reader & dashboard UI. Scans LAN to view and monitor other connected M3TAL nodes from your desktop.",
         "package_name": "m3tal-plugin-mesh",
-        "deb_filename": "m3tal-plugin-mesh_0.1.2_amd64.deb",
+        "deb_filename": "m3tal-plugin-mesh_0.1.4_amd64.deb",
         "apt_command": "sudo apt install -y m3tal-plugin-mesh",
         "process_name": "m3tal-mesh"
       },
@@ -76,7 +76,7 @@
         "subLabel": "Sender",
         "description": "Headless sender daemon. Broadcasts CPU, GPU, and disk metrics without running a GUI. Ideal for servers & NAS.",
         "package_name": "m3tal-plugin-mesh-node",
-        "deb_filename": "m3tal-plugin-mesh-node_0.1.2_amd64.deb",
+        "deb_filename": "m3tal-plugin-mesh-node_0.1.4_amd64.deb",
         "apt_command": "sudo apt install -y m3tal-plugin-mesh-node",
         "process_name": "m3tal-mesh-node"
       }
