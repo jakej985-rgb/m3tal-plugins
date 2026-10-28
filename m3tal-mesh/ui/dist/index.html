@@ -729,7 +729,7 @@ async function pingNode(id) {
     await fetchCollect();
   } catch (err) {
     showToast(
-      err.message || 'Node did not respond. Check its connection and pairing token.',
+      (err instanceof TypeError ? 'Node did not respond. Check its connection and pairing token.' : (err.message || 'Node did not respond. Check its connection and pairing token.')),
       true
     );
   }
@@ -775,7 +775,7 @@ async function forgetNode(id) {
     await fetchCollect();
     showToast(actionData.message || 'Node removed');
   } catch (err) {
-    showToast(err.message || 'Could not remove node. Try again.', true);
+    showToast((err instanceof TypeError ? 'Could not remove node. Check its connection and try again.' : (err.message || 'Could not remove node. Try again.')), true);
   }
 }
 

@@ -31,7 +31,7 @@
         const res = await fetch(endpoint, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'get_settings',args:{}})});
         const body = await res.json();
         if (!res.ok || body.status !== 'success') throw new Error(body.error?.message || 'Could not load sender settings');
-          const cfg = {
+        const cfg = {
           ...(body.data?.payload ?? {}),
           ...(body.data ?? {})
         };
