@@ -368,10 +368,7 @@
         const body = await res.json();
         if (!res.ok || body.status !== 'success')
           throw new Error(body.error?.message || 'Could not load Mesh settings');
-        const actionData = {
-          ...(body.data?.payload ?? {}),
-          ...(body.data ?? {})
-        };
+        const actionData = body.data ?? {};
         meshConfig = {
           ...meshConfig,
           has_pairing_token: !!actionData.has_pairing_token,
@@ -402,10 +399,7 @@ async function saveMeshSettings() {
 
     const body = await res.json();
 
-    const actionData = {
-      ...(body.data?.payload ?? {}),
-      ...(body.data ?? {})
-    };
+    const actionData = body.data ?? {};
     if (
       !res.ok ||
       body.status !== 'success' ||
@@ -611,10 +605,7 @@ async function saveMeshSettings() {
         const res = await fetch(`/api/v2/plugins/mesh/action?token=${encodeURIComponent(token)}`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'get_fleet',args:{}})});
         const data = await res.json();
         if (!res.ok) throw new Error(data.error?.message || 'Fleet refresh failed');
-        const actionData = {
-          ...(data.data?.payload ?? {}),
-          ...(data.data ?? {})
-        };
+        const actionData = data.data ?? {};
         const nodes = actionData.nodes || [];
         if (Array.isArray(nodes)) { fleetNodes = nodes; renderFleet(); }
       } catch (err) {
@@ -655,10 +646,7 @@ async function submitPairNode() {
 
     const body = await res.json();
 
-    const actionData = {
-      ...(body.data?.payload ?? {}),
-      ...(body.data ?? {})
-    };
+    const actionData = body.data ?? {};
     if (!res.ok) {
       throw new Error(
         body.error?.message ||
@@ -704,10 +692,7 @@ async function pingNode(id) {
     });
 
     const body = await res.json();
-    const actionData = {
-      ...(body.data?.payload ?? {}),
-      ...(body.data ?? {})
-    };
+    const actionData = body.data ?? {};
     if (
       !res.ok ||
       body.status !== 'success' ||
@@ -755,10 +740,7 @@ async function forgetNode(id) {
     });
 
     const body = await res.json();
-    const actionData = {
-      ...(body.data?.payload ?? {}),
-      ...(body.data ?? {})
-    };
+    const actionData = body.data ?? {};
     if (
       !res.ok ||
       body.status !== 'success' ||
@@ -802,10 +784,7 @@ async function scanNetwork() {
     });
 
     const body = await res.json();
-    const actionData = {
-      ...(body.data?.payload ?? {}),
-      ...(body.data ?? {})
-    };
+    const actionData = body.data ?? {};
     if (
       !res.ok ||
       body.status !== 'success' ||
