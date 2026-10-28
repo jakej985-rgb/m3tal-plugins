@@ -561,7 +561,7 @@ func handleAction(req *RPCRequest) {
 		sendResponse(req.ID, map[string]interface{}{"success": true, "nodes": getAllNodes()})
 	case "get_settings":
 		cfg := loadMeshConfig()
-			sendResponse(req.ID, map[string]interface{}{"status": "success", "data": map[string]any{"has_pairing_token": cfg.PairingToken != "", "listen_port": cfg.ListenPort}})
+		sendResponse(req.ID, map[string]interface{}{"success": true, "data": map[string]any{"has_pairing_token": cfg.PairingToken != "", "listen_port": cfg.ListenPort}})
 
 	default:
 		sendError(req.ID, -32601, "Unknown action", fmt.Sprintf("Unsupported action_id: %s", action))
