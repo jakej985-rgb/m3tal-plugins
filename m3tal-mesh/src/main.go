@@ -14,14 +14,13 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"time"
 	"unsafe"
 )
 
 const (
 	CanonicalProcessName = "m3tal-mesh"
 	PluginName           = "mesh"
-	PluginVersion        = "0.1.1"
+	PluginVersion        = "0.1.4"
 )
 
 // RPCRequest represents standard JSON-RPC 2.0 request.
@@ -54,6 +53,7 @@ type MeshNode struct {
 	IP             string  `json:"ip"`
 	Role           string  `json:"role"`   // "workstation", "server", "nas", "edge"
 	Status         string  `json:"status"` // "online", "warning", "offline"
+	Fingerprint    string  `json:"fingerprint,omitempty"`
 	Cores          int     `json:"cores"`
 	CPULoad        float64 `json:"cpu_load"`
 	RAMUsedGB      float64 `json:"ram_used_gb"`
@@ -73,6 +73,7 @@ type MeshNode struct {
 var (
 	nodeMutex   sync.RWMutex
 	remoteNodes = make([]MeshNode, 0)
+	refreshMu   sync.Mutex
 )
 
 func setProcessName(name string) {
@@ -202,6 +203,12 @@ func getLocalNode() MeshNode {
 }
 
 func getAllNodes() []MeshNode {
+	if refreshMu.TryLock() {
+		go func() {
+			defer refreshMu.Unlock()
+			refreshRemotePeers()
+		}()
+	}
 	nodeMutex.RLock()
 	defer nodeMutex.RUnlock()
 
@@ -213,6 +220,7 @@ func getAllNodes() []MeshNode {
 
 func main() {
 	setProcessName(CanonicalProcessName)
+	remoteNodes = loadPeers()
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -295,6 +303,9 @@ func handleInit(req *RPCRequest) {
 				"description": "Broadcast mDNS/beacon to discover local M3TAL instances on LAN",
 				"confirm":     false,
 			},
+			{"id": "get_settings", "label": "Get Mesh Settings", "description": "Read local Mesh pairing configuration", "confirm": false},
+			{"id": "set_settings", "label": "Save Mesh Settings", "description": "Save local Mesh pairing configuration", "confirm": false},
+			{"id": "get_fleet", "label": "Refresh Mesh Fleet", "description": "Fetch current local and remote node telemetry for Mesh Fleet", "confirm": false},
 		},
 	}
 	sendResponse(req.ID, result)
@@ -424,6 +435,7 @@ func handleAction(req *RPCRequest) {
 	ip := raw.IP
 	role := raw.Role
 	nodeID := raw.NodeID
+	pairToken := raw.Token
 
 	if raw.Args != nil {
 		if v, ok := raw.Args["name"].(string); ok && name == "" {
@@ -438,6 +450,9 @@ func handleAction(req *RPCRequest) {
 		if v, ok := raw.Args["node_id"].(string); ok && nodeID == "" {
 			nodeID = v
 		}
+		if v, ok := raw.Args["token"].(string); ok && pairToken == "" {
+			pairToken = v
+		}
 	}
 	if raw.Target != "" && nodeID == "" {
 		nodeID = raw.Target
@@ -449,39 +464,14 @@ func handleAction(req *RPCRequest) {
 			sendError(req.ID, -32602, "Invalid params", "Node IP address is required")
 			return
 		}
-
-		if name == "" {
-			name = fmt.Sprintf("Node (%s)", ip)
+		newNode, err := pairAndPersistPeer(ip, name, role, pairToken)
+		if err != nil {
+			sendError(req.ID, -32002, "Node pairing failed", err.Error())
+			return
 		}
-		if role == "" {
-			role = "server"
-		}
-
-		newNode := MeshNode{
-			ID:             fmt.Sprintf("node-%d", time.Now().Unix()),
-			Name:           name,
-			IP:             ip,
-			Role:           role,
-			Status:         "online",
-			Cores:          4,
-			CPULoad:        0.0,
-			RAMUsedGB:      0.0,
-			RAMTotalGB:     16.0,
-			StorageUsedGB:  0.0,
-			StorageTotalGB: 512.0,
-			StoragePool:    "Remote Storage",
-			PingMs:         1,
-			LastSeen:       "just now",
-			IsLocal:        false,
-		}
-
-		nodeMutex.Lock()
-		remoteNodes = append(remoteNodes, newNode)
-		nodeMutex.Unlock()
-
 		sendResponse(req.ID, map[string]interface{}{
 			"success": true,
-			"message": fmt.Sprintf("Successfully paired node %s (%s)", name, ip),
+			"message": fmt.Sprintf("Paired and verified %s (%s)", newNode.Name, newNode.IP),
 			"node":    newNode,
 		})
 
@@ -495,21 +485,11 @@ func handleAction(req *RPCRequest) {
 			return
 		}
 
-		nodeMutex.Lock()
-		found := false
-		newRemotes := make([]MeshNode, 0, len(remoteNodes))
-		for _, n := range remoteNodes {
-			if n.ID == nodeID {
-				found = true
-				continue
-			}
-			newRemotes = append(newRemotes, n)
+		found, err := persistPeerRemoval(nodeID)
+		if err != nil {
+			sendError(req.ID, -32003, "Could not save fleet changes", err.Error())
+			return
 		}
-		if found {
-			remoteNodes = newRemotes
-		}
-		nodeMutex.Unlock()
-
 		if !found {
 			sendError(req.ID, -32602, "Not found", fmt.Sprintf("Node %s not found", nodeID))
 			return
@@ -531,28 +511,82 @@ func handleAction(req *RPCRequest) {
 			return
 		}
 
-		nodeMutex.Lock()
-		defer nodeMutex.Unlock()
-		for i := range remoteNodes {
-			if remoteNodes[i].ID == nodeID {
-				remoteNodes[i].LastSeen = "just now"
-				remoteNodes[i].PingMs = 1
-				sendResponse(req.ID, map[string]interface{}{
-					"success": true,
-					"node_id": nodeID,
-					"ping_ms": 1,
-					"status":  remoteNodes[i].Status,
-				})
-				return
+		var target *MeshNode
+		for _, peer := range snapshotPeers() {
+			if peer.ID == nodeID {
+				copy := peer
+				target = &copy
+				break
 			}
 		}
-		sendError(req.ID, -32602, "Not found", fmt.Sprintf("Node %s not found", nodeID))
+		if target == nil {
+			sendError(req.ID, -32602, "Not found", fmt.Sprintf("Node %s not found", nodeID))
+			return
+		}
+		cfg := loadMeshConfig()
+		updated, err := fetchRemote(target.IP, cfg.PairingToken, cfg.ListenPort, target.Fingerprint)
+		if err != nil {
+			sendError(req.ID, -32004, "Node ping failed", err.Error())
+			return
+		}
+		updated.ID, updated.Name, updated.Role = target.ID, target.Name, target.Role
+		if err := persistPeerUpsert(updated); err != nil {
+			sendError(req.ID, -32005, "Could not save node status", err.Error())
+			return
+		}
+		sendResponse(req.ID, map[string]interface{}{
+			"success": true,
+			"node_id": nodeID,
+			"ping_ms": updated.PingMs,
+			"status":  updated.Status,
+		})
 
 	case "scan_network":
+		if loadMeshConfig().PairingToken == "" {
+			sendResponse(req.ID, map[string]interface{}{
+				"success":    true,
+				"discovered": 0,
+				"nodes":      []MeshNode{},
+				"message":    "Set the shared pairing token in Mesh Settings to verify discovered nodes.",
+			})
+			return
+		}
+		discovered, err := discoverAndVerifyPeers()
+		if err != nil {
+			sendError(req.ID, -32001, "LAN scan failed", err.Error())
+			return
+		}
 		sendResponse(req.ID, map[string]interface{}{
 			"success":    true,
-			"discovered": 0,
-			"message":    "Local subnet scan complete. No new unauthenticated beacons detected.",
+			"discovered": len(discovered),
+			"nodes":      discovered,
+		})
+	case "set_settings":
+		cfg := loadMeshConfig()
+		if value, ok := raw.Args["pairing_token"].(string); ok {
+			if value = strings.TrimSpace(value); value != "" {
+				cfg.PairingToken = value
+			}
+		}
+		if value, ok := raw.Args["listen_port"].(float64); ok {
+			cfg.ListenPort = int(value)
+		}
+		if err := saveMeshConfig(cfg); err != nil {
+			sendError(req.ID, -32010, "Settings save failed", err.Error())
+			return
+		}
+		sendResponse(req.ID, map[string]interface{}{"success": true, "message": "Mesh settings saved"})
+	case "get_fleet":
+		sendResponse(req.ID, map[string]interface{}{
+			"success": true,
+			"nodes":   getAllNodes(),
+		})
+	case "get_settings":
+		cfg := loadMeshConfig()
+		sendResponse(req.ID, map[string]interface{}{
+			"success":           true,
+			"has_pairing_token": cfg.PairingToken != "",
+			"listen_port":       cfg.ListenPort,
 		})
 
 	default:

@@ -17,6 +17,15 @@
       "type": "integer",
       "default": 10,
       "description": "Seconds before marking a non-responding peer as offline."
+    },
+    "pairing_token": {
+      "type": "string",
+      "description": "Shared secret used to authenticate remote mesh nodes."
+    },
+    "listen_port": {
+      "type": "integer",
+      "default": 9321,
+      "description": "Default telemetry port for remote mesh nodes."
     }
   },
   "additionalProperties": false

@@ -2,7 +2,7 @@ apiVersion: m3tal.io/v1alpha1
 kind: Plugin
 metadata:
   name: mesh-node
-  version: "0.1.1"
+  version: "0.1.4"
   title: "Mesh Node (Telemetry Sender)"
   description: "Headless M3TAL telemetry broadcaster and node metrics daemon for personal cloud clustering"
   author: "jakej985-rgb"
@@ -19,6 +19,18 @@ spec:
   capabilities:
     - collector
     - actions
+    - ui_view
+
+  ui:
+    entry: "ui/dist/index.html"
+    route: "/mesh-node"
+    category: "fleet"
+    category_title: "Mesh Fleet"
+    tab_id: "mesh_node_settings"
+    title: "Mesh Node Settings"
+    sidebar: true
+    order: 31
+    roles: ["admin"]
 
   rpc:
     protocol: "jsonrpc-2.0"

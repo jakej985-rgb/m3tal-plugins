@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.4] - 2026-10-28
+
+### Fixed
+- Version bump to align with m3tal-mesh cluster metapackage
+
+## [0.1.3] - 2026-10-28
+
+### Fixed
+- Add client-issued nonce to pairing protocol to prevent replay attacks
+- Implement per-client rate limiting on challenge requests (16 per client IP)
+- Configure HTTP server with proper timeouts and connection limits
+
+## [0.1.2] - 2026-10-27
+
+### Added
+- Authenticated HTTP telemetry endpoint and mDNS service advertisement for remote Mesh Fleet pairing.
+- Plugin-provided Mesh Node Settings view for pairing token, port, and LAN discovery configuration.
+
 ## [0.1.1] - 2026-10-27
 
 ### Fixed

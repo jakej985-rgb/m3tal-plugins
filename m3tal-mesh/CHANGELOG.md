@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.4] - 2026-10-28
+### Fixed
+- Convert LAN discovery to concurrent verification to prevent slow peers from blocking discovery
+
+## [0.1.3] - 2026-10-28
+### Fixed
+- Add client-issued nonce to pairing protocol to prevent replay attacks
+- Implement per-client rate limiting on challenge requests (16 per client IP)
+- Fix concurrent re-pair metadata preservation during peer refresh
+- Configure HTTP client with connection pooling and proper timeouts
+
+## [0.1.2] - 2026-10-27
+### Added
+- Mesh Fleet includes its own pairing settings view and stores its token and paired peers with owner-only file permissions.
+- Remote pairing verifies the node and token, refreshes live telemetry, supports mDNS discovery, and persists fleet changes.
+
 ## [0.1.1] - 2026-10-26
 
 ### 🚀 Removed Dummy Mock Nodes & Real Hardware Telemetry

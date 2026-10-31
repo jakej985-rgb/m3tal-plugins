@@ -266,6 +266,9 @@
     </div>
 
     <div class="header-actions">
+      <button id="fleet-tab" class="btn btn-primary" onclick="showMeshView('fleet')">Fleet</button>
+      <button id="settings-tab" class="btn" onclick="showMeshView('settings')">Settings</button>
+      <span id="fleet-actions" style="display:flex;gap:8px">
       <button class="btn btn-cyan" onclick="scanNetwork()">
         <span>📡</span>
         <span>Scan LAN</span>
@@ -274,6 +277,7 @@
         <span>➕</span>
         <span>Pair Node</span>
       </button>
+      </span>
     </div>
   </header>
 
@@ -282,6 +286,13 @@
     <div class="nodes-grid" id="nodes-grid">
       <!-- Node cards dynamically populated here -->
     </div>
+    <section id="mesh-settings" style="display:none;max-width:760px;width:100%;margin:0 auto;background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:24px">
+      <h2 style="color:#fff;margin-bottom:8px">Mesh Pairing Settings</h2>
+      <p style="font-size:.85rem;color:var(--text-muted);line-height:1.5">Set the shared secret used to authenticate remote <code>m3tal-mesh-node</code> senders. Configure the same token in the sender’s own <b>Mesh Node Settings</b> tab.</p>
+      <div class="form-group" style="margin-top:22px"><label class="form-label" for="mesh-pairing-token">Pairing Token</label><input id="mesh-pairing-token" class="form-input" type="password" autocomplete="new-password" placeholder="Enter a shared secret"></div>
+      <div class="form-group"><label class="form-label" for="mesh-node-port">Default Node Port</label><input id="mesh-node-port" class="form-input" type="number" min="1" max="65535" value="9321"></div>
+      <div style="display:flex;align-items:center;gap:12px;margin-top:18px"><button class="btn btn-primary" onclick="saveMeshSettings()">Save Mesh Settings</button><span id="mesh-settings-status" style="font-size:.8rem;color:var(--text-muted)"></span></div>
+    </section>
   </main>
 
   <!-- Pair Node Modal -->
@@ -313,9 +324,11 @@
       </div>
 
       <div class="form-group">
-        <label class="form-label">Pairing Token / Secret (Optional)</label>
-        <input class="form-input" id="input-token" type="password" placeholder="m3tal_mesh_node_token" />
+        <label class="form-label">Pairing Token</label>
+        <input class="form-input" id="input-token" type="password" placeholder="Use the token saved in Mesh Settings" />
+        <small style="color:var(--text-muted)">Must match the token configured on the remote sender.</small>
       </div>
+      <div id="discovery-results" style="font-size:.8rem;color:var(--text-muted)"></div>
 
       <div class="modal-actions">
         <button class="btn" onclick="closePairModal()">Cancel</button>
@@ -336,6 +349,93 @@
 
     // Strictly real fleet nodes loaded dynamically from backend. NO dummy mock servers.
     let fleetNodes = [];
+    let meshConfig = { pairing_token: '', listen_port: 9321 };
+
+    function showMeshView(view) {
+      const settings = view === 'settings';
+      document.getElementById('nodes-grid').style.display = settings ? 'none' : 'grid';
+      document.getElementById('mesh-settings').style.display = settings ? 'block' : 'none';
+      document.getElementById('fleet-actions').style.display = settings ? 'none' : 'flex';
+      document.getElementById('fleet-tab').className = `btn ${settings ? '' : 'btn-primary'}`;
+      document.getElementById('settings-tab').className = `btn ${settings ? 'btn-primary' : ''}`;
+      if (settings) loadMeshSettings();
+    }
+
+    async function loadMeshSettings() {
+      const status = document.getElementById('mesh-settings-status');
+      try {
+        const res = await fetch(`/api/v2/plugins/mesh/action?token=${encodeURIComponent(token)}`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'get_settings',args:{}})});
+        const body = await res.json();
+        if (!res.ok || body.status !== 'success')
+          throw new Error(body.error?.message || 'Could not load Mesh settings');
+        const actionData = {
+          ...(body.data?.payload ?? {}),
+          ...(body.data ?? {})
+        };
+        meshConfig = {
+          ...meshConfig,
+          has_pairing_token: !!actionData.has_pairing_token,
+          listen_port: Number(actionData.listen_port || meshConfig.listen_port || 9321)
+        };
+
+        document.getElementById('mesh-pairing-token').value = '';
+        document.getElementById('mesh-pairing-token').placeholder = meshConfig.has_pairing_token ? 'Configured — leave blank to keep current' : 'Create a shared pairing token';
+        document.getElementById('mesh-node-port').value = meshConfig.listen_port;
+        status.textContent = '';
+      } catch (err) { status.textContent = err.message; }
+    }
+
+    async function saveMeshSettings() {
+      const status = document.getElementById('mesh-settings-status');
+      const cfg = {
+        pairing_token: document.getElementById('mesh-pairing-token').value.trim(),
+        listen_port: Number(document.getElementById('mesh-node-port').value) || 9321,
+      };
+
+      try {
+        const res = await fetch(`/api/v2/plugins/mesh/action?token=${encodeURIComponent(token)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'set_settings', args: cfg })
+        });
+
+        const body = await res.json();
+
+        const actionData = {
+          ...(body.data?.payload ?? {}),
+          ...(body.data ?? {})
+        };
+        if (
+          !res.ok ||
+          body.status !== 'success' ||
+          actionData.success === false
+        ) {
+          throw new Error(
+            body.error?.message ||
+            actionData.error ||
+            'Could not save Mesh settings'
+          );
+        }
+
+        meshConfig = {
+          has_pairing_token: !!cfg.pairing_token || meshConfig.has_pairing_token,
+          listen_port: cfg.listen_port
+        };
+
+        document.getElementById('mesh-pairing-token').value = '';
+        document.getElementById('mesh-pairing-token').placeholder =
+          meshConfig.has_pairing_token
+            ? 'Configured — leave blank to keep current'
+            : 'Create a shared pairing token';
+
+        status.textContent = 'Saved. Use the same token in Mesh Node Settings on each sender.';
+        status.style.color = 'var(--emerald)';
+
+      } catch (err) {
+        status.textContent = err.message;
+        status.style.color = 'var(--rose)';
+      }
+    }
 
     function showToast(msg, isError = false) {
       const toast = document.getElementById('toast');
@@ -507,21 +607,23 @@
 
     async function fetchCollect() {
       try {
-        const res = await fetch(`/api/v2/plugins/mesh/collect?token=${token}`);
-        if (res.ok) {
-          const data = await res.json();
-          const nodes = data?.result?.nodes || data?.nodes;
-          if (Array.isArray(nodes)) {
-            fleetNodes = nodes;
-            renderFleet();
-          }
-        }
+        const res = await fetch(`/api/v2/plugins/mesh/action?token=${encodeURIComponent(token)}`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'get_fleet',args:{}})});
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error?.message || 'Fleet refresh failed');
+        const actionData = {
+          ...(data.data?.payload ?? {}),
+          ...(data.data ?? {})
+        };
+        const nodes = actionData.nodes || [];
+        if (Array.isArray(nodes)) { fleetNodes = nodes; renderFleet(); }
       } catch (err) {
         console.warn('Collect request failed:', err);
       }
     }
 
     function openPairModal() {
+      document.getElementById('input-token').value = '';
+      document.getElementById('input-token').placeholder = meshConfig.has_pairing_token ? 'Leave blank to use saved shared token' : 'Set a token in Mesh Settings first';
       document.getElementById('pair-modal').style.display = 'flex';
     }
 
@@ -541,48 +643,54 @@
       }
 
       try {
-        const res = await fetch(`/api/v2/plugins/mesh/action?token=${token}`, {
+        const res = await fetch(`/api/v2/plugins/mesh/action?token=${encodeURIComponent(token)}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             action: 'pair_node',
-            action_id: 'pair_node',
-            args: {
-              name: name || `Node (${ip})`,
-              ip: ip,
-              role: role,
-              token: pairToken
-            },
-            name: name || `Node (${ip})`,
-            ip: ip,
-            role: role,
-            token: pairToken
+            args: { name, ip, role, token: pairToken }
           })
         });
 
-        if (res.ok) {
-          const data = await res.json();
-          const node = data?.result?.node || data?.node;
-          if (node) {
-            fleetNodes.push(node);
-            renderFleet();
-            showToast(`Paired ${node.name}`);
-            closePairModal();
-            return;
-          }
-        }
-      } catch (e) {
-        console.error('Pair action error:', e);
-      }
+        const body = await res.json();
 
-      showToast(`Pair request sent to ${ip}`);
-      closePairModal();
-      fetchCollect();
+        const actionData = {
+          ...(body.data?.payload ?? {}),
+          ...(body.data ?? {})
+        };
+        if (!res.ok) {
+          throw new Error(
+            body.error?.message ||
+            actionData.error ||
+            'Pairing request failed'
+          );
+        }
+
+        if (
+          body.status !== 'success' ||
+          actionData.success === false
+        ) {
+          throw new Error(
+            body.error?.message ||
+            actionData.error ||
+            actionData.message ||
+            'Pairing request failed'
+          );
+        }
+
+        showToast(actionData.message || `Paired ${ip}`);
+        closePairModal();
+        await loadMeshSettings();
+        await fetchCollect();
+
+      } catch (e) {
+        showToast(e.message || `Could not pair ${ip}`, true);
+      }
     }
 
     async function pingNode(id) {
       try {
-        await fetch(`/api/v2/plugins/mesh/action?token=${token}`, {
+        const res = await fetch(`/api/v2/plugins/mesh/action?token=${encodeURIComponent(token)}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -593,14 +701,43 @@
             node_id: id
           })
         });
-      } catch {}
-      showToast(`Pinged node (0 ms)`);
+
+        const body = await res.json();
+        const actionData = {
+          ...(body.data?.payload ?? {}),
+          ...(body.data ?? {})
+        };
+        if (
+          !res.ok ||
+          body.status !== 'success' ||
+          actionData.success === false
+        ) {
+          throw new Error(
+            body.error?.message ||
+            actionData.error ||
+            actionData.message ||
+            'Ping failed'
+          );
+        }
+
+        showToast(
+          actionData.message ||
+          `Node responded in ${actionData.ping_ms ?? 0} ms`
+        );
+
+        await fetchCollect();
+      } catch (err) {
+        showToast('Node did not respond. Check its connection and pairing token.', true);
+      }
     }
 
     async function forgetNode(id) {
-      if (!confirm(`Are you sure you want to forget and disconnect node ${id}?`)) return;
+      if (!confirm(`Are you sure you want to forget and disconnect node ${id}?`)) {
+        return;
+      }
+
       try {
-        await fetch(`/api/v2/plugins/mesh/action?token=${token}`, {
+        const res = await fetch(`/api/v2/plugins/mesh/action?token=${encodeURIComponent(token)}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -611,20 +748,127 @@
             node_id: id
           })
         });
-      } catch {}
-      fleetNodes = fleetNodes.filter((n) => n.id !== id);
-      renderFleet();
-      showToast(`Node removed`);
+
+        const body = await res.json();
+        const actionData = {
+          ...(body.data?.payload ?? {}),
+          ...(body.data ?? {})
+        };
+        if (
+          !res.ok ||
+          body.status !== 'success' ||
+          actionData.success === false
+        ) {
+          throw new Error(
+            body.error?.message ||
+            actionData.error ||
+            actionData.message ||
+            'Could not remove node'
+          );
+        }
+
+        await fetchCollect();
+        showToast(actionData.message || 'Node removed');
+      } catch (err) {
+        showToast('Could not remove node. Try again.', true);
+      }
     }
 
-    function scanNetwork() {
-      showToast("Scanning local subnet via mDNS...");
-      setTimeout(() => {
-        showToast("Subnet scan complete. No new beacons found.");
-      }, 1500);
+    async function scanNetwork() {
+      if (!meshConfig.has_pairing_token) {
+        showMeshView('settings');
+        document.getElementById('mesh-settings-status').textContent =
+          'Set a pairing token before scanning.';
+        document.getElementById('mesh-settings-status').style.color = 'var(--amber)';
+        return;
+      }
+
+      showToast('Searching for M3TAL mesh nodes via mDNS…');
+
+      try {
+        const res = await fetch(`/api/v2/plugins/mesh/action?token=${encodeURIComponent(token)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'scan_network',
+            args: {}
+          })
+        });
+
+        const body = await res.json();
+        const actionData = {
+          ...(body.data?.payload ?? {}),
+          ...(body.data ?? {})
+        };
+        if (
+          !res.ok ||
+          body.status !== 'success' ||
+          actionData.success === false
+        ) {
+          throw new Error(
+            body.error?.message ||
+            actionData.error ||
+            actionData.message ||
+            'LAN scan failed'
+          );
+        }
+
+        const candidates = Array.isArray(actionData.nodes)
+          ? actionData.nodes
+          : [];
+
+        openPairModal();
+
+        const results = document.getElementById('discovery-results');
+
+        if (!candidates.length) {
+          results.textContent =
+            'No unpaired M3TAL mesh nodes were found. You can still enter an IP address or hostname above.';
+        } else {
+          results.replaceChildren();
+
+          const heading = document.createElement('div');
+          heading.textContent =
+            `Found ${candidates.length} node(s). Choose one to pair:`;
+          heading.style.cssText =
+            'font-weight:700;color:#fff;margin:4px 0 8px';
+          results.appendChild(heading);
+
+          candidates.forEach((node) => {
+            const row = document.createElement('div');
+            row.style.cssText =
+              'display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--border)';
+
+            const label = document.createElement('span');
+            label.textContent = `${node.name} — ${node.ip}`;
+
+            const pairButton = document.createElement('button');
+            pairButton.className = 'btn btn-primary';
+            pairButton.textContent = 'Pair';
+            pairButton.addEventListener(
+              'click',
+              () => pairDiscoveredNode(node.ip, node.name)
+            );
+
+            row.append(label, pairButton);
+            results.appendChild(row);
+          });
+        }
+
+        showToast(`Found ${candidates.length} authenticated sender(s).`);
+      } catch (err) {
+        showToast(err.message || 'LAN scan failed', true);
+      }
+    }
+
+    async function pairDiscoveredNode(ip, name) {
+      document.getElementById('input-ip').value = ip;
+      document.getElementById('input-name').value = name;
+      await submitPairNode();
     }
 
     renderFleet();
+    loadMeshSettings();
     fetchCollect();
     setInterval(fetchCollect, 5000);
   </script>
