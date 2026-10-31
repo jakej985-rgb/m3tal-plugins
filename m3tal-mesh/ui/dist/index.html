@@ -368,11 +368,11 @@
         const body = await res.json();
         if (!res.ok || body.status !== 'success')
           throw new Error(body.error?.message || 'Could not load Mesh settings');
-        const payload = body.data?.payload ?? {};
+        const actionData = body.data ?? {};
         meshConfig = {
           ...meshConfig,
-          has_pairing_token: !!payload.has_pairing_token,
-          listen_port: Number(payload.listen_port || meshConfig.listen_port || 9321)
+          has_pairing_token: !!actionData.has_pairing_token,
+          listen_port: Number(actionData.listen_port || meshConfig.listen_port || 9321)
         };
 
         document.getElementById('mesh-pairing-token').value = '';
@@ -604,8 +604,8 @@
         const res = await fetch(`/api/v2/plugins/mesh/action?token=${encodeURIComponent(token)}`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'get_fleet',args:{}})});
         const data = await res.json();
         if (!res.ok) throw new Error(data.error?.message || 'Fleet refresh failed');
-        const payload = data.data?.payload ?? {};
-        const nodes = payload.nodes || [];
+        const actionData = data.data ?? {};
+        const nodes = actionData.nodes || [];
         if (Array.isArray(nodes)) { fleetNodes = nodes; renderFleet(); }
       } catch (err) {
         console.warn('Collect request failed:', err);
@@ -691,7 +691,6 @@
 
         const body = await res.json();
         const actionData = body.data ?? {};
-        const payload = actionData.payload ?? {};
         if (
           !res.ok ||
           body.status !== 'success' ||
@@ -707,7 +706,7 @@
 
         showToast(
           actionData.message ||
-          `Node responded in ${payload.ping_ms ?? 0} ms`
+          `Node responded in ${actionData.ping_ms ?? 0} ms`
         );
 
         await fetchCollect();
@@ -779,7 +778,6 @@
 
         const body = await res.json();
         const actionData = body.data ?? {};
-        const payload = actionData.payload ?? {};
         if (
           !res.ok ||
           body.status !== 'success' ||
@@ -793,8 +791,8 @@
           );
         }
 
-        const candidates = Array.isArray(payload.nodes)
-          ? payload.nodes
+        const candidates = Array.isArray(actionData.nodes)
+          ? actionData.nodes
           : [];
 
         openPairModal();

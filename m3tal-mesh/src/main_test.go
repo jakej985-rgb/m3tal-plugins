@@ -155,10 +155,75 @@ func TestGetFleetReturnsFlat(t *testing.T) {
 	if result["success"] != true {
 		t.Fatalf("expected success=true, got %v", result["success"])
 	}
-	if _, ok := result["nodes"].([]interface{}); !ok {
+	nodes, ok := result["nodes"].([]interface{})
+	if !ok {
 		t.Fatalf("expected nodes array, got %v", result["nodes"])
+	}
+	if len(nodes) == 0 {
+		t.Fatalf("expected at least local node in fleet, got 0 nodes")
+	}
+	firstNode, ok := nodes[0].(map[string]interface{})
+	if !ok || firstNode["id"] != "node-local" {
+		t.Fatalf("expected first node to be node-local, got %v", nodes[0])
+	}
+	if firstNode["status"] != "online" {
+		t.Fatalf("expected node-local status to be online, got %v", firstNode["status"])
 	}
 	if _, hasPayload := result["payload"]; hasPayload {
 		t.Fatal("get_fleet must not double-wrap fields under \"payload\"")
 	}
 }
+
+func TestPingNodeReturnsFlat(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	resp := runActionForTest(t, 1, `{"action":"ping_node","args":{"node_id":"node-local"}}`)
+	if resp.Error != nil {
+		t.Fatalf("ping_node failed: %s", resp.Error.Message)
+	}
+	encoded, _ := json.Marshal(resp.Result)
+	var result map[string]interface{}
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		t.Fatalf("decode result: %v", err)
+	}
+	if result["success"] != true {
+		t.Fatalf("expected success=true, got %v", result["success"])
+	}
+	if result["node_id"] != "node-local" {
+		t.Fatalf("expected node_id=node-local, got %v", result["node_id"])
+	}
+	if pingMs, ok := result["ping_ms"].(float64); !ok || pingMs != 0 {
+		t.Fatalf("expected ping_ms=0, got %v", result["ping_ms"])
+	}
+	if _, hasPayload := result["payload"]; hasPayload {
+		t.Fatal("ping_node must not double-wrap fields under \"payload\"")
+	}
+}
+
+func TestScanNetworkEmptyTokenReturnsFlat(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := saveMeshConfig(meshConfig{PairingToken: "", ListenPort: 9321}); err != nil {
+		t.Fatal(err)
+	}
+	resp := runActionForTest(t, 1, `{"action":"scan_network","args":{}}`)
+	if resp.Error != nil {
+		t.Fatalf("scan_network failed: %s", resp.Error.Message)
+	}
+	encoded, _ := json.Marshal(resp.Result)
+	var result map[string]interface{}
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		t.Fatalf("decode result: %v", err)
+	}
+	if result["success"] != true {
+		t.Fatalf("expected success=true, got %v", result["success"])
+	}
+	if _, ok := result["nodes"].([]interface{}); !ok {
+		t.Fatalf("expected nodes array, got %v", result["nodes"])
+	}
+	if msg, ok := result["message"].(string); !ok || msg == "" {
+		t.Fatalf("expected prompt message, got %v", result["message"])
+	}
+	if _, hasPayload := result["payload"]; hasPayload {
+		t.Fatal("scan_network must not double-wrap fields under \"payload\"")
+	}
+}
+
