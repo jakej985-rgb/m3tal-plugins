@@ -299,16 +299,18 @@ func handleAction(req *RPCRequest) {
 		})
 	case "set_settings":
 		cfg := loadNodeRuntimeConfig()
-		if value, ok := params.Args["pairing_token"].(string); ok {
-			cfg.PairingToken = strings.TrimSpace(value)
+		if clear, ok := params.Args["clear_pairing_token"].(bool); ok && clear {
+			cfg.PairingToken = ""
+		} else if value, ok := params.Args["pairing_token"].(string); ok {
+			if trimmed := strings.TrimSpace(value); trimmed != "" {
+				cfg.PairingToken = trimmed
+			}
 		}
 		if value, ok := params.Args["require_pairing_token"].(bool); ok {
 			cfg.RequirePairingToken = &value
 		}
 		if value, ok := params.Args["listen_port"].(float64); ok {
 			cfg.ListenPort = int(value)
-		} else if value, ok := params.Args["listen_port"].(int); ok {
-			cfg.ListenPort = value
 		}
 		if value, ok := params.Args["broadcast_mdns"].(bool); ok {
 			cfg.BroadcastMDNS = value
@@ -317,7 +319,14 @@ func handleAction(req *RPCRequest) {
 			sendError(req.ID, -32010, "Settings save failed", err.Error())
 			return
 		}
-		sendResponse(req.ID, map[string]interface{}{"success": true, "message": "Settings saved. Restart the plugin if you changed its port or LAN discovery setting."})
+		sendResponse(req.ID, map[string]interface{}{
+			"success":               true,
+			"message":               "Settings saved. Restart the plugin if you changed its port or LAN discovery setting.",
+			"has_pairing_token":     cfg.PairingToken != "",
+			"require_pairing_token": cfg.IsPairingTokenRequired(),
+			"listen_port":           cfg.ListenPort,
+			"broadcast_mdns":        cfg.BroadcastMDNS,
+		})
 	case "get_settings":
 		cfg := loadNodeRuntimeConfig()
 		sendResponse(req.ID, map[string]interface{}{

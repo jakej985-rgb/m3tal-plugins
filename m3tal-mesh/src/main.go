@@ -543,6 +543,15 @@ func handleAction(req *RPCRequest) {
 
 	case "scan_network":
 		cfg := loadMeshConfig()
+		if !cfg.IsDiscoveryEnabled() {
+			sendResponse(req.ID, map[string]interface{}{
+				"success":    true,
+				"discovered": 0,
+				"nodes":      []MeshNode{},
+				"message":    "LAN discovery via mDNS is disabled in Mesh Settings.",
+			})
+			return
+		}
 		if cfg.IsPairingTokenRequired() && cfg.PairingToken == "" {
 			sendResponse(req.ID, map[string]interface{}{
 				"success":    true,
@@ -564,22 +573,34 @@ func handleAction(req *RPCRequest) {
 		})
 	case "set_settings":
 		cfg := loadMeshConfig()
-		if value, ok := raw.Args["pairing_token"].(string); ok {
-			cfg.PairingToken = strings.TrimSpace(value)
+		if clear, ok := raw.Args["clear_pairing_token"].(bool); ok && clear {
+			cfg.PairingToken = ""
+		} else if value, ok := raw.Args["pairing_token"].(string); ok {
+			if trimmed := strings.TrimSpace(value); trimmed != "" {
+				cfg.PairingToken = trimmed
+			}
 		}
 		if value, ok := raw.Args["require_pairing_token"].(bool); ok {
 			cfg.RequirePairingToken = &value
 		}
+		if value, ok := raw.Args["discovery_enabled"].(bool); ok {
+			cfg.DiscoveryEnabled = &value
+		}
 		if value, ok := raw.Args["listen_port"].(float64); ok {
 			cfg.ListenPort = int(value)
-		} else if value, ok := raw.Args["listen_port"].(int); ok {
-			cfg.ListenPort = value
 		}
 		if err := saveMeshConfig(cfg); err != nil {
 			sendError(req.ID, -32010, "Settings save failed", err.Error())
 			return
 		}
-		sendResponse(req.ID, map[string]interface{}{"success": true, "message": "Mesh settings saved"})
+		sendResponse(req.ID, map[string]interface{}{
+			"success":               true,
+			"message":               "Mesh settings saved",
+			"has_pairing_token":     cfg.PairingToken != "",
+			"require_pairing_token": cfg.IsPairingTokenRequired(),
+			"discovery_enabled":     cfg.IsDiscoveryEnabled(),
+			"listen_port":           cfg.ListenPort,
+		})
 	case "get_fleet":
 		sendResponse(req.ID, map[string]interface{}{
 			"success": true,
@@ -591,6 +612,7 @@ func handleAction(req *RPCRequest) {
 			"success":               true,
 			"has_pairing_token":     cfg.PairingToken != "",
 			"require_pairing_token": cfg.IsPairingTokenRequired(),
+			"discovery_enabled":     cfg.IsDiscoveryEnabled(),
 			"listen_port":           cfg.ListenPort,
 		})
 

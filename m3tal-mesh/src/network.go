@@ -29,6 +29,7 @@ type meshConfig struct {
 	PairingToken        string `json:"pairing_token"`
 	RequirePairingToken *bool  `json:"require_pairing_token,omitempty"`
 	ListenPort          int    `json:"listen_port"`
+	DiscoveryEnabled    *bool  `json:"discovery_enabled,omitempty"`
 }
 
 func (c meshConfig) IsPairingTokenRequired() bool {
@@ -36,6 +37,13 @@ func (c meshConfig) IsPairingTokenRequired() bool {
 		return true
 	}
 	return *c.RequirePairingToken
+}
+
+func (c meshConfig) IsDiscoveryEnabled() bool {
+	if c.DiscoveryEnabled == nil {
+		return true
+	}
+	return *c.DiscoveryEnabled
 }
 
 type remoteTelemetry struct {
@@ -99,9 +107,11 @@ func saveMeshConfig(cfg meshConfig) error {
 
 func loadMeshConfig() meshConfig {
 	defaultTrue := true
+	defaultDiscovery := true
 	cfg := meshConfig{
 		ListenPort:          9321,
 		RequirePairingToken: &defaultTrue,
+		DiscoveryEnabled:    &defaultDiscovery,
 	}
 	path := meshConfigPath()
 	if path != "" {
@@ -111,6 +121,9 @@ func loadMeshConfig() meshConfig {
 	}
 	if cfg.RequirePairingToken == nil {
 		cfg.RequirePairingToken = &defaultTrue
+	}
+	if cfg.DiscoveryEnabled == nil {
+		cfg.DiscoveryEnabled = &defaultDiscovery
 	}
 	if cfg.ListenPort < 1 || cfg.ListenPort > 65535 {
 		cfg.ListenPort = 9321
@@ -229,15 +242,80 @@ func responseProof(token, nonce, clientNonce string, body []byte, certFingerprin
 }
 
 func fetchRemote(address, token string, port int, expectedFingerprint ...string) (MeshNode, error) {
-	cfg := loadMeshConfig()
-	if token == "" && cfg.IsPairingTokenRequired() {
-		return MeshNode{}, fmt.Errorf("pairing token is required to authenticate mesh nodes; configure a shared secret in Mesh Settings or enter a pairing token")
-	}
 	endpoint, err := normalizeNodeAddress(address, port)
 	if err != nil {
 		return MeshNode{}, err
 	}
 	started := time.Now()
+
+	// If no token is provided (tokenless unauthenticated pairing enabled by caller),
+	// bypass the challenge round-trip and query telemetry directly.
+	if token == "" {
+		req, err := http.NewRequest(http.MethodGet, "https://"+endpoint+"/api/v1/telemetry", nil)
+		if err != nil {
+			return MeshNode{}, fmt.Errorf("invalid node address: %w", err)
+		}
+		resp, err := meshHTTPClient.Do(req)
+		latency := int(time.Since(started).Milliseconds())
+		if err != nil {
+			return MeshNode{}, fmt.Errorf("cannot reach %s: %w", address, err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusServiceUnavailable {
+			return MeshNode{}, fmt.Errorf("pairing token is not configured on %s", address)
+		}
+		if resp.StatusCode == http.StatusUnauthorized {
+			return MeshNode{}, fmt.Errorf("pairing token was rejected by %s", address)
+		}
+		if resp.StatusCode != http.StatusOK {
+			return MeshNode{}, fmt.Errorf("%s is not a compatible m3tal-mesh-node (HTTP %d)", address, resp.StatusCode)
+		}
+		var peerFingerprint string
+		if resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
+			sum := sha256.Sum256(resp.TLS.PeerCertificates[0].Raw)
+			peerFingerprint = hex.EncodeToString(sum[:])
+		}
+		if len(expectedFingerprint) > 0 && expectedFingerprint[0] != "" {
+			if peerFingerprint != "" && peerFingerprint != expectedFingerprint[0] {
+				return MeshNode{}, fmt.Errorf("%s certificate fingerprint mismatch: expected %s, got %s", address, expectedFingerprint[0], peerFingerprint)
+			}
+		}
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		if err != nil {
+			return MeshNode{}, fmt.Errorf("could not read telemetry from %s: %w", address, err)
+		}
+		var payload remoteResponse
+		if err := json.Unmarshal(body, &payload); err != nil {
+			return MeshNode{}, fmt.Errorf("%s returned invalid telemetry: %w", address, err)
+		}
+		hostname := payload.Hostname
+		if hostname == "" {
+			hostname = payload.Telemetry.Hostname
+		}
+		if hostname == "" {
+			return MeshNode{}, fmt.Errorf("%s did not identify itself as an M3TAL mesh node", address)
+		}
+		name := payload.Name
+		if name == "" {
+			name = hostname
+		}
+		t := payload.Telemetry
+		cpuload := 0.0
+		if t.Cores > 0 {
+			cpuload = t.Load1m / float64(t.Cores) * 100
+			if cpuload > 100 {
+				cpuload = 100
+			}
+		}
+		return MeshNode{
+			ID: stableNodeID(endpoint, hostname), Name: name, IP: endpoint, Role: "server", Status: "online",
+			Fingerprint: peerFingerprint,
+			Cores: t.Cores, CPULoad: cpuload, RAMUsedGB: t.RAMUsedGB, RAMTotalGB: t.RAMTotalGB,
+			StorageUsedGB: t.StorageUsedGB, StorageTotalGB: t.StorageTotalGB, StoragePool: "Root Filesystem",
+			PingMs: latency, LastSeen: "just now", IsLocal: false,
+		}, nil
+	}
+
 	challengeReq, err := http.NewRequest(http.MethodPost, "https://"+endpoint+"/api/v1/challenge", nil)
 	if err != nil {
 		return MeshNode{}, fmt.Errorf("invalid node address: %w", err)
@@ -284,11 +362,9 @@ func fetchRemote(address, token string, port int, expectedFingerprint ...string)
 		return MeshNode{}, fmt.Errorf("invalid node address: %w", err)
 	}
 	nonce := challenge.Nonce
-	if token != "" {
-		req.Header.Set("X-M3TAL-Nonce", nonce)
-		req.Header.Set("X-M3TAL-Client-Nonce", clientNonce)
-		req.Header.Set("X-M3TAL-Proof", requestProof(token, nonce, clientNonce, peerFingerprint))
-	}
+	req.Header.Set("X-M3TAL-Nonce", nonce)
+	req.Header.Set("X-M3TAL-Client-Nonce", clientNonce)
+	req.Header.Set("X-M3TAL-Proof", requestProof(token, nonce, clientNonce, peerFingerprint))
 	resp, err := meshHTTPClient.Do(req)
 	latency := int(time.Since(started).Milliseconds())
 	if err != nil {
@@ -315,11 +391,9 @@ func fetchRemote(address, token string, port int, expectedFingerprint ...string)
 	if err != nil {
 		return MeshNode{}, fmt.Errorf("could not read telemetry from %s: %w", address, err)
 	}
-	if token != "" {
-		expected := responseProof(token, nonce, clientNonce, body, peerFingerprint)
-		if !hmac.Equal([]byte(expected), []byte(resp.Header.Get("X-M3TAL-Proof"))) {
-			return MeshNode{}, fmt.Errorf("%s failed mesh node authentication", address)
-		}
+	expected := responseProof(token, nonce, clientNonce, body, peerFingerprint)
+	if !hmac.Equal([]byte(expected), []byte(resp.Header.Get("X-M3TAL-Proof"))) {
+		return MeshNode{}, fmt.Errorf("%s failed mesh node authentication", address)
 	}
 	var payload remoteResponse
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -388,6 +462,9 @@ func pairAndPersistPeer(address, name, role, token string) (MeshNode, error) {
 
 func discoverAndVerifyPeers() ([]MeshNode, error) {
 	cfg := loadMeshConfig()
+	if !cfg.IsDiscoveryEnabled() {
+		return []MeshNode{}, nil
+	}
 	if cfg.IsPairingTokenRequired() && cfg.PairingToken == "" {
 		return []MeshNode{}, nil
 	}

@@ -14,7 +14,14 @@
     <h1>Mesh Node Settings</h1>
     <p>Set the shared pairing secret used by Mesh Fleet on the computer that will connect to this node. Enter the same secret in that computer’s Mesh Fleet settings.</p>
     <form id="settings-form">
-      <div class="field"><label for="pairing-token">Pairing Token</label><input id="pairing-token" type="password" autocomplete="new-password" placeholder="Enter a shared secret"><small id="token-desc">Telemetry requests are rejected until a token is configured.</small></div>
+      <div class="field">
+        <label for="pairing-token">Pairing Token</label>
+        <input id="pairing-token" type="password" autocomplete="new-password" placeholder="Enter a shared secret">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
+          <small id="token-desc">Telemetry requests are rejected until a token is configured.</small>
+          <button type="button" id="clear-token-btn" style="background:transparent;border:none;color:#fb7185;cursor:pointer;font-size:12px;padding:0;display:none" onclick="clearToken()">Clear saved token</button>
+        </div>
+      </div>
       <div class="field row" style="align-items:flex-start">
         <div>
           <label for="require-pairing-token" style="cursor:pointer">Require Pairing Token / Secret</label>
@@ -41,6 +48,16 @@
       warningEl.style.display = requireCheckbox.checked ? 'none' : 'block';
     });
     let hasPairingToken = false;
+    let clearRequested = false;
+    function clearToken() {
+      clearRequested = true;
+      const tokenInput = document.getElementById('pairing-token');
+      tokenInput.value = '';
+      tokenInput.placeholder = 'Token will be cleared upon saving';
+      document.getElementById('clear-token-btn').style.display = 'none';
+      statusEl.textContent = 'Token marked for removal. Click Save Settings to apply.';
+      statusEl.className = 'status';
+    }
     async function load() {
       try {
         const res = await fetch(endpoint, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'get_settings',args:{}})});
@@ -52,8 +69,10 @@
         };
         const tokenInput = document.getElementById('pairing-token');
         hasPairingToken = !!cfg.has_pairing_token;
+        clearRequested = false;
         tokenInput.value = '';
         tokenInput.placeholder = hasPairingToken ? 'Configured — leave blank to keep current' : 'Enter a shared secret';
+        document.getElementById('clear-token-btn').style.display = hasPairingToken ? 'inline' : 'none';
         requireCheckbox.checked = cfg.require_pairing_token !== false;
         warningEl.style.display = requireCheckbox.checked ? 'none' : 'block';
         document.getElementById('listen-port').value = cfg.listen_port || 9321;
@@ -64,12 +83,17 @@
       event.preventDefault();
       const button = document.getElementById('save'); button.disabled = true;
       statusEl.textContent = 'Saving…'; statusEl.className = 'status';
+      const rawToken = document.getElementById('pairing-token').value.trim();
       const config = {
-        pairing_token: document.getElementById('pairing-token').value.trim(),
         require_pairing_token: requireCheckbox.checked,
         listen_port: Number(document.getElementById('listen-port').value) || 9321,
         broadcast_mdns: document.getElementById('broadcast-mdns').checked,
       };
+      if (clearRequested) {
+        config.clear_pairing_token = true;
+      } else if (rawToken) {
+        config.pairing_token = rawToken;
+      }
       try {
         const res = await fetch(endpoint, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'set_settings',args:config})});
         const body = await res.json();
@@ -89,9 +113,15 @@
           );
         }
         statusEl.textContent = 'Saved. The pairing token takes effect immediately; restart Mesh Node after changing the port or LAN discovery setting.';
-        hasPairingToken = hasPairingToken || !!config.pairing_token;
+        if (actionData.has_pairing_token !== undefined) {
+          hasPairingToken = !!actionData.has_pairing_token;
+        } else {
+          hasPairingToken = clearRequested ? false : (hasPairingToken || !!config.pairing_token);
+        }
+        clearRequested = false;
         document.getElementById('pairing-token').value = '';
         document.getElementById('pairing-token').placeholder = hasPairingToken ? 'Configured — leave blank to keep current' : 'Enter a shared secret';
+        document.getElementById('clear-token-btn').style.display = hasPairingToken ? 'inline' : 'none';
         statusEl.className = 'status success';
       } catch (err) { statusEl.textContent = err.message; statusEl.className = 'status error'; }
       finally { button.disabled = false; }

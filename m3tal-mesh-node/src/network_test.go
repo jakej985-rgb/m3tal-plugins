@@ -171,3 +171,33 @@ func TestTelemetryEndpointRejectsRelayedClientAndMismatchedCertFingerprint(t *te
 		t.Fatalf("valid cert fingerprint proof status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 }
+
+func TestTelemetryEndpointUnauthenticatedWhenRequirementDisabled(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	defaultFalse := false
+	if err := saveNodeRuntimeConfig(nodeRuntimeConfig{PairingToken: "", RequirePairingToken: &defaultFalse, ListenPort: 9321, BroadcastMDNS: false}); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(nodeTelemetryHandler))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/api/v1/telemetry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200 for tokenless endpoint with require_pairing_token=false, got %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if payload["hostname"] == "" || payload["telemetry"] == nil {
+		t.Fatalf("missing node telemetry payload: %v", payload)
+	}
+}

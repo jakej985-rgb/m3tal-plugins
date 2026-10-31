@@ -197,45 +197,34 @@ func nodeTelemetryHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "pairing token is not configured on this node", http.StatusServiceUnavailable)
 		return
 	}
-	if current.PairingToken == "" {
-		hostname, _ := os.Hostname()
-		body, err := json.Marshal(map[string]any{
-			"name": hostname, "hostname": hostname, "version": PluginVersion,
-			"telemetry": getTelemetry(),
-		})
+	var nonce, clientNonce, fp string
+	if current.PairingToken != "" {
+		nonce = r.Header.Get("X-M3TAL-Nonce")
+		clientNonce = r.Header.Get("X-M3TAL-Client-Nonce")
+		supplied := r.Header.Get("X-M3TAL-Proof")
+
+		clientIP, _, err := net.SplitHostPort(r.RemoteAddr)
 		if err != nil {
-			http.Error(w, "could not encode telemetry", http.StatusInternalServerError)
+			clientIP = r.RemoteAddr
+		}
+
+		if !validNodeNonce(clientNonce) || !consumeNodeChallenge(nonce, clientIP) {
+			http.Error(w, "invalid pairing challenge", http.StatusUnauthorized)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(body)
-		return
-	}
-	nonce := r.Header.Get("X-M3TAL-Nonce")
-	clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
-	supplied := r.Header.Get("X-M3TAL-Proof")
 
-	clientIP, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		clientIP = r.RemoteAddr
-	}
+		if r.TLS != nil {
+			nodeCertFingerprintMu.RLock()
+			fp = nodeCertFingerprint
+			nodeCertFingerprintMu.RUnlock()
+		}
 
-	if !validNodeNonce(clientNonce) || !consumeNodeChallenge(nonce, clientIP) {
-		http.Error(w, "invalid pairing challenge", http.StatusUnauthorized)
-		return
+		if subtle.ConstantTimeCompare([]byte(supplied), []byte(nodeRequestProof(current.PairingToken, nonce, clientNonce, fp))) != 1 {
+			http.Error(w, "invalid pairing token", http.StatusUnauthorized)
+			return
+		}
 	}
 
-	var fp string
-	if r.TLS != nil {
-		nodeCertFingerprintMu.RLock()
-		fp = nodeCertFingerprint
-		nodeCertFingerprintMu.RUnlock()
-	}
-
-	if subtle.ConstantTimeCompare([]byte(supplied), []byte(nodeRequestProof(current.PairingToken, nonce, clientNonce, fp))) != 1 {
-		http.Error(w, "invalid pairing token", http.StatusUnauthorized)
-		return
-	}
 	hostname, _ := os.Hostname()
 	body, err := json.Marshal(map[string]any{
 		"name": hostname, "hostname": hostname, "version": PluginVersion,
@@ -246,7 +235,9 @@ func nodeTelemetryHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-M3TAL-Proof", nodeResponseProof(current.PairingToken, nonce, clientNonce, body, fp))
+	if current.PairingToken != "" {
+		w.Header().Set("X-M3TAL-Proof", nodeResponseProof(current.PairingToken, nonce, clientNonce, body, fp))
+	}
 	_, _ = w.Write(body)
 }
 

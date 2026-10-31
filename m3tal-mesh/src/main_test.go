@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -277,4 +278,136 @@ func TestPairNodeRejectsMissingTokenWhenRequired(t *testing.T) {
 		t.Fatalf("expected error code -32002, got %d (%s)", resp.Error.Code, resp.Error.Message)
 	}
 }
+
+func TestSetSettingsBlankTokenPreservesExisting(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := saveMeshConfig(meshConfig{PairingToken: "existing-secret", ListenPort: 9321}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := runActionForTest(t, 1, `{"action":"set_settings","args":{"pairing_token":"","listen_port":9500}}`)
+	if resp.Error != nil {
+		t.Fatalf("set_settings failed: %s", resp.Error.Message)
+	}
+	encoded, _ := json.Marshal(resp.Result)
+	var result map[string]interface{}
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result["has_pairing_token"] != true {
+		t.Fatalf("expected has_pairing_token=true, got %v", result["has_pairing_token"])
+	}
+
+	cfg := loadMeshConfig()
+	if cfg.PairingToken != "existing-secret" {
+		t.Fatalf("expected PairingToken to be preserved as 'existing-secret', got %q", cfg.PairingToken)
+	}
+	if cfg.ListenPort != 9500 {
+		t.Fatalf("expected ListenPort=9500, got %d", cfg.ListenPort)
+	}
+}
+
+func TestSetSettingsClearPairingToken(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := saveMeshConfig(meshConfig{PairingToken: "existing-secret", ListenPort: 9321}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := runActionForTest(t, 1, `{"action":"set_settings","args":{"clear_pairing_token":true}}`)
+	if resp.Error != nil {
+		t.Fatalf("set_settings failed: %s", resp.Error.Message)
+	}
+	encoded, _ := json.Marshal(resp.Result)
+	var result map[string]interface{}
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result["has_pairing_token"] != false {
+		t.Fatalf("expected has_pairing_token=false after clear, got %v", result["has_pairing_token"])
+	}
+
+	cfg := loadMeshConfig()
+	if cfg.PairingToken != "" {
+		t.Fatalf("expected empty PairingToken, got %q", cfg.PairingToken)
+	}
+}
+
+func TestDiscoveryEnabledSetting(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	resp := runActionForTest(t, 1, `{"action":"get_settings","args":{}}`)
+	if resp.Error != nil {
+		t.Fatalf("get_settings failed: %s", resp.Error.Message)
+	}
+	encoded, _ := json.Marshal(resp.Result)
+	var result map[string]interface{}
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result["discovery_enabled"] != true {
+		t.Fatalf("expected discovery_enabled=true by default, got %v", result["discovery_enabled"])
+	}
+
+	setResp := runActionForTest(t, 2, `{"action":"set_settings","args":{"discovery_enabled":false}}`)
+	if setResp.Error != nil {
+		t.Fatalf("set_settings failed: %s", setResp.Error.Message)
+	}
+
+	resp2 := runActionForTest(t, 3, `{"action":"get_settings","args":{}}`)
+	encoded2, _ := json.Marshal(resp2.Result)
+	var result2 map[string]interface{}
+	if err := json.Unmarshal(encoded2, &result2); err != nil {
+		t.Fatal(err)
+	}
+	if result2["discovery_enabled"] != false {
+		t.Fatalf("expected discovery_enabled=false after update, got %v", result2["discovery_enabled"])
+	}
+
+	scanResp := runActionForTest(t, 4, `{"action":"scan_network","args":{}}`)
+	if scanResp.Error != nil {
+		t.Fatalf("scan_network failed: %s", scanResp.Error.Message)
+	}
+	encodedScan, _ := json.Marshal(scanResp.Result)
+	var scanResult map[string]interface{}
+	if err := json.Unmarshal(encodedScan, &scanResult); err != nil {
+		t.Fatal(err)
+	}
+	if msg, ok := scanResult["message"].(string); !ok || !strings.Contains(msg, "disabled") {
+		t.Fatalf("expected disabled message, got %v", scanResult["message"])
+	}
+}
+
+func TestPairNodeSucceedsWithoutTokenWhenRequirementDisabled(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	remoteNodes = []MeshNode{}
+
+	defaultFalse := false
+	if err := saveMeshConfig(meshConfig{PairingToken: "", RequirePairingToken: &defaultFalse, ListenPort: 9321}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/telemetry" {
+			w.Header().Set("Content-Type", "application/json")
+			body, _ := json.Marshal(remoteResponse{Hostname: "tokenless-node", Telemetry: remoteTelemetry{Hostname: "tokenless-node", Cores: 8}})
+			_, _ = w.Write(body)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	pair := runActionForTest(t, 1, fmt.Sprintf(`{"action":"pair_node","args":{"ip":%q,"name":"tokenless","role":"server","token":""}}`, server.Listener.Addr().String()))
+	if pair.Error != nil {
+		t.Fatalf("expected tokenless pair to succeed when requirement is disabled, got error: %s", pair.Error.Message)
+	}
+	var pairResult struct {
+		Node MeshNode `json:"node"`
+	}
+	encoded, _ := json.Marshal(pair.Result)
+	if err := json.Unmarshal(encoded, &pairResult); err != nil || pairResult.Node.Name != "tokenless" {
+		t.Fatalf("unexpected pair result: %s", encoded)
+	}
+}
+
 

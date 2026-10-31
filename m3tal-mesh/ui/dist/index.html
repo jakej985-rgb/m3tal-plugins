@@ -293,6 +293,10 @@
       <div class="form-group" style="margin-top:22px">
         <label class="form-label" for="mesh-pairing-token">Pairing Token / Shared Secret</label>
         <input id="mesh-pairing-token" class="form-input" type="password" autocomplete="new-password" placeholder="Enter a shared secret">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
+          <span style="font-size:0.75rem;color:var(--text-muted)">Shared secret used to authenticate and encrypt pairing requests</span>
+          <button type="button" id="mesh-clear-token-btn" style="background:transparent;border:none;color:var(--rose);cursor:pointer;font-size:0.75rem;padding:0;display:none" onclick="clearMeshToken()">Clear saved token</button>
+        </div>
       </div>
 
       <div class="form-group" style="display:flex;flex-direction:column;gap:8px;background:rgba(255,255,255,0.02);padding:14px;border-radius:8px;border:1px solid var(--border)">
@@ -307,6 +311,14 @@
         <div id="mesh-safety-warning" style="display:none;margin-top:8px;padding:10px 12px;background:rgba(244,63,94,0.1);border:1px solid rgba(244,63,94,0.3);border-radius:6px;font-size:0.8rem;color:#fda4af;line-height:1.4">
           <strong>⚠️ Safety Warning:</strong> Disabling this requirement removes token authentication, making Pairing Token / Secret optional. Unauthenticated nodes on your local network could connect and stream data. <em>This is NOT safe or advised on untrusted or shared networks!</em>
         </div>
+      </div>
+
+      <div class="form-group" style="display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,0.02);padding:14px;border-radius:8px;border:1px solid var(--border)">
+        <div>
+          <label class="form-label" style="margin-bottom:2px;cursor:pointer" for="mesh-discovery-enabled">Enable LAN Discovery (mDNS)</label>
+          <div style="font-size:0.75rem;color:var(--text-muted)">Automatically discover local m3tal-mesh-node daemons via mDNS on local subnet.</div>
+        </div>
+        <input id="mesh-discovery-enabled" type="checkbox" checked style="width:18px;height:18px;cursor:pointer;accent-color:var(--cyan)">
       </div>
 
       <div class="form-group">
@@ -398,6 +410,18 @@
       if (settings) loadMeshSettings();
     }
 
+    let clearMeshTokenRequested = false;
+    function clearMeshToken() {
+      clearMeshTokenRequested = true;
+      const input = document.getElementById('mesh-pairing-token');
+      input.value = '';
+      input.placeholder = 'Token will be cleared upon saving';
+      document.getElementById('mesh-clear-token-btn').style.display = 'none';
+      const status = document.getElementById('mesh-settings-status');
+      status.textContent = 'Token marked for removal. Click Save Mesh Settings to apply.';
+      status.style.color = 'var(--text-muted)';
+    }
+
     async function loadMeshSettings() {
       const status = document.getElementById('mesh-settings-status');
       try {
@@ -413,12 +437,16 @@
           ...meshConfig,
           has_pairing_token: !!actionData.has_pairing_token,
           require_pairing_token: actionData.require_pairing_token !== false,
+          discovery_enabled: actionData.discovery_enabled !== false,
           listen_port: Number(actionData.listen_port || meshConfig.listen_port || 9321)
         };
+        clearMeshTokenRequested = false;
 
         document.getElementById('mesh-pairing-token').value = '';
         document.getElementById('mesh-pairing-token').placeholder = meshConfig.has_pairing_token ? 'Configured — leave blank to keep current' : 'Create a shared pairing token';
+        document.getElementById('mesh-clear-token-btn').style.display = meshConfig.has_pairing_token ? 'inline' : 'none';
         document.getElementById('mesh-require-token').checked = meshConfig.require_pairing_token;
+        document.getElementById('mesh-discovery-enabled').checked = meshConfig.discovery_enabled;
         document.getElementById('mesh-safety-warning').style.display = meshConfig.require_pairing_token ? 'none' : 'block';
         document.getElementById('mesh-node-port').value = meshConfig.listen_port;
         status.textContent = '';
@@ -428,11 +456,18 @@
     async function saveMeshSettings() {
       const status = document.getElementById('mesh-settings-status');
       const isReq = document.getElementById('mesh-require-token').checked;
+      const isDisc = document.getElementById('mesh-discovery-enabled').checked;
+      const rawToken = document.getElementById('mesh-pairing-token').value.trim();
       const cfg = {
-        pairing_token: document.getElementById('mesh-pairing-token').value.trim(),
         require_pairing_token: isReq,
+        discovery_enabled: isDisc,
         listen_port: Number(document.getElementById('mesh-node-port').value) || 9321,
       };
+      if (clearMeshTokenRequested) {
+        cfg.clear_pairing_token = true;
+      } else if (rawToken) {
+        cfg.pairing_token = rawToken;
+      }
 
       try {
         const res = await fetch(`/api/v2/plugins/mesh/action?token=${encodeURIComponent(token)}`, {
@@ -460,17 +495,21 @@
         }
 
         meshConfig = {
-          has_pairing_token: !!cfg.pairing_token || meshConfig.has_pairing_token,
+          has_pairing_token: actionData.has_pairing_token !== undefined ? !!actionData.has_pairing_token : (clearMeshTokenRequested ? false : (!!cfg.pairing_token || meshConfig.has_pairing_token)),
           require_pairing_token: cfg.require_pairing_token,
+          discovery_enabled: cfg.discovery_enabled,
           listen_port: cfg.listen_port
         };
+        clearMeshTokenRequested = false;
 
         document.getElementById('mesh-pairing-token').value = '';
         document.getElementById('mesh-pairing-token').placeholder =
           meshConfig.has_pairing_token
             ? 'Configured — leave blank to keep current'
             : 'Create a shared pairing token';
+        document.getElementById('mesh-clear-token-btn').style.display = meshConfig.has_pairing_token ? 'inline' : 'none';
         document.getElementById('mesh-require-token').checked = meshConfig.require_pairing_token;
+        document.getElementById('mesh-discovery-enabled').checked = meshConfig.discovery_enabled;
         document.getElementById('mesh-safety-warning').style.display = meshConfig.require_pairing_token ? 'none' : 'block';
 
         status.textContent = 'Saved. Use the same token in Mesh Node Settings on each sender.';
@@ -849,7 +888,7 @@
     }
 
     async function scanNetwork() {
-      if (!meshConfig.has_pairing_token) {
+      if (meshConfig.require_pairing_token !== false && !meshConfig.has_pairing_token) {
         showMeshView('settings');
         document.getElementById('mesh-settings-status').textContent =
           'Set a pairing token before scanning.';
