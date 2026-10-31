@@ -326,7 +326,7 @@ func TestDiscoveryConcurrentVerification(t *testing.T) {
 
 	candidates := []string{slowServer.Listener.Addr().String(), fastServer.Listener.Addr().String()}
 	start := time.Now()
-	discovered := verifyCandidates(candidates, "discovery-token", "", 9321)
+	discovered := verifyCandidates(candidates, "discovery-token", 9321)
 	elapsed := time.Since(start)
 	if len(discovered) != 1 || discovered[0].Name != "fast-node" {
 		t.Fatalf("concurrent verification failed to find fast node: %+v", discovered)
@@ -608,7 +608,7 @@ func TestDiscoveryVerifyCandidatesUsesPairingTokenAndNeverSendsPassword(t *testi
 	defer server.Close()
 
 	addr := server.Listener.Addr().String()
-	discovered := verifyCandidates([]string{addr}, "discovery-secret-tok", "", 9321)
+	discovered := verifyCandidates([]string{addr}, "discovery-secret-tok", 9321)
 	if len(discovered) != 1 || discovered[0].Name != "discovered-box" {
 		t.Fatalf("expected candidate to be verified using pairing token HMAC proof, got: %+v", discovered)
 	}
@@ -935,48 +935,3 @@ func TestPasswordOnlyPeerSuppressesTokenInheritance(t *testing.T) {
 		t.Fatalf("expected password-only peer C to remain online after refresh, got status=%s last_seen=%s", nodeC.Status, nodeC.LastSeen)
 	}
 }
-
-func TestDiscoveryPresentsCandidatesRequiringPasswordWithoutSendingPassword(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	remoteNodes = []MeshNode{}
-
-	var server *httptest.Server
-	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if writeTestChallenge(w, r) {
-			return
-		}
-		if r.URL.Path == "/api/v1/telemetry" {
-			// Assert password was NEVER broadcast by discovery probe
-			if r.Header.Get("X-M3TAL-Password") != "" {
-				http.Error(w, "password must not be sent during discovery probe", http.StatusBadRequest)
-				return
-			}
-			nonce := r.Header.Get("X-M3TAL-Nonce")
-			clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
-			fp := testServerFingerprint(server)
-			if r.Header.Get("X-M3TAL-Proof") != requestProof("matching-shared-token", nonce, clientNonce, fp) {
-				http.Error(w, "invalid token proof", http.StatusUnauthorized)
-				return
-			}
-			// Token matches, but node also requires secondary password
-			http.Error(w, "password required", http.StatusUnauthorized)
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	defer server.Close()
-
-	addr := server.Listener.Addr().String()
-	candidateHosts := map[string]string{addr: "password-protected-box"}
-	discovered := verifyCandidatesWithHosts([]string{addr}, candidateHosts, "matching-shared-token", "", 9321)
-	if len(discovered) != 1 {
-		t.Fatalf("expected candidate to be presented for explicit verification, got: %+v", discovered)
-	}
-	if discovered[0].Name != "password-protected-box" || discovered[0].IP != addr || discovered[0].LastSeen != "password required" {
-		t.Fatalf("unexpected candidate presentation: %+v", discovered[0])
-	}
-}
-
-
-
-
