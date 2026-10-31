@@ -539,11 +539,11 @@ func handleAction(req *RPCRequest) {
 		cfg := loadMeshConfig()
 		samePeerIP := savedPeer != nil && strings.EqualFold(ip, savedPeer.IP)
 		explicitTok := effectiveToken
-		if explicitTok == "" && savedPeer != nil {
+		if explicitTok == "" && samePeerIP {
 			explicitTok = savedPeer.APIToken
 		}
 		explicitPass := password
-		if explicitPass == "" && savedPeer != nil {
+		if explicitPass == "" && samePeerIP {
 			explicitPass = savedPeer.Password
 		}
 		var expectedFP string

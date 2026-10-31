@@ -688,7 +688,7 @@ func TestUpdateNodePreservesPasswordOnlyWhenProbeFails(t *testing.T) {
 	}
 }
 
-func TestTestNodeReusesSavedCredentialsWhenChangingAddress(t *testing.T) {
+func TestTestNodeDoesNotLeakSavedCredentialsToDifferentAddress(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	remoteNodes = []MeshNode{}
 
@@ -698,44 +698,28 @@ func TestTestNodeReusesSavedCredentialsWhenChangingAddress(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 1. Initial saved peer with per-peer custom token
+	// 1. Initial saved peer with per-peer custom token and password
 	initialNode := MeshNode{
 		ID:       "saved-peer-1",
 		Name:     "Saved Custom Peer",
 		IP:       "127.0.0.1:8888",
 		APIToken: "custom-peer-token",
-		Password: "custom-peer-pass",
+		Password: "sensitive-peer-password",
 	}
 	if err := persistPeerUpsert(initialNode, false, false); err != nil {
 		t.Fatal(err)
 	}
 
-	// 2. Server at new address accepts custom-peer-token and custom-peer-pass
+	// 2. Untrusted server at new address checks if sensitive password is leaked
+	var leakedPassword string
 	var newServer *httptest.Server
 	newServer = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if writeTestChallenge(w, r) {
 			return
 		}
 		if r.URL.Path == "/api/v1/telemetry" {
-			nonce := r.Header.Get("X-M3TAL-Nonce")
-			clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
-			fp := testServerFingerprint(newServer)
-			// Must match the custom-peer-token, not the default-mesh-token!
-			if r.Header.Get("X-M3TAL-Proof") != requestProof("custom-peer-token", nonce, clientNonce, fp) {
-				http.Error(w, "invalid custom token", http.StatusUnauthorized)
-				return
-			}
-			if r.Header.Get("X-M3TAL-Password") != "custom-peer-pass" {
-				http.Error(w, "invalid custom pass", http.StatusUnauthorized)
-				return
-			}
-			body, _ := json.Marshal(remoteResponse{
-				Name: "moved-peer", Hostname: "moved-peer",
-				Telemetry: remoteTelemetry{Hostname: "moved-peer", Cores: 4, RAMTotalGB: 16, StorageTotalGB: 500},
-			})
-			w.Header().Set("X-M3TAL-Proof", responseProof("custom-peer-token", nonce, clientNonce, body, fp))
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write(body)
+			leakedPassword = r.Header.Get("X-M3TAL-Password")
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 		http.NotFound(w, r)
@@ -746,12 +730,10 @@ func TestTestNodeReusesSavedCredentialsWhenChangingAddress(t *testing.T) {
 
 	// 3. test_node with new IP and node_id="saved-peer-1", leaving token and password empty
 	testReq := fmt.Sprintf(`{"action":"test_node","args":{"node_id":"saved-peer-1","ip":%q}}`, newAddr)
-	resp := runActionForTest(t, 22, testReq)
-	if resp.Error != nil {
-		t.Fatalf("test_node failed to reuse saved credentials for moved peer: %s", resp.Error.Message)
-	}
-	resMap, _ := resp.Result.(map[string]interface{})
-	if resMap["hostname"] != "moved-peer" {
-		t.Fatalf("unexpected hostname from test_node: %v", resMap["hostname"])
+	_ = runActionForTest(t, 22, testReq)
+
+	// 4. Verify sensitive password was NOT sent to the untrusted new IP
+	if leakedPassword == "sensitive-peer-password" {
+		t.Fatal("security violation: test_node leaked saved peer password to arbitrary new address")
 	}
 }
