@@ -552,23 +552,13 @@ func handleAction(req *RPCRequest) {
 			normSaved, _ := normalizeNodeAddress(savedPeer.IP, cfg.ListenPort)
 			samePeerIP = strings.EqualFold(ip, normSaved)
 		}
-		clearTok := false
-		clearPass := false
-		if raw.Args != nil {
-			if v, ok := raw.Args["clear_token"].(bool); ok {
-				clearTok = v
-			}
-			if v, ok := raw.Args["clear_password"].(bool); ok {
-				clearPass = v
-			}
-		}
-		credsChanged := effectiveToken != "" || password != "" || clearTok || clearPass
+		credsChanged := effectiveToken != "" || password != ""
 		explicitTok := effectiveToken
-		if explicitTok == "" && samePeerIP && !clearTok {
+		if explicitTok == "" && samePeerIP {
 			explicitTok = savedPeer.APIToken
 		}
 		explicitPass := password
-		if explicitPass == "" && samePeerIP && !clearPass {
+		if explicitPass == "" && samePeerIP {
 			explicitPass = savedPeer.Password
 		}
 		var expectedFP string
