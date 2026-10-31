@@ -469,6 +469,11 @@ func TestFetchRemoteRESTTokenAndOptionalPassword(t *testing.T) {
 
 	// 4. Password-only peer (token == "", password != "")
 	passOnlyServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/challenge" {
+			n, _ := newMeshNonce()
+			_ = json.NewEncoder(w).Encode(map[string]string{"nonce": n})
+			return
+		}
 		if r.URL.Path == "/api/v1/telemetry" {
 			if r.Header.Get("X-M3TAL-Password") != "only-pass" {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)

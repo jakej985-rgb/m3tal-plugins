@@ -525,22 +525,23 @@ func handleAction(req *RPCRequest) {
 			return
 		}
 		cfg := loadMeshConfig()
+		samePeerIP := savedPeer != nil && (ip == "" || strings.EqualFold(ip, savedPeer.IP))
 		tok := effectiveToken
-		if tok == "" && savedPeer != nil {
+		if tok == "" && samePeerIP {
 			tok = savedPeer.APIToken
 		}
 		if tok == "" {
 			tok = cfg.GetDefaultAPIToken()
 		}
 		pass := password
-		if pass == "" && savedPeer != nil {
+		if pass == "" && samePeerIP {
 			pass = savedPeer.Password
 		}
 		if pass == "" {
 			pass = cfg.DefaultPassword
 		}
 		var expectedFP string
-		if savedPeer != nil && (ip == savedPeer.IP || ip == "") {
+		if samePeerIP {
 			expectedFP = savedPeer.Fingerprint
 		}
 		testedNode, err := fetchRemoteWithAuth(ip, tok, pass, cfg.ListenPort, expectedFP)

@@ -298,10 +298,9 @@ func fetchRemoteWithAuth(address, token, password string, port int, expectedFing
 		return MeshNode{}, err
 	}
 	started := time.Now()
-
 	var nonce, clientNonce, peerFingerprint string
 
-	if token != "" || (len(expectedFingerprint) > 0 && expectedFingerprint[0] != "") {
+	if token != "" || password != "" || (len(expectedFingerprint) > 0 && expectedFingerprint[0] != "") {
 		challengeReq, err := http.NewRequest(http.MethodPost, "https://"+endpoint+"/api/v1/challenge", nil)
 		if err != nil {
 			return MeshNode{}, fmt.Errorf("invalid node address: %w", err)
@@ -590,11 +589,13 @@ func persistPeerUpsert(node MeshNode) error {
 
 	if targetIdx >= 0 {
 		old := peers[targetIdx]
-		if !node.ClearAPIToken && node.APIToken == "" && old.APIToken != "" {
-			node.APIToken = old.APIToken
-		}
-		if !node.ClearPassword && node.Password == "" && old.Password != "" {
-			node.Password = old.Password
+		if existingIDIdx >= 0 {
+			if !node.ClearAPIToken && node.APIToken == "" && old.APIToken != "" {
+				node.APIToken = old.APIToken
+			}
+			if !node.ClearPassword && node.Password == "" && old.Password != "" {
+				node.Password = old.Password
+			}
 		}
 		node.HasPassword = node.Password != ""
 		node.HasAPIToken = node.APIToken != ""
