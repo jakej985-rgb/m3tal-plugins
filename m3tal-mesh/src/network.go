@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -23,6 +24,8 @@ import (
 
 	"github.com/grandcat/zeroconf"
 )
+
+var ErrPasswordRequired = errors.New("password required")
 
 const meshServiceType = "_m3tal-mesh-node._tcp"
 
@@ -370,6 +373,10 @@ func fetchRemoteWithAuth(address, token, password string, port int, expectedFing
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusUnauthorized {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		if strings.Contains(strings.ToLower(string(respBody)), "password required") {
+			return MeshNode{}, ErrPasswordRequired
+		}
 		return MeshNode{}, fmt.Errorf("pairing token was rejected by %s", address)
 	}
 	if resp.StatusCode == http.StatusServiceUnavailable {
@@ -508,6 +515,7 @@ func discoverAndVerifyPeers() ([]MeshNode, error) {
 		}
 	}
 	candidates := make([]string, 0)
+	candidateHosts := make(map[string]string)
 	for {
 		select {
 		case entry := <-entries:
@@ -524,6 +532,10 @@ func discoverAndVerifyPeers() ([]MeshNode, error) {
 					}
 				}
 			}
+			host := entry.Instance
+			if host == "" {
+				host = strings.TrimSuffix(entry.HostName, ".")
+			}
 			for _, ip := range ips {
 				if localIPs[ip.String()] || entry.Port < 1 || entry.Port > 65535 {
 					continue
@@ -534,14 +546,21 @@ func discoverAndVerifyPeers() ([]MeshNode, error) {
 				}
 				addresses[address] = true
 				candidates = append(candidates, address)
+				if host != "" {
+					candidateHosts[address] = host
+				}
 			}
 		case <-ctx.Done():
-			return verifyCandidates(candidates, cfg.PairingToken, cfg.ListenPort), nil
+			return verifyCandidatesWithHosts(candidates, candidateHosts, cfg.PairingToken, cfg.ListenPort), nil
 		}
 	}
 }
 
 func verifyCandidates(candidates []string, token string, port int) []MeshNode {
+	return verifyCandidatesWithHosts(candidates, nil, token, port)
+}
+
+func verifyCandidatesWithHosts(candidates []string, candidateHosts map[string]string, token string, port int) []MeshNode {
 	var wg sync.WaitGroup
 	mu := sync.Mutex{}
 	discovered := make([]MeshNode, 0)
@@ -554,6 +573,24 @@ func verifyCandidates(candidates []string, token string, port int) []MeshNode {
 			if err == nil {
 				mu.Lock()
 				discovered = append(discovered, node)
+				mu.Unlock()
+			} else if errors.Is(err, ErrPasswordRequired) {
+				hostname := ""
+				if candidateHosts != nil {
+					hostname = candidateHosts[address]
+				}
+				if hostname == "" {
+					hostname = address
+				}
+				mu.Lock()
+				discovered = append(discovered, MeshNode{
+					ID:               stableNodeID(address, hostname),
+					Name:             hostname,
+					IP:               address,
+					Role:             "server",
+					Status:           "unverified",
+					PasswordRequired: true,
+				})
 				mu.Unlock()
 			}
 		}()

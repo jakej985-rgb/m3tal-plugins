@@ -935,3 +935,45 @@ func TestPasswordOnlyPeerSuppressesTokenInheritance(t *testing.T) {
 		t.Fatalf("expected password-only peer C to remain online after refresh, got status=%s last_seen=%s", nodeC.Status, nodeC.LastSeen)
 	}
 }
+
+func TestDiscoveryPresentsCandidatesRequiringPasswordForExplicitPairing(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	remoteNodes = []MeshNode{}
+
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
+		if r.URL.Path == "/api/v1/telemetry" {
+			// Password must NEVER be sent during initial discovery probe
+			if r.Header.Get("X-M3TAL-Password") != "" {
+				http.Error(w, "password must not be sent during discovery probe", http.StatusBadRequest)
+				return
+			}
+			nonce := r.Header.Get("X-M3TAL-Nonce")
+			clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
+			fp := testServerFingerprint(server)
+			if r.Header.Get("X-M3TAL-Proof") != requestProof("matching-shared-token", nonce, clientNonce, fp) {
+				http.Error(w, "invalid token proof", http.StatusUnauthorized)
+				return
+			}
+			// Token matches, but node also requires secondary password
+			http.Error(w, "password required", http.StatusUnauthorized)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	addr := server.Listener.Addr().String()
+	candidateHosts := map[string]string{addr: "password-protected-box"}
+	discovered := verifyCandidatesWithHosts([]string{addr}, candidateHosts, "matching-shared-token", 9321)
+	if len(discovered) != 1 {
+		t.Fatalf("expected candidate to be presented for explicit pairing, got: %+v", discovered)
+	}
+	if discovered[0].Name != "password-protected-box" || discovered[0].IP != addr || !discovered[0].PasswordRequired || discovered[0].Status != "unverified" {
+		t.Fatalf("unexpected candidate presentation: %+v", discovered[0])
+	}
+}
+

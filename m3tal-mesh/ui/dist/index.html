@@ -1282,22 +1282,39 @@
               'display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--border)';
 
             const label = document.createElement('span');
-            label.textContent = `${node.name} — ${node.ip}`;
-
             const pairButton = document.createElement('button');
             pairButton.className = 'btn btn-primary';
-            pairButton.textContent = 'Pair';
-            pairButton.addEventListener(
-              'click',
-              () => pairDiscoveredNode(node.ip, node.name)
-            );
+
+            if (node.password_required) {
+              label.textContent = `${node.name} — ${node.ip} (Password Required)`;
+              pairButton.textContent = 'Enter Password';
+              pairButton.addEventListener('click', () => {
+                document.getElementById('edit-node-id').value = '';
+                document.getElementById('input-ip').value = node.ip;
+                document.getElementById('input-name').value = node.name || '';
+                document.getElementById('input-password').value = '';
+                document.getElementById('input-password').focus();
+              });
+            } else {
+              label.textContent = `${node.name} — ${node.ip}`;
+              pairButton.textContent = 'Pair';
+              pairButton.addEventListener(
+                'click',
+                () => pairDiscoveredNode(node.ip, node.name)
+              );
+            }
 
             row.append(label, pairButton);
             results.appendChild(row);
           });
         }
 
-        showToast(`Found ${candidates.length} authenticated sender(s).`);
+        const verified = candidates.filter((n) => !n.password_required).length;
+        if (verified === candidates.length) {
+          showToast(`Found ${candidates.length} authenticated sender(s).`);
+        } else {
+          showToast(`Found ${candidates.length} sender(s) (${verified} verified, ${candidates.length - verified} password required).`);
+        }
       } catch (err) {
         showToast(err.message || 'LAN scan failed', true);
       }

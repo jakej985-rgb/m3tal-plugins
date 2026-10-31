@@ -52,8 +52,9 @@ type MeshNode struct {
 	Name           string  `json:"name"`
 	IP             string  `json:"ip"`
 	Role           string  `json:"role"`   // "workstation", "server", "nas", "edge"
-	Status         string  `json:"status"` // "online", "warning", "offline"
-	Fingerprint    string  `json:"fingerprint,omitempty"`
+	Status           string  `json:"status"` // "online", "warning", "offline", "unverified"
+	PasswordRequired bool    `json:"password_required,omitempty"`
+	Fingerprint      string  `json:"fingerprint,omitempty"`
 	APIToken       string  `json:"-"`
 	Password       string  `json:"-"`
 	Cores          int     `json:"cores"`
