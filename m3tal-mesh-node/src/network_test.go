@@ -375,4 +375,3 @@ func TestTelemetryEndpointHMACBranchWithPasswordAndRejectEmptyToken(t *testing.T
 		t.Fatalf("expected 200 for REST password on password-only node, got %d", resp.StatusCode)
 	}
 }
-

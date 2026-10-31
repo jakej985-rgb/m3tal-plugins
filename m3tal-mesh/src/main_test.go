@@ -566,6 +566,3 @@ func TestActionsTestNodeUpdateNodeAndGetPeers(t *testing.T) {
 		t.Fatalf("unexpected peers list after duplicate update rejection: %+v", allPeers)
 	}
 }
-
-
-

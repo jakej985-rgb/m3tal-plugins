@@ -48,29 +48,30 @@ type RPCError struct {
 
 // MeshNode represents a machine connected to the personal cluster.
 type MeshNode struct {
-	ID             string  `json:"id"`
-	Name           string  `json:"name"`
-	IP             string  `json:"ip"`
-	Role           string  `json:"role"`   // "workstation", "server", "nas", "edge"
+	ID               string  `json:"id"`
+	Name             string  `json:"name"`
+	IP               string  `json:"ip"`
+	Role             string  `json:"role"`   // "workstation", "server", "nas", "edge"
 	Status           string  `json:"status"` // "online", "warning", "offline", "unverified"
 	PasswordRequired bool    `json:"password_required,omitempty"`
+	PasswordOnly     bool    `json:"password_only,omitempty"`
 	Fingerprint      string  `json:"fingerprint,omitempty"`
-	APIToken       string  `json:"-"`
-	Password       string  `json:"-"`
-	Cores          int     `json:"cores"`
-	CPULoad        float64 `json:"cpu_load"`
-	RAMUsedGB      float64 `json:"ram_used_gb"`
-	RAMTotalGB     float64 `json:"ram_total_gb"`
-	StorageUsedGB  float64 `json:"storage_used_gb"`
-	StorageTotalGB float64 `json:"storage_total_gb"`
-	StoragePool    string  `json:"storage_pool,omitempty"`
-	GPUName        string  `json:"gpu_name,omitempty"`
-	GPUVRAMUsedGB  float64 `json:"gpu_vram_used_gb,omitempty"`
-	GPUVRAMTotalGB float64 `json:"gpu_vram_total_gb,omitempty"`
-	GPUTempC       int     `json:"gpu_temp_c,omitempty"`
-	PingMs         int     `json:"ping_ms"`
-	LastSeen       string  `json:"last_seen"`
-	IsLocal        bool    `json:"is_local"`
+	APIToken         string  `json:"-"`
+	Password         string  `json:"-"`
+	Cores            int     `json:"cores"`
+	CPULoad          float64 `json:"cpu_load"`
+	RAMUsedGB        float64 `json:"ram_used_gb"`
+	RAMTotalGB       float64 `json:"ram_total_gb"`
+	StorageUsedGB    float64 `json:"storage_used_gb"`
+	StorageTotalGB   float64 `json:"storage_total_gb"`
+	StoragePool      string  `json:"storage_pool,omitempty"`
+	GPUName          string  `json:"gpu_name,omitempty"`
+	GPUVRAMUsedGB    float64 `json:"gpu_vram_used_gb,omitempty"`
+	GPUVRAMTotalGB   float64 `json:"gpu_vram_total_gb,omitempty"`
+	GPUTempC         int     `json:"gpu_temp_c,omitempty"`
+	PingMs           int     `json:"ping_ms"`
+	LastSeen         string  `json:"last_seen"`
+	IsLocal          bool    `json:"is_local"`
 }
 
 // MarshalJSON derives has_password and has_api_token dynamically at marshal time.
@@ -506,7 +507,8 @@ func handleAction(req *RPCRequest) {
 			sendError(req.ID, -32602, "Invalid params", "Node IP address is required")
 			return
 		}
-		newNode, err := pairAndPersistPeer(ip, name, role, effectiveToken, password)
+		passwordOnly, _ := raw.Args["password_only"].(bool)
+		newNode, err := pairAndPersistPeer(ip, name, role, effectiveToken, password, passwordOnly)
 		if err != nil {
 			sendError(req.ID, -32002, "Node pairing failed", err.Error())
 			return
@@ -545,7 +547,11 @@ func handleAction(req *RPCRequest) {
 		if explicitPass == "" && samePeerIP {
 			explicitPass = savedPeer.Password
 		}
-		tok, pass := effectiveCredentials(explicitTok, explicitPass, cfg)
+		passwordOnly, _ := raw.Args["password_only"].(bool)
+		if !passwordOnly && samePeerIP {
+			passwordOnly = savedPeer.PasswordOnly
+		}
+		tok, pass := effectiveCredentials(explicitTok, explicitPass, passwordOnly, cfg)
 		var expectedFP string
 		if samePeerIP {
 			expectedFP = savedPeer.Fingerprint
@@ -607,6 +613,12 @@ func handleAction(req *RPCRequest) {
 		} else if clearPass {
 			foundNode.Password = ""
 		}
+		if effectiveToken != "" || clearTok || clearPass {
+			foundNode.PasswordOnly = false
+		}
+		if pwOnly, ok := raw.Args["password_only"].(bool); ok {
+			foundNode.PasswordOnly = pwOnly
+		}
 		if err := persistPeerUpsert(*foundNode, clearTok, clearPass); err != nil {
 			sendError(req.ID, -32003, "Could not save updated node", err.Error())
 			return
@@ -666,7 +678,7 @@ func handleAction(req *RPCRequest) {
 			return
 		}
 		cfg := loadMeshConfig()
-		tok, pass := effectiveCredentials(target.APIToken, target.Password, cfg)
+		tok, pass := effectiveCredentials(target.APIToken, target.Password, target.PasswordOnly, cfg)
 		updated, err := fetchRemoteWithAuth(target.IP, tok, pass, cfg.ListenPort, target.Fingerprint)
 		if err != nil {
 			sendError(req.ID, -32004, "Node ping failed", err.Error())
@@ -675,6 +687,7 @@ func handleAction(req *RPCRequest) {
 		updated.ID, updated.Name, updated.Role = target.ID, target.Name, target.Role
 		updated.APIToken = target.APIToken
 		updated.Password = target.Password
+		updated.PasswordOnly = target.PasswordOnly
 		if err := persistPeerUpsert(updated, false, false); err != nil {
 			sendError(req.ID, -32005, "Could not save node status", err.Error())
 			return

@@ -233,6 +233,10 @@ func nodeTelemetryHandler(w http.ResponseWriter, r *http.Request) {
 	if expectedPass != "" {
 		suppliedPass := r.Header.Get("X-M3TAL-Password")
 		if suppliedPass == "" {
+			w.Header().Set("X-M3TAL-Auth-Status", "password_required")
+			if suppliedProof != "" && expectedToken != "" {
+				w.Header().Set("X-M3TAL-Proof", nodeResponseProof(expectedToken, nonce, clientNonce, []byte("password required\n"), fp))
+			}
 			http.Error(w, "password required", http.StatusUnauthorized)
 			return
 		}
