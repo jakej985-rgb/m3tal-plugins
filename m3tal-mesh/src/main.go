@@ -547,10 +547,12 @@ func handleAction(req *RPCRequest) {
 			explicitPass = savedPeer.Password
 		}
 		var expectedFP string
+		savedPasswordOnly := false
 		if samePeerIP {
 			expectedFP = savedPeer.Fingerprint
+			savedPasswordOnly = savedPeer.PasswordOnly
 		}
-		testedNode, _, err := connectAndNegotiateNode(ip, explicitTok, explicitPass, cfg, expectedFP)
+		testedNode, _, err := connectAndNegotiateNode(ip, explicitTok, explicitPass, cfg, expectedFP, savedPasswordOnly)
 		if err != nil {
 			sendError(req.ID, -32002, "Connection test failed", err.Error())
 			return

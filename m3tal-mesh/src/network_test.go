@@ -1097,7 +1097,7 @@ func TestTestNodePasswordOnlyNodeWithDefaultTokenPasses(t *testing.T) {
 	addr := server.Listener.Addr().String()
 
 	// Calling connectAndNegotiateNode with explicitPass and blank token under default global token
-	node, passwordOnly, err := connectAndNegotiateNode(addr, "", "node-secret", cfg)
+	node, passwordOnly, err := connectAndNegotiateNode(addr, "", "node-secret", cfg, "")
 	if err != nil {
 		t.Fatalf("connectAndNegotiateNode failed to negotiate password-only node: %v", err)
 	}
@@ -1236,7 +1236,7 @@ func TestDefaultPasswordWithheldFromUnpinnedHostUntilAuthenticated(t *testing.T)
 	defer server.Close()
 
 	// 1. Unpinned connection: expectedFingerprint is empty
-	node, passwordOnly, err := connectAndNegotiateNode(server.Listener.Addr().String(), "", "", cfg)
+	node, passwordOnly, err := connectAndNegotiateNode(server.Listener.Addr().String(), "", "", cfg, "")
 	if err != nil {
 		t.Fatalf("expected connectAndNegotiateNode to succeed after authenticated retry: %v", err)
 	}
@@ -1275,7 +1275,7 @@ func TestDefaultPasswordNotSentToUnauthenticatedRogueHost(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, _, err := connectAndNegotiateNode(server.Listener.Addr().String(), "", "", cfg)
+	_, _, err := connectAndNegotiateNode(server.Listener.Addr().String(), "", "", cfg, "")
 	if err == nil {
 		t.Fatal("expected rogue host connection to fail")
 	}
@@ -1362,5 +1362,30 @@ func TestRefreshRemotePeersWithholdsDefaultPasswordFromUnpinnedPeer(t *testing.T
 	refreshRemotePeers()
 	if receivedPassword != "" {
 		t.Fatalf("security violation: refreshRemotePeers sent DefaultPassword to unpinned peer: %q", receivedPassword)
+	}
+}
+
+func TestEffectiveCredentialsRequiresExplicitFingerprint(t *testing.T) {
+	cfg := meshConfig{PairingToken: "default-tok", DefaultPassword: "default-pass"}
+
+	// Unpinned (empty fingerprint) does not inherit DefaultPassword
+	tok, pass := effectiveCredentials("", "", false, cfg, "")
+	if tok != "default-tok" {
+		t.Fatalf("expected inherited token 'default-tok', got %q", tok)
+	}
+	if pass != "" {
+		t.Fatalf("security violation: unpinned effectiveCredentials inherited DefaultPassword: %q", pass)
+	}
+
+	// Pinned fingerprint inherits DefaultPassword
+	tok2, pass2 := effectiveCredentials("", "", false, cfg, "sha256-pinned-fp")
+	if tok2 != "default-tok" || pass2 != "default-pass" {
+		t.Fatalf("expected ('default-tok', 'default-pass'), got (%q, %q)", tok2, pass2)
+	}
+
+	// PasswordOnly mode suppresses token
+	tok3, pass3 := effectiveCredentials("", "", true, cfg, "sha256-pinned-fp")
+	if tok3 != "" || pass3 != "default-pass" {
+		t.Fatalf("expected ('', 'default-pass'), got (%q, %q)", tok3, pass3)
 	}
 }

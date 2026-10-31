@@ -799,3 +799,68 @@ func TestUpdateNodeClearsCredentialsOnAddressChange(t *testing.T) {
 		t.Fatalf("expected Fingerprint to be cleared on address change, got: %s", persisted[0].Fingerprint)
 	}
 }
+
+func TestTestNodePreservesPasswordOnlyModeForUnchangedSavedAddressWithBlankCredentials(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	remoteNodes = []MeshNode{}
+
+	// Server accepts default password, rejects pairing token proof
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
+		if r.URL.Path == "/api/v1/telemetry" {
+			if r.Header.Get("X-M3TAL-Proof") != "" {
+				http.Error(w, "token rejected", http.StatusUnauthorized)
+				return
+			}
+			if r.Header.Get("X-M3TAL-Password") != "mesh-default-secret" {
+				http.Error(w, "invalid password", http.StatusUnauthorized)
+				return
+			}
+			body, _ := json.Marshal(remoteResponse{
+				Name: "pw-only-saved-node", Hostname: "pw-only-saved-node",
+				Telemetry: remoteTelemetry{Hostname: "pw-only-saved-node", Cores: 4, RAMTotalGB: 16, StorageTotalGB: 500},
+			})
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(body)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	addr := server.Listener.Addr().String()
+	fp := testServerFingerprint(server)
+
+	// Peer originally saved in PasswordOnly mode with blank token & password (using default password)
+	savedPeer := MeshNode{
+		ID:           "saved-pw-node-1",
+		Name:         "pw-only-saved-node",
+		IP:           addr,
+		Fingerprint:  fp,
+		PasswordOnly: true,
+		APIToken:     "",
+		Password:     "",
+	}
+	if err := persistPeerUpsert(savedPeer, false, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// Now a default token is configured in mesh config
+	cfg := meshConfig{PairingToken: "new-mesh-token", DefaultPassword: "mesh-default-secret", ListenPort: 9321}
+	if err := saveMeshConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	// test_node for the unchanged saved address with blank credentials
+	testReq := fmt.Sprintf(`{"action":"test_node","args":{"node_id":"saved-pw-node-1","ip":%q}}`, addr)
+	resp := runActionForTest(t, 24, testReq)
+	if resp.Error != nil {
+		t.Fatalf("test_node failed to preserve PasswordOnly mode for unchanged address: %s", resp.Error.Message)
+	}
+	resMap, ok := resp.Result.(map[string]interface{})
+	if !ok || resMap["success"] != true {
+		t.Fatalf("expected successful test_node response, got: %+v", resp.Result)
+	}
+}
