@@ -540,10 +540,10 @@ func handleAction(req *RPCRequest) {
 			pass = cfg.DefaultPassword
 		}
 		var expectedFP string
-		if savedPeer != nil {
+		if savedPeer != nil && (ip == savedPeer.IP || ip == "") {
 			expectedFP = savedPeer.Fingerprint
 		}
-		testedNode, err := testPeerConnection(ip, tok, pass, cfg.ListenPort, expectedFP)
+		testedNode, err := fetchRemoteWithAuth(ip, tok, pass, cfg.ListenPort, expectedFP)
 		if err != nil {
 			sendError(req.ID, -32002, "Connection test failed", err.Error())
 			return
@@ -583,6 +583,9 @@ func handleAction(req *RPCRequest) {
 			foundNode.Role = role
 		}
 		if ip != "" {
+			if ip != foundNode.IP {
+				foundNode.Fingerprint = ""
+			}
 			foundNode.IP = ip
 		}
 		if effectiveToken != "" {

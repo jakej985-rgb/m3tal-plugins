@@ -425,12 +425,9 @@ func fetchRemoteWithAuth(address, token, password string, port int, expectedFing
 	}, nil
 }
 
-func pairAndPersistPeer(address, name, role, token string, password ...string) (MeshNode, error) {
+func pairAndPersistPeer(address, name, role, token, password string) (MeshNode, error) {
 	cfg := loadMeshConfig()
-	pass := ""
-	if len(password) > 0 {
-		pass = password[0]
-	}
+	pass := password
 	if token == "" {
 		token = cfg.GetDefaultAPIToken()
 	}
@@ -613,10 +610,6 @@ func persistPeerRemoval(nodeID string) (bool, error) {
 	remoteNodes = updated
 	nodeMutex.Unlock()
 	return true, nil
-}
-
-func testPeerConnection(address, token, password string, port int, expectedFingerprint ...string) (MeshNode, error) {
-	return fetchRemoteWithAuth(address, token, password, port, expectedFingerprint...)
 }
 
 func snapshotPeers() []MeshNode {

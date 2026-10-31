@@ -536,6 +536,19 @@ func TestActionsTestNodeUpdateNodeAndGetPeers(t *testing.T) {
 	if persistedAfterClear[0].APIToken != "node-secret-tok" {
 		t.Fatalf("expected omitted APIToken to be preserved, got: %s", persistedAfterClear[0].APIToken)
 	}
+
+	// 8. update_node with new IP clears Fingerprint
+	if persistedAfterClear[0].Fingerprint == "" {
+		t.Fatal("expected peer to have pinned fingerprint before IP change")
+	}
+	ipChangeResp := runActionForTest(t, 8, fmt.Sprintf(`{"action":"update_node","args":{"node_id":%q,"ip":"127.0.0.2:9999"}}`, nodeID))
+	if ipChangeResp.Error != nil {
+		t.Fatalf("update_node with new IP failed: %s", ipChangeResp.Error.Message)
+	}
+	persistedAfterIPChange := loadPeers()
+	if persistedAfterIPChange[0].Fingerprint != "" {
+		t.Fatalf("expected fingerprint to be cleared after IP change, got: %s", persistedAfterIPChange[0].Fingerprint)
+	}
 }
 
 

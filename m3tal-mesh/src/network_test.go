@@ -172,7 +172,7 @@ func TestPeerPersistenceAcrossRestart(t *testing.T) {
 func TestFailedPairDoesNotAddOrPersistPeer(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	remoteNodes = []MeshNode{}
-	if _, err := pairAndPersistPeer("127.0.0.1:1", "unreachable", "server", "secret"); err == nil {
+	if _, err := pairAndPersistPeer("127.0.0.1:1", "unreachable", "server", "secret", ""); err == nil {
 		t.Fatal("expected unreachable node to fail pairing")
 	}
 	if peers := snapshotPeers(); len(peers) != 0 {
@@ -188,7 +188,7 @@ func TestPairingDoesNotReplaceSharedToken(t *testing.T) {
 	if err := saveMeshConfig(meshConfig{PairingToken: "first-token", ListenPort: 9321}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pairAndPersistPeer("127.0.0.1:1", "node", "server", "second-token"); err == nil {
+	if _, err := pairAndPersistPeer("127.0.0.1:1", "node", "server", "second-token", ""); err == nil {
 		t.Fatal("expected a conflicting shared token to be rejected")
 	}
 	if got := loadMeshConfig().PairingToken; got != "first-token" {
