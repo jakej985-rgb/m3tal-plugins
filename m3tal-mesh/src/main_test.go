@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -1080,3 +1081,40 @@ func TestUpdateNodeAddressNormalizationPreservesCredentialsAndPin(t *testing.T) 
 		t.Fatalf("expected Fingerprint to be preserved on normalized address, got: %s", persisted[0].Fingerprint)
 	}
 }
+
+func TestMeshInheritsCoreAPIKey(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+
+	// Case 1: Core API key provided via environment variable
+	t.Setenv("M3TAL_API_KEY", "env-core-secret-key-32chars!!")
+	cfg := loadMeshConfig()
+	if cfg.PairingToken != "env-core-secret-key-32chars!!" {
+		t.Fatalf("expected PairingToken to inherit M3TAL_API_KEY, got %q", cfg.PairingToken)
+	}
+
+	// Case 2: Core API key written to ~/.config/m3tal/api_keys.json (Core API Key Manager file)
+	t.Setenv("M3TAL_API_KEY", "")
+	coreDir := filepath.Join(tempHome, ".config", "m3tal")
+	_ = os.MkdirAll(coreDir, 0700)
+	keyData := []byte(`{"primary_token": "jellyfin-style-generated-key-123"}`)
+	_ = os.WriteFile(filepath.Join(coreDir, "api_keys.json"), keyData, 0600)
+
+	cfg2 := loadMeshConfig()
+	if cfg2.PairingToken != "jellyfin-style-generated-key-123" {
+		t.Fatalf("expected PairingToken to inherit from api_keys.json, got %q", cfg2.PairingToken)
+	}
+
+	// Verify get_settings reports using_core_key: true
+	resp := runActionForTest(t, 99, `{"action":"get_settings"}`)
+	if resp.Error != nil {
+		t.Fatalf("get_settings error: %v", resp.Error)
+	}
+	raw, _ := json.Marshal(resp.Result)
+	var settingsMap map[string]interface{}
+	_ = json.Unmarshal(raw, &settingsMap)
+	if settingsMap["using_core_key"] != true {
+		t.Errorf("expected using_core_key=true, got %v", settingsMap["using_core_key"])
+	}
+}
+

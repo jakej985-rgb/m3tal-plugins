@@ -288,14 +288,24 @@
     </div>
     <section id="mesh-settings" style="display:none;max-width:760px;width:100%;margin:0 auto;background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:24px">
       <h2 style="color:#fff;margin-bottom:8px">Mesh Pairing Settings</h2>
-      <p style="font-size:.85rem;color:var(--text-muted);line-height:1.5">Set the shared secret used to authenticate remote <code>m3tal-mesh-node</code> senders. Configure the same token in the sender’s own <b>Mesh Node Settings</b> tab.</p>
+      <p style="font-size:.85rem;color:var(--text-muted);line-height:1.5">Mesh Fleet uses the shared API key provided by <b>M3TAL Core</b>. Remote <code>m3tal-mesh-node</code> senders can be authenticated using this central key.</p>
       
       <div class="form-group" style="margin-top:22px">
-        <label class="form-label" for="mesh-pairing-token">Pairing Token / Shared Secret</label>
-        <input id="mesh-pairing-token" class="form-input" type="password" autocomplete="new-password" placeholder="Enter a shared secret">
+        <label class="form-label">Authentication API Key (Core Managed)</label>
+        <div style="background:#0d1117;border:1px solid var(--border);border-radius:6px;padding:12px 14px;display:flex;align-items:center;justify-content:space-between">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:1.1rem">🔑</span>
+            <div>
+              <div style="font-size:0.85rem;font-weight:600;color:#fff">Inherited from M3TAL Core</div>
+              <div id="mesh-core-token-status" style="font-size:0.75rem;color:var(--emerald)">Active — Central API Key Manager</div>
+            </div>
+          </div>
+          <span class="badge" style="background:rgba(16,185,129,0.15);color:var(--emerald);border:1px solid rgba(16,185,129,0.3)">Core Synchronized</span>
+        </div>
+        <input id="mesh-pairing-token" type="hidden" value="">
+        <button type="button" id="mesh-clear-token-btn" style="display:none"></button>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
-          <span style="font-size:0.75rem;color:var(--text-muted)">Shared secret used to authenticate and encrypt pairing requests</span>
-          <button type="button" id="mesh-clear-token-btn" style="background:transparent;border:none;color:var(--rose);cursor:pointer;font-size:0.75rem;padding:0;display:none" onclick="clearMeshToken()">Clear saved token</button>
+          <span style="font-size:0.75rem;color:var(--text-muted)">Mesh uses the API key provided by M3TAL Core. Manage or generate keys in <b>Core Settings → API Key Manager</b>.</span>
         </div>
       </div>
 

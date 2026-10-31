@@ -791,11 +791,14 @@ func handleAction(req *RPCRequest) {
 			sendError(req.ID, -32010, "Settings save failed", err.Error())
 			return
 		}
+		usingCoreKey := resolveCoreAPIKey() != ""
 		sendResponse(req.ID, map[string]interface{}{
 			"success":               true,
 			"message":               "Mesh settings saved",
 			"has_password":          cfg.DefaultPassword != "",
 			"has_pairing_token":     cfg.PairingToken != "",
+			"using_core_key":        usingCoreKey,
+			"core_key_active":       usingCoreKey,
 			"require_pairing_token": cfg.IsPairingTokenRequired(),
 			"discovery_enabled":     cfg.IsDiscoveryEnabled(),
 			"listen_port":           cfg.ListenPort,
@@ -830,10 +833,13 @@ func handleAction(req *RPCRequest) {
 		})
 	case "get_settings":
 		cfg := loadMeshConfig()
+		usingCoreKey := resolveCoreAPIKey() != ""
 		sendResponse(req.ID, map[string]interface{}{
 			"success":               true,
 			"has_password":          cfg.DefaultPassword != "",
 			"has_pairing_token":     cfg.PairingToken != "",
+			"using_core_key":        usingCoreKey,
+			"core_key_active":       usingCoreKey,
 			"require_pairing_token": cfg.IsPairingTokenRequired(),
 			"discovery_enabled":     cfg.IsDiscoveryEnabled(),
 			"listen_port":           cfg.ListenPort,

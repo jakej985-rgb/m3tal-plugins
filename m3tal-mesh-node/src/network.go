@@ -74,22 +74,68 @@ func saveNodeRuntimeConfig(cfg nodeRuntimeConfig) error {
 	return os.Rename(tmp, path)
 }
 
+// resolveCoreAPIKey retrieves the central API key configured in M3TAL Core.
+func resolveCoreAPIKey() string {
+	if k := os.Getenv("M3TAL_API_KEY"); k != "" {
+		return k
+	}
+	if k := os.Getenv("M3TAL_API_TOKEN"); k != "" {
+		return k
+	}
+	if k := os.Getenv("API_TOKEN"); k != "" {
+		return k
+	}
+	home, err := os.UserHomeDir()
+	if err == nil && home != "" {
+		keyFile := filepath.Join(home, ".config", "m3tal", "api_keys.json")
+		if data, err := os.ReadFile(keyFile); err == nil {
+			var parsed struct {
+				PrimaryToken string `json:"primary_token"`
+			}
+			if err := json.Unmarshal(data, &parsed); err == nil && parsed.PrimaryToken != "" {
+				return parsed.PrimaryToken
+			}
+		}
+		coreCfgFile := filepath.Join(home, ".config", "m3tal", "config.json")
+		if data, err := os.ReadFile(coreCfgFile); err == nil {
+			var parsed struct {
+				APIToken string `json:"api_token"`
+			}
+			if err := json.Unmarshal(data, &parsed); err == nil && parsed.APIToken != "" {
+				return parsed.APIToken
+			}
+		}
+		legacyCfg := filepath.Join(home, ".m3tal", "config")
+		if data, err := os.ReadFile(legacyCfg); err == nil {
+			var parsed struct {
+				APIToken string `json:"api_token"`
+			}
+			if err := json.Unmarshal(data, &parsed); err == nil && parsed.APIToken != "" {
+				return parsed.APIToken
+			}
+		}
+	}
+	return ""
+}
+
 func loadNodeRuntimeConfig() nodeRuntimeConfig {
 	cfg := nodeRuntimeConfig{
 		ListenPort:    9321,
 		BroadcastMDNS: true,
 	}
 	path := nodeConfigPath()
-	if path == "" {
-		return cfg
+	if path != "" {
+		if b, err := os.ReadFile(path); err == nil {
+			_ = json.Unmarshal(b, &cfg)
+		}
 	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return cfg
-	}
-	_ = json.Unmarshal(b, &cfg)
 	if cfg.ListenPort < 1 || cfg.ListenPort > 65535 {
 		cfg.ListenPort = 9321
+	}
+	if cfg.PairingToken == "" {
+		if coreKey := resolveCoreAPIKey(); coreKey != "" {
+			cfg.PairingToken = coreKey
+		}
 	}
 	return cfg
 }
