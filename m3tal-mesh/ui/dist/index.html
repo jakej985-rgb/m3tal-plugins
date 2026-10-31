@@ -1209,6 +1209,9 @@
         openPairModal();
 
         const results = document.getElementById('discovery-results');
+        if (results) {
+          results.style.display = 'block';
+        }
 
         if (!candidates.length) {
           results.textContent =
