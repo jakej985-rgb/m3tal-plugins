@@ -32,25 +32,37 @@ const meshServiceType = "_m3tal-mesh-node._tcp"
 
 type nodeRuntimeConfig struct {
 	PairingToken        string `json:"pairing_token,omitempty"`
-	APIToken            string `json:"api_token,omitempty"`
 	Password            string `json:"password,omitempty"`
 	RequirePairingToken *bool  `json:"require_pairing_token,omitempty"`
-	RequireAuth         *bool  `json:"require_auth,omitempty"`
 	ListenPort          int    `json:"listen_port"`
 	BroadcastMDNS       bool   `json:"broadcast_mdns"`
 }
 
-func (c nodeRuntimeConfig) GetAPIToken() string {
-	if c.APIToken != "" {
-		return c.APIToken
+func (c *nodeRuntimeConfig) UnmarshalJSON(data []byte) error {
+	type Alias nodeRuntimeConfig
+	var aux struct {
+		Alias
+		APIToken    string `json:"api_token,omitempty"`
+		RequireAuth *bool  `json:"require_auth,omitempty"`
 	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*c = nodeRuntimeConfig(aux.Alias)
+	if c.PairingToken == "" && aux.APIToken != "" {
+		c.PairingToken = aux.APIToken
+	}
+	if c.RequirePairingToken == nil && aux.RequireAuth != nil {
+		c.RequirePairingToken = aux.RequireAuth
+	}
+	return nil
+}
+
+func (c nodeRuntimeConfig) GetAPIToken() string {
 	return c.PairingToken
 }
 
 func (c nodeRuntimeConfig) IsAuthRequired() bool {
-	if c.RequireAuth != nil {
-		return *c.RequireAuth
-	}
 	if c.RequirePairingToken != nil {
 		return *c.RequirePairingToken
 	}
@@ -226,6 +238,11 @@ func nodeTelemetryHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if suppliedProof != "" && nonce != "" && clientNonce != "" {
+		if expectedToken == "" {
+			http.Error(w, "HMAC authentication requires configured API token", http.StatusUnauthorized)
+			return
+		}
+
 		// Legacy HMAC challenge-response verification
 		clientIP, _, err := net.SplitHostPort(r.RemoteAddr)
 		if err != nil {
@@ -240,6 +257,23 @@ func nodeTelemetryHandler(w http.ResponseWriter, r *http.Request) {
 		if subtle.ConstantTimeCompare([]byte(suppliedProof), []byte(nodeRequestProof(expectedToken, nonce, clientNonce, fp))) != 1 {
 			http.Error(w, "invalid pairing token", http.StatusUnauthorized)
 			return
+		}
+
+		if expectedPass != "" {
+			suppliedPass := r.Header.Get("X-M3TAL-Password")
+			if suppliedPass == "" {
+				if _, p, ok := r.BasicAuth(); ok {
+					suppliedPass = p
+				}
+			}
+			if suppliedPass == "" {
+				http.Error(w, "password required", http.StatusUnauthorized)
+				return
+			}
+			if subtle.ConstantTimeCompare([]byte(suppliedPass), []byte(expectedPass)) != 1 {
+				http.Error(w, "invalid password", http.StatusUnauthorized)
+				return
+			}
 		}
 	} else {
 		// Standard REST Bearer Token + Optional Password verification

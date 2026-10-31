@@ -299,18 +299,14 @@ func handleAction(req *RPCRequest) {
 		})
 	case "set_settings":
 		cfg := loadNodeRuntimeConfig()
-		if value, ok := params.Args["api_token"].(string); ok && strings.TrimSpace(value) != "" {
-			cfg.APIToken = strings.TrimSpace(value)
-			cfg.PairingToken = cfg.APIToken
-		} else if value, ok := params.Args["pairing_token"].(string); ok && strings.TrimSpace(value) != "" {
+		if value, ok := params.Args["pairing_token"].(string); ok && strings.TrimSpace(value) != "" {
 			cfg.PairingToken = strings.TrimSpace(value)
-			cfg.APIToken = cfg.PairingToken
-		} else if clear, ok := params.Args["clear_api_token"].(bool); ok && clear {
-			cfg.APIToken = ""
-			cfg.PairingToken = ""
+		} else if value, ok := params.Args["api_token"].(string); ok && strings.TrimSpace(value) != "" {
+			cfg.PairingToken = strings.TrimSpace(value)
 		} else if clear, ok := params.Args["clear_pairing_token"].(bool); ok && clear {
 			cfg.PairingToken = ""
-			cfg.APIToken = ""
+		} else if clear, ok := params.Args["clear_api_token"].(bool); ok && clear {
+			cfg.PairingToken = ""
 		}
 
 		if value, ok := params.Args["password"].(string); ok && strings.TrimSpace(value) != "" {
@@ -319,12 +315,10 @@ func handleAction(req *RPCRequest) {
 			cfg.Password = ""
 		}
 
-		if value, ok := params.Args["require_auth"].(bool); ok {
-			cfg.RequireAuth = &value
+		if value, ok := params.Args["require_pairing_token"].(bool); ok {
 			cfg.RequirePairingToken = &value
-		} else if value, ok := params.Args["require_pairing_token"].(bool); ok {
+		} else if value, ok := params.Args["require_auth"].(bool); ok {
 			cfg.RequirePairingToken = &value
-			cfg.RequireAuth = &value
 		}
 
 		if value, ok := params.Args["listen_port"].(float64); ok {

@@ -330,29 +330,57 @@
         <button class="btn btn-primary" onclick="saveMeshSettings()">Save Mesh Settings</button>
         <span id="mesh-settings-status" style="font-size:.8rem;color:var(--text-muted)"></span>
       </div>
+
+      <div style="margin-top:32px;padding-top:24px;border-top:1px solid var(--border)">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <div>
+            <h3 style="color:#fff;margin:0;font-size:1.1rem">Remote Node Connections</h3>
+            <p style="font-size:.8rem;color:var(--text-muted);margin:4px 0 0 0">Configured peers and credentials saved in your local mesh catalog.</p>
+          </div>
+          <button class="btn btn-primary" style="font-size:0.8rem;padding:6px 12px" onclick="openPairModal()">+ Add Connection</button>
+        </div>
+        <div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px;background:rgba(0,0,0,0.2)">
+          <table style="width:100%;border-collapse:collapse;font-size:0.8rem;text-align:left">
+            <thead>
+              <tr style="border-bottom:1px solid var(--border);color:var(--text-muted);background:rgba(255,255,255,0.02)">
+                <th style="padding:10px">Status</th>
+                <th style="padding:10px">Name</th>
+                <th style="padding:10px">Address</th>
+                <th style="padding:10px">Role</th>
+                <th style="padding:10px">Auth</th>
+                <th style="padding:10px;text-align:right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="connections-table-body">
+              <tr><td colspan="6" style="padding:24px 10px;text-align:center;color:var(--text-muted)">Loading connections...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
     </section>
   </main>
 
   <!-- Pair Node Modal -->
   <div class="modal-overlay" id="pair-modal">
     <div class="modal-card">
-      <div class="modal-title">🔗 Pair New M3TAL Node</div>
+      <input type="hidden" id="edit-node-id" value="" />
+      <div class="modal-title" id="modal-title">🔗 Connect Remote M3TAL Node</div>
       <p style="font-size: 0.8rem; color: var(--text-muted); line-height: 1.4;">
         Connect to a machine running <code style="color: var(--cyan)">m3tal-mesh-node</code> on your local network or over Tailscale.
       </p>
 
       <div class="form-group">
-        <label class="form-label">Node Friendly Name</label>
+        <label class="form-label" for="input-name">Node Friendly Name</label>
         <input class="form-input" id="input-name" placeholder="e.g. Storage Server" />
       </div>
 
       <div class="form-group">
-        <label class="form-label">IP Address or Hostname</label>
+        <label class="form-label" for="input-ip">IP Address or Hostname</label>
         <input class="form-input" id="input-ip" placeholder="192.168.1.100 or server.local" />
       </div>
 
       <div class="form-group">
-        <label class="form-label">Hardware Role</label>
+        <label class="form-label" for="input-role">Hardware Role</label>
         <select class="form-select" id="input-role">
           <option value="server">Server / Compute Node</option>
           <option value="nas">Storage NAS (ZFS / RAID)</option>
@@ -363,7 +391,7 @@
 
       <div class="form-group">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-          <label class="form-label" style="margin-bottom:0" id="label-pairing-token">Pairing Token / Secret</label>
+          <label class="form-label" style="margin-bottom:0" id="label-pairing-token" for="input-token">Pairing Token / Secret</label>
           <span id="badge-token-required" style="font-size:0.7rem;font-weight:700;padding:2px 6px;border-radius:4px;background:rgba(16,185,129,0.15);color:var(--emerald);border:1px solid rgba(16,185,129,0.3)">Required</span>
         </div>
         <input class="form-input" id="input-token" type="password" placeholder="Enter node pairing token or use configured secret" />
@@ -372,11 +400,23 @@
           ⚠️ <strong>Security Alert:</strong> Token authentication requirement is disabled. Pairing without a secret token is not recommended or safe.
         </div>
       </div>
+
+      <div class="form-group">
+        <label class="form-label" for="input-password">Optional Node Password</label>
+        <input class="form-input" id="input-password" type="password" placeholder="Leave blank if node does not require a password" />
+        <small style="color:var(--text-muted)">Secondary password if configured on the remote node.</small>
+      </div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;margin:12px 0 6px 0">
+        <button type="button" class="btn" style="font-size:0.75rem;padding:4px 10px" onclick="testModalConnection()">⚡ Test Connection</button>
+        <span id="test-connection-status" style="font-size:0.75rem;color:var(--text-muted)">Ready to test</span>
+      </div>
+
       <div id="discovery-results" style="font-size:.8rem;color:var(--text-muted)"></div>
 
       <div class="modal-actions">
         <button class="btn" onclick="closePairModal()">Cancel</button>
-        <button class="btn btn-primary" onclick="submitPairNode()">Pair Node</button>
+        <button class="btn btn-primary" id="btn-submit-pair" onclick="submitPairNode()">Connect &amp; Pair Node</button>
       </div>
     </div>
   </div>
@@ -407,7 +447,10 @@
       document.getElementById('fleet-actions').style.display = settings ? 'none' : 'flex';
       document.getElementById('fleet-tab').className = `btn ${settings ? '' : 'btn-primary'}`;
       document.getElementById('settings-tab').className = `btn ${settings ? 'btn-primary' : ''}`;
-      if (settings) loadMeshSettings();
+      if (settings) {
+        loadMeshSettings();
+        loadConnectionsTable();
+      }
     }
 
     let clearMeshTokenRequested = false;
@@ -436,7 +479,11 @@
         meshConfig = {
           ...meshConfig,
           has_pairing_token: !!actionData.has_pairing_token,
+          has_api_token: !!(actionData.has_api_token || actionData.has_pairing_token),
+          has_password: !!actionData.has_password,
+          has_default_password: !!(actionData.has_default_password || actionData.has_password),
           require_pairing_token: actionData.require_pairing_token !== false,
+          require_auth: actionData.require_auth !== false,
           discovery_enabled: actionData.discovery_enabled !== false,
           listen_port: Number(actionData.listen_port || meshConfig.listen_port || 9321)
         };
@@ -611,12 +658,18 @@
           </td>
           <td style="padding:10px;text-align:right">
             <div style="display:inline-flex;gap:6px">
-              <button class="btn" style="padding:3px 7px;font-size:0.7rem" onclick="testConnection('${escapeHtml(peer.ip)}', '${escapeHtml(peer.id)}')">⚡ Test</button>
-              <button class="btn" style="padding:3px 7px;font-size:0.7rem" onclick="editNodeConnection('${escapeHtml(peer.id)}', '${escapeHtml(peer.name)}', '${escapeHtml(peer.ip)}', '${escapeHtml(peer.role || 'server')}')">✏️ Edit</button>
-              <button class="btn" style="padding:3px 7px;font-size:0.7rem;color:var(--rose)" onclick="forgetNode('${escapeHtml(peer.id)}')">Disconnect</button>
+              <button type="button" class="btn btn-test-peer" style="padding:3px 7px;font-size:0.7rem">⚡ Test</button>
+              <button type="button" class="btn btn-edit-peer" style="padding:3px 7px;font-size:0.7rem">✏️ Edit</button>
+              <button type="button" class="btn btn-forget-peer" style="padding:3px 7px;font-size:0.7rem;color:var(--rose)">Disconnect</button>
             </div>
           </td>
         `;
+        const testBtn = row.querySelector('.btn-test-peer');
+        if (testBtn) testBtn.addEventListener('click', () => testConnection(peer.ip, peer.id));
+        const editBtn = row.querySelector('.btn-edit-peer');
+        if (editBtn) editBtn.addEventListener('click', () => editNodeConnection(peer.id, peer.name, peer.ip, peer.role || 'server'));
+        const forgetBtn = row.querySelector('.btn-forget-peer');
+        if (forgetBtn) forgetBtn.addEventListener('click', () => forgetNode(peer.id));
         tbody.appendChild(row);
       });
     }
@@ -729,16 +782,22 @@
 
           <div class="node-actions">
             <div class="node-actions-left" style="display:flex;gap:6px">
-              <button class="btn" style="padding:4px 8px; font-size:0.75rem;" onclick="pingNode('${escapeHtml(n.id)}')">⚡ Ping</button>
+              <button type="button" class="btn btn-ping-node" style="padding:4px 8px; font-size:0.75rem;">⚡ Ping</button>
               ${!n.is_local ? `
-                <button class="btn" style="padding:4px 8px; font-size:0.75rem;" onclick="editNodeConnection('${escapeHtml(n.id)}', '${escapeHtml(n.name)}', '${escapeHtml(n.ip)}', '${escapeHtml(n.role || 'server')}')">✏️ Edit</button>
+                <button type="button" class="btn btn-edit-node" style="padding:4px 8px; font-size:0.75rem;">✏️ Edit</button>
               ` : ''}
             </div>
             ${!n.is_local ? `
-              <button class="btn" style="padding:4px 8px; font-size:0.75rem; color:var(--rose);" onclick="forgetNode('${escapeHtml(n.id)}')">Forget</button>
+              <button type="button" class="btn btn-forget-node" style="padding:4px 8px; font-size:0.75rem; color:var(--rose);">Forget</button>
             ` : '<span style="font-size:0.7rem; color:var(--text-muted); font-weight:600;">Workstation Host</span>'}
           </div>
         `;
+        const pingBtn = card.querySelector('.btn-ping-node');
+        if (pingBtn) pingBtn.addEventListener('click', () => pingNode(n.id));
+        const editBtn = card.querySelector('.btn-edit-node');
+        if (editBtn) editBtn.addEventListener('click', () => editNodeConnection(n.id, n.name, n.ip, n.role || 'server'));
+        const forgetBtn = card.querySelector('.btn-forget-node');
+        if (forgetBtn) forgetBtn.addEventListener('click', () => forgetNode(n.id));
         grid.appendChild(card);
       });
 
@@ -771,7 +830,12 @@
 
     function escapeHtml(str) {
       if (!str) return '';
-      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
     }
 
     function formatStorage(gb) {

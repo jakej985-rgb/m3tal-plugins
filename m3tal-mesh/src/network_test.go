@@ -404,28 +404,47 @@ func TestFetchRemoteRESTTokenAndOptionalPassword(t *testing.T) {
 	nodeMutex.Lock()
 	remoteNodes = []MeshNode{}
 	nodeMutex.Unlock()
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth := r.Header.Get("Authorization")
-		pass := r.Header.Get("X-M3TAL-Password")
-		if auth != "Bearer node-api-token" || pass != "node-pass" {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(remoteResponse{
-			Name: "auth-server", Hostname: "auth-server",
-			Telemetry: remoteTelemetry{Hostname: "auth-server", Cores: 16, RAMTotalGB: 64, StorageTotalGB: 2000},
-		})
+		if r.URL.Path == "/api/v1/telemetry" {
+			nonce := r.Header.Get("X-M3TAL-Nonce")
+			clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
+			fp := testServerFingerprint(server)
+			pass := r.Header.Get("X-M3TAL-Password")
+			// Must receive HMAC proof (not raw Bearer token) and password
+			if r.Header.Get("X-M3TAL-Proof") != requestProof("node-api-token", nonce, clientNonce, fp) || pass != "node-pass" {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			body, _ := json.Marshal(remoteResponse{
+				Name: "auth-server", Hostname: "auth-server",
+				Telemetry: remoteTelemetry{Hostname: "auth-server", Cores: 16, RAMTotalGB: 64, StorageTotalGB: 2000},
+			})
+			w.Header().Set("X-M3TAL-Proof", responseProof("node-api-token", nonce, clientNonce, body, fp))
+			_, _ = w.Write(body)
+			return
+		}
+		http.NotFound(w, r)
 	}))
 	defer server.Close()
 
-	// 1. Valid token and password
+	// 1. Valid token and password via HMAC
 	node, err := fetchRemoteWithAuth(server.Listener.Addr().String(), "node-api-token", "node-pass", 9321)
 	if err != nil {
 		t.Fatalf("fetchRemoteWithAuth failed: %v", err)
 	}
 	if node.Name != "auth-server" || node.Cores != 16 || !node.HasPassword || !node.HasAPIToken {
 		t.Fatalf("unexpected node payload: %+v", node)
+	}
+	// Verify JSON marshaling does NOT expose token or password
+	nodeJSON, _ := json.Marshal(node)
+	if strings.Contains(string(nodeJSON), "node-api-token") || strings.Contains(string(nodeJSON), "node-pass") {
+		t.Fatalf("MeshNode JSON serialization leaked secrets: %s", nodeJSON)
 	}
 
 	// 2. Wrong password -> error
@@ -434,7 +453,47 @@ func TestFetchRemoteRESTTokenAndOptionalPassword(t *testing.T) {
 		t.Fatal("expected failure with wrong password")
 	}
 
-	// 3. Pair and persist
+	// 3. Challenge failure must fail closed (not fallback to insecure request)
+	badChallengeServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/challenge" {
+			http.Error(w, "challenge failed", http.StatusInternalServerError)
+			return
+		}
+		http.Error(w, "should not be reached", http.StatusOK)
+	}))
+	defer badChallengeServer.Close()
+	_, err = fetchRemoteWithAuth(badChallengeServer.Listener.Addr().String(), "node-api-token", "node-pass", 9321)
+	if err == nil {
+		t.Fatal("expected fetchRemoteWithAuth to fail closed when challenge fails")
+	}
+
+	// 4. Password-only peer (token == "", password != "")
+	passOnlyServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/telemetry" {
+			if r.Header.Get("X-M3TAL-Password") != "only-pass" {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(remoteResponse{
+				Name: "pass-only-server", Hostname: "pass-only-server",
+				Telemetry: remoteTelemetry{Hostname: "pass-only-server", Cores: 4, RAMTotalGB: 16, StorageTotalGB: 500},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer passOnlyServer.Close()
+
+	passNode, err := fetchRemoteWithAuth(passOnlyServer.Listener.Addr().String(), "", "only-pass", 9321)
+	if err != nil {
+		t.Fatalf("fetchRemoteWithAuth on password-only server failed: %v", err)
+	}
+	if passNode.Name != "pass-only-server" || !passNode.HasPassword || passNode.HasAPIToken {
+		t.Fatalf("unexpected password-only node: %+v", passNode)
+	}
+
+	// 5. Pair and persist
 	paired, err := pairAndPersistPeer(server.Listener.Addr().String(), "Auth Box", "nas", "node-api-token", "node-pass")
 	if err != nil {
 		t.Fatalf("pairAndPersistPeer failed: %v", err)
@@ -443,7 +502,7 @@ func TestFetchRemoteRESTTokenAndOptionalPassword(t *testing.T) {
 		t.Fatalf("unexpected paired node: %+v", paired)
 	}
 
-	// 4. Verify peers persistence
+	// 6. Verify peers persistence
 	peers := loadPeers()
 	if len(peers) != 1 || peers[0].Password != "node-pass" || peers[0].APIToken != "node-api-token" {
 		t.Fatalf("expected persisted peer with credentials, got: %+v", peers)

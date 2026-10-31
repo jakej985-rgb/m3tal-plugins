@@ -54,8 +54,10 @@ type MeshNode struct {
 	Role           string  `json:"role"`   // "workstation", "server", "nas", "edge"
 	Status         string  `json:"status"` // "online", "warning", "offline"
 	Fingerprint    string  `json:"fingerprint,omitempty"`
-	APIToken       string  `json:"api_token,omitempty"`
-	Password       string  `json:"password,omitempty"`
+	APIToken       string  `json:"-"`
+	Password       string  `json:"-"`
+	ClearAPIToken  bool    `json:"-"`
+	ClearPassword  bool    `json:"-"`
 	HasPassword    bool    `json:"has_password"`
 	HasAPIToken    bool    `json:"has_api_token"`
 	Cores          int     `json:"cores"`
@@ -425,6 +427,7 @@ func handleAction(req *RPCRequest) {
 		NodeID   string                 `json:"node_id"`
 		Name     string                 `json:"name"`
 		IP       string                 `json:"ip"`
+		Address  string                 `json:"address"`
 		Role     string                 `json:"role"`
 		Token    string                 `json:"token"`
 		APIToken string                 `json:"api_token"`
@@ -442,6 +445,9 @@ func handleAction(req *RPCRequest) {
 
 	name := raw.Name
 	ip := raw.IP
+	if ip == "" {
+		ip = raw.Address
+	}
 	role := raw.Role
 	nodeID := raw.NodeID
 	pairToken := raw.Token
@@ -453,6 +459,9 @@ func handleAction(req *RPCRequest) {
 			name = v
 		}
 		if v, ok := raw.Args["ip"].(string); ok && ip == "" {
+			ip = v
+		}
+		if v, ok := raw.Args["address"].(string); ok && ip == "" {
 			ip = v
 		}
 		if v, ok := raw.Args["role"].(string); ok && role == "" {
@@ -498,20 +507,43 @@ func handleAction(req *RPCRequest) {
 		})
 
 	case "test_node":
+		var savedPeer *MeshNode
+		if nodeID != "" {
+			for _, peer := range snapshotPeers() {
+				if peer.ID == nodeID {
+					copy := peer
+					savedPeer = &copy
+					break
+				}
+			}
+		}
+		if ip == "" && savedPeer != nil {
+			ip = savedPeer.IP
+		}
 		if ip == "" {
 			sendError(req.ID, -32602, "Invalid params", "Node IP address is required")
 			return
 		}
 		cfg := loadMeshConfig()
 		tok := effectiveToken
+		if tok == "" && savedPeer != nil {
+			tok = savedPeer.APIToken
+		}
 		if tok == "" {
 			tok = cfg.GetDefaultAPIToken()
 		}
 		pass := password
+		if pass == "" && savedPeer != nil {
+			pass = savedPeer.Password
+		}
 		if pass == "" {
 			pass = cfg.DefaultPassword
 		}
-		testedNode, err := testPeerConnection(ip, tok, pass, cfg.ListenPort)
+		var expectedFP string
+		if savedPeer != nil {
+			expectedFP = savedPeer.Fingerprint
+		}
+		testedNode, err := testPeerConnection(ip, tok, pass, cfg.ListenPort, expectedFP)
 		if err != nil {
 			sendError(req.ID, -32002, "Connection test failed", err.Error())
 			return
@@ -556,16 +588,24 @@ func handleAction(req *RPCRequest) {
 		if effectiveToken != "" {
 			foundNode.APIToken = effectiveToken
 			foundNode.HasAPIToken = true
+			foundNode.ClearAPIToken = false
 		} else if clearTok, ok := raw.Args["clear_api_token"].(bool); ok && clearTok {
 			foundNode.APIToken = ""
 			foundNode.HasAPIToken = false
+			foundNode.ClearAPIToken = true
+		} else if clearTok, ok := raw.Args["clear_token"].(bool); ok && clearTok {
+			foundNode.APIToken = ""
+			foundNode.HasAPIToken = false
+			foundNode.ClearAPIToken = true
 		}
 		if password != "" {
 			foundNode.Password = password
 			foundNode.HasPassword = true
+			foundNode.ClearPassword = false
 		} else if clearPass, ok := raw.Args["clear_password"].(bool); ok && clearPass {
 			foundNode.Password = ""
 			foundNode.HasPassword = false
+			foundNode.ClearPassword = true
 		}
 		if err := persistPeerUpsert(*foundNode); err != nil {
 			sendError(req.ID, -32003, "Could not save updated node", err.Error())
@@ -626,12 +666,24 @@ func handleAction(req *RPCRequest) {
 			return
 		}
 		cfg := loadMeshConfig()
-		updated, err := fetchRemote(target.IP, cfg.PairingToken, cfg.ListenPort, target.Fingerprint)
+		tok := target.APIToken
+		if tok == "" {
+			tok = cfg.GetDefaultAPIToken()
+		}
+		pass := target.Password
+		if pass == "" {
+			pass = cfg.DefaultPassword
+		}
+		updated, err := fetchRemoteWithAuth(target.IP, tok, pass, cfg.ListenPort, target.Fingerprint)
 		if err != nil {
 			sendError(req.ID, -32004, "Node ping failed", err.Error())
 			return
 		}
 		updated.ID, updated.Name, updated.Role = target.ID, target.Name, target.Role
+		updated.APIToken = target.APIToken
+		updated.Password = target.Password
+		updated.HasPassword = target.Password != ""
+		updated.HasAPIToken = target.APIToken != ""
 		if err := persistPeerUpsert(updated); err != nil {
 			sendError(req.ID, -32005, "Could not save node status", err.Error())
 			return
@@ -675,37 +727,30 @@ func handleAction(req *RPCRequest) {
 		})
 	case "set_settings":
 		cfg := loadMeshConfig()
-		if value, ok := raw.Args["api_token"].(string); ok && strings.TrimSpace(value) != "" {
-			cfg.DefaultAPIToken = strings.TrimSpace(value)
-			cfg.PairingToken = cfg.DefaultAPIToken
-		} else if value, ok := raw.Args["default_api_token"].(string); ok && strings.TrimSpace(value) != "" {
-			cfg.DefaultAPIToken = strings.TrimSpace(value)
-			cfg.PairingToken = cfg.DefaultAPIToken
-		} else if value, ok := raw.Args["pairing_token"].(string); ok && strings.TrimSpace(value) != "" {
+		if value, ok := raw.Args["pairing_token"].(string); ok && strings.TrimSpace(value) != "" {
 			cfg.PairingToken = strings.TrimSpace(value)
-			cfg.DefaultAPIToken = cfg.PairingToken
-		} else if clear, ok := raw.Args["clear_api_token"].(bool); ok && clear {
-			cfg.DefaultAPIToken = ""
-			cfg.PairingToken = ""
+		} else if value, ok := raw.Args["api_token"].(string); ok && strings.TrimSpace(value) != "" {
+			cfg.PairingToken = strings.TrimSpace(value)
+		} else if value, ok := raw.Args["default_api_token"].(string); ok && strings.TrimSpace(value) != "" {
+			cfg.PairingToken = strings.TrimSpace(value)
 		} else if clear, ok := raw.Args["clear_pairing_token"].(bool); ok && clear {
 			cfg.PairingToken = ""
-			cfg.DefaultAPIToken = ""
+		} else if clear, ok := raw.Args["clear_api_token"].(bool); ok && clear {
+			cfg.PairingToken = ""
 		}
 
-		if value, ok := raw.Args["password"].(string); ok && strings.TrimSpace(value) != "" {
+		if value, ok := raw.Args["default_password"].(string); ok && strings.TrimSpace(value) != "" {
 			cfg.DefaultPassword = strings.TrimSpace(value)
-		} else if value, ok := raw.Args["default_password"].(string); ok && strings.TrimSpace(value) != "" {
+		} else if value, ok := raw.Args["password"].(string); ok && strings.TrimSpace(value) != "" {
 			cfg.DefaultPassword = strings.TrimSpace(value)
 		} else if clear, ok := raw.Args["clear_password"].(bool); ok && clear {
 			cfg.DefaultPassword = ""
 		}
 
-		if value, ok := raw.Args["require_auth"].(bool); ok {
-			cfg.RequireAuth = &value
+		if value, ok := raw.Args["require_pairing_token"].(bool); ok {
 			cfg.RequirePairingToken = &value
-		} else if value, ok := raw.Args["require_pairing_token"].(bool); ok {
+		} else if value, ok := raw.Args["require_auth"].(bool); ok {
 			cfg.RequirePairingToken = &value
-			cfg.RequireAuth = &value
 		}
 		if value, ok := raw.Args["discovery_enabled"].(bool); ok {
 			cfg.DiscoveryEnabled = &value
@@ -722,6 +767,7 @@ func handleAction(req *RPCRequest) {
 			"message":               "Mesh settings saved",
 			"has_api_token":         cfg.GetDefaultAPIToken() != "",
 			"has_password":          cfg.DefaultPassword != "",
+			"has_default_password":  cfg.DefaultPassword != "",
 			"has_pairing_token":     cfg.GetDefaultAPIToken() != "",
 			"require_auth":          cfg.IsPairingTokenRequired(),
 			"require_pairing_token": cfg.IsPairingTokenRequired(),
@@ -762,6 +808,7 @@ func handleAction(req *RPCRequest) {
 			"success":               true,
 			"has_api_token":         cfg.GetDefaultAPIToken() != "",
 			"has_password":          cfg.DefaultPassword != "",
+			"has_default_password":  cfg.DefaultPassword != "",
 			"has_pairing_token":     cfg.GetDefaultAPIToken() != "",
 			"require_auth":          cfg.IsPairingTokenRequired(),
 			"require_pairing_token": cfg.IsPairingTokenRequired(),

@@ -430,19 +430,27 @@ func TestActionsTestNodeUpdateNodeAndGetPeers(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	remoteNodes = []MeshNode{}
 
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
 		if r.URL.Path == "/api/v1/telemetry" {
-			auth := r.Header.Get("Authorization")
+			nonce := r.Header.Get("X-M3TAL-Nonce")
+			clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
+			fp := testServerFingerprint(server)
 			pass := r.Header.Get("X-M3TAL-Password")
-			if auth != "Bearer node-secret-tok" || pass != "node-secret-pwd" {
+			if r.Header.Get("X-M3TAL-Proof") != requestProof("node-secret-tok", nonce, clientNonce, fp) || pass != "node-secret-pwd" {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(remoteResponse{
+			body, _ := json.Marshal(remoteResponse{
 				Name: "testbox", Hostname: "testbox",
 				Telemetry: remoteTelemetry{Hostname: "testbox", Cores: 8, RAMTotalGB: 32, StorageTotalGB: 500},
 			})
+			w.Header().Set("X-M3TAL-Proof", responseProof("node-secret-tok", nonce, clientNonce, body, fp))
+			_, _ = w.Write(body)
 			return
 		}
 		http.NotFound(w, r)
@@ -452,13 +460,13 @@ func TestActionsTestNodeUpdateNodeAndGetPeers(t *testing.T) {
 	addr := server.Listener.Addr().String()
 
 	// 1. test_node with wrong password -> fails
-	testFailResp := runActionForTest(t, 1, fmt.Sprintf(`{"action":"test_node","args":{"ip":%q,"api_token":"node-secret-tok","password":"wrong"}}`, addr))
+	testFailResp := runActionForTest(t, 1, fmt.Sprintf(`{"action":"test_node","args":{"address":%q,"api_token":"node-secret-tok","password":"wrong"}}`, addr))
 	if testFailResp.Error == nil {
 		t.Fatal("expected test_node to fail with wrong password")
 	}
 
-	// 2. test_node with correct credentials -> succeeds
-	testOkResp := runActionForTest(t, 2, fmt.Sprintf(`{"action":"test_node","args":{"ip":%q,"api_token":"node-secret-tok","password":"node-secret-pwd"}}`, addr))
+	// 2. test_node with correct credentials using "address" arg -> succeeds
+	testOkResp := runActionForTest(t, 2, fmt.Sprintf(`{"action":"test_node","args":{"address":%q,"api_token":"node-secret-tok","password":"node-secret-pwd"}}`, addr))
 	if testOkResp.Error != nil {
 		t.Fatalf("expected test_node to succeed, got error: %s", testOkResp.Error.Message)
 	}
@@ -476,9 +484,20 @@ func TestActionsTestNodeUpdateNodeAndGetPeers(t *testing.T) {
 	if pairRes.Node.Name != "Storage Box" || !pairRes.Node.HasPassword || !pairRes.Node.HasAPIToken {
 		t.Fatalf("unexpected pair result: %+v", pairRes.Node)
 	}
+	// Verify plaintext credentials are NOT in pair_node response JSON
+	if strings.Contains(string(enc), "node-secret-tok") || strings.Contains(string(enc), "node-secret-pwd") {
+		t.Fatalf("pair_node exposed secrets in JSON response: %s", enc)
+	}
 
-	// 4. get_peers
-	peersResp := runActionForTest(t, 4, `{"action":"get_peers","args":{}}`)
+	// 4. test_node using saved node_id credentials
+	nodeID := pairRes.Node.ID
+	testSavedResp := runActionForTest(t, 4, fmt.Sprintf(`{"action":"test_node","args":{"node_id":%q}}`, nodeID))
+	if testSavedResp.Error != nil {
+		t.Fatalf("expected test_node with saved node_id to succeed, got: %s", testSavedResp.Error.Message)
+	}
+
+	// 5. get_peers
+	peersResp := runActionForTest(t, 5, `{"action":"get_peers","args":{}}`)
 	if peersResp.Error != nil {
 		t.Fatalf("get_peers failed: %s", peersResp.Error.Message)
 	}
@@ -490,16 +509,32 @@ func TestActionsTestNodeUpdateNodeAndGetPeers(t *testing.T) {
 	if len(peersRes.Peers) != 1 || peersRes.Peers[0]["has_password"] != true || peersRes.Peers[0]["has_api_token"] != true {
 		t.Fatalf("unexpected get_peers result: %+v", peersRes.Peers)
 	}
+	if strings.Contains(string(encPeers), "node-secret-tok") || strings.Contains(string(encPeers), "node-secret-pwd") {
+		t.Fatalf("get_peers exposed secrets in JSON response: %s", encPeers)
+	}
 
-	// 5. update_node
-	nodeID := pairRes.Node.ID
-	updateResp := runActionForTest(t, 5, fmt.Sprintf(`{"action":"update_node","args":{"node_id":%q,"name":"Renamed NAS Box","role":"server"}}`, nodeID))
+	// 6. update_node
+	updateResp := runActionForTest(t, 6, fmt.Sprintf(`{"action":"update_node","args":{"node_id":%q,"name":"Renamed NAS Box","role":"server"}}`, nodeID))
 	if updateResp.Error != nil {
 		t.Fatalf("update_node failed: %s", updateResp.Error.Message)
 	}
 	persisted := loadPeers()
 	if len(persisted) != 1 || persisted[0].Name != "Renamed NAS Box" || persisted[0].Role != "server" || persisted[0].Password != "node-secret-pwd" {
 		t.Fatalf("unexpected persisted peer after update: %+v", persisted)
+	}
+
+	// 7. update_node clear_password distinguishes clearing from omitted credentials
+	clearResp := runActionForTest(t, 7, fmt.Sprintf(`{"action":"update_node","args":{"node_id":%q,"clear_password":true}}`, nodeID))
+	if clearResp.Error != nil {
+		t.Fatalf("update_node clear_password failed: %s", clearResp.Error.Message)
+	}
+	persistedAfterClear := loadPeers()
+	if len(persistedAfterClear) != 1 || persistedAfterClear[0].Password != "" || persistedAfterClear[0].HasPassword {
+		t.Fatalf("expected password to be cleared, got: %+v", persistedAfterClear[0])
+	}
+	// APIToken was omitted, so it should still be preserved
+	if persistedAfterClear[0].APIToken != "node-secret-tok" {
+		t.Fatalf("expected omitted APIToken to be preserved, got: %s", persistedAfterClear[0].APIToken)
 	}
 }
 

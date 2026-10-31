@@ -27,25 +27,42 @@ const meshServiceType = "_m3tal-mesh-node._tcp"
 
 type meshConfig struct {
 	PairingToken        string `json:"pairing_token,omitempty"`
-	DefaultAPIToken     string `json:"default_api_token,omitempty"`
 	DefaultPassword     string `json:"default_password,omitempty"`
 	RequirePairingToken *bool  `json:"require_pairing_token,omitempty"`
-	RequireAuth         *bool  `json:"require_auth,omitempty"`
 	ListenPort          int    `json:"listen_port"`
 	DiscoveryEnabled    *bool  `json:"discovery_enabled,omitempty"`
 }
 
-func (c meshConfig) GetDefaultAPIToken() string {
-	if c.DefaultAPIToken != "" {
-		return c.DefaultAPIToken
+func (c *meshConfig) UnmarshalJSON(data []byte) error {
+	type Alias meshConfig
+	var aux struct {
+		Alias
+		DefaultAPIToken string `json:"default_api_token,omitempty"`
+		APIToken        string `json:"api_token,omitempty"`
+		RequireAuth     *bool  `json:"require_auth,omitempty"`
 	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*c = meshConfig(aux.Alias)
+	if c.PairingToken == "" {
+		if aux.APIToken != "" {
+			c.PairingToken = aux.APIToken
+		} else if aux.DefaultAPIToken != "" {
+			c.PairingToken = aux.DefaultAPIToken
+		}
+	}
+	if c.RequirePairingToken == nil && aux.RequireAuth != nil {
+		c.RequirePairingToken = aux.RequireAuth
+	}
+	return nil
+}
+
+func (c meshConfig) GetDefaultAPIToken() string {
 	return c.PairingToken
 }
 
 func (c meshConfig) IsPairingTokenRequired() bool {
-	if c.RequireAuth != nil {
-		return *c.RequireAuth
-	}
 	if c.RequirePairingToken == nil {
 		return true
 	}
@@ -142,6 +159,12 @@ func peersPath() string {
 	return filepath.Join(home, ".config", "m3tal", "plugins", "mesh", "peers.json")
 }
 
+type peerDiskRecord struct {
+	MeshNode
+	APIToken string `json:"api_token,omitempty"`
+	Password string `json:"password,omitempty"`
+}
+
 func loadPeers() []MeshNode {
 	path := peersPath()
 	if path == "" {
@@ -151,11 +174,15 @@ func loadPeers() []MeshNode {
 	if err != nil {
 		return []MeshNode{}
 	}
-	var peers []MeshNode
-	if json.Unmarshal(b, &peers) != nil || peers == nil {
+	var records []peerDiskRecord
+	if json.Unmarshal(b, &records) != nil || records == nil {
 		return []MeshNode{}
 	}
-	for i := range peers {
+	peers := make([]MeshNode, len(records))
+	for i, r := range records {
+		peers[i] = r.MeshNode
+		peers[i].APIToken = r.APIToken
+		peers[i].Password = r.Password
 		peers[i].HasPassword = peers[i].Password != ""
 		peers[i].HasAPIToken = peers[i].APIToken != ""
 	}
@@ -172,7 +199,15 @@ func savePeers(peers []MeshNode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(peers, "", "  ")
+	records := make([]peerDiskRecord, len(peers))
+	for i, p := range peers {
+		records[i] = peerDiskRecord{
+			MeshNode: p,
+			APIToken: p.APIToken,
+			Password: p.Password,
+		}
+	}
+	b, err := json.MarshalIndent(records, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -265,46 +300,56 @@ func fetchRemoteWithAuth(address, token, password string, port int, expectedFing
 
 	var nonce, clientNonce, peerFingerprint string
 
-	if token != "" {
+	if token != "" || (len(expectedFingerprint) > 0 && expectedFingerprint[0] != "") {
 		challengeReq, err := http.NewRequest(http.MethodPost, "https://"+endpoint+"/api/v1/challenge", nil)
-		if err == nil {
-			challengeResp, err := meshHTTPClient.Do(challengeReq)
-			if err == nil {
-				if challengeResp.TLS != nil && len(challengeResp.TLS.PeerCertificates) > 0 {
-					sum := sha256.Sum256(challengeResp.TLS.PeerCertificates[0].Raw)
-					peerFingerprint = hex.EncodeToString(sum[:])
-				}
-				if challengeResp.StatusCode == http.StatusOK {
-					var challenge struct {
-						Nonce string `json:"nonce"`
-					}
-					if err := json.NewDecoder(io.LimitReader(challengeResp.Body, 4096)).Decode(&challenge); err == nil && validMeshNonce(challenge.Nonce) {
-						if cNonce, err := newMeshNonce(); err == nil {
-							clientNonce = cNonce
-							nonce = challenge.Nonce
-						}
-					}
-				}
-				challengeResp.Body.Close()
+		if err != nil {
+			return MeshNode{}, fmt.Errorf("invalid node address: %w", err)
+		}
+		challengeResp, err := meshHTTPClient.Do(challengeReq)
+		if err != nil {
+			return MeshNode{}, fmt.Errorf("cannot reach %s: %w", address, err)
+		}
+		defer challengeResp.Body.Close()
+		if challengeResp.TLS != nil && len(challengeResp.TLS.PeerCertificates) > 0 {
+			sum := sha256.Sum256(challengeResp.TLS.PeerCertificates[0].Raw)
+			peerFingerprint = hex.EncodeToString(sum[:])
+		}
+		if len(expectedFingerprint) > 0 && expectedFingerprint[0] != "" {
+			if peerFingerprint != "" && peerFingerprint != expectedFingerprint[0] {
+				return MeshNode{}, fmt.Errorf("%s certificate fingerprint mismatch: expected %s, got %s", address, expectedFingerprint[0], peerFingerprint)
 			}
 		}
+		if challengeResp.StatusCode != http.StatusOK {
+			return MeshNode{}, fmt.Errorf("%s is not a compatible m3tal-mesh-node (HTTP %d)", address, challengeResp.StatusCode)
+		}
+		var challenge struct {
+			Nonce string `json:"nonce"`
+		}
+		if err := json.NewDecoder(io.LimitReader(challengeResp.Body, 4096)).Decode(&challenge); err != nil {
+			return MeshNode{}, fmt.Errorf("%s returned an invalid pairing challenge: %w", address, err)
+		}
+		if !validMeshNonce(challenge.Nonce) {
+			return MeshNode{}, fmt.Errorf("%s returned an invalid pairing challenge", address)
+		}
+		cNonce, err := newMeshNonce()
+		if err != nil {
+			return MeshNode{}, fmt.Errorf("could not create pairing challenge: %w", err)
+		}
+		clientNonce = cNonce
+		nonce = challenge.Nonce
 	}
 
 	req, err := http.NewRequest(http.MethodGet, "https://"+endpoint+"/api/v1/telemetry", nil)
 	if err != nil {
 		return MeshNode{}, fmt.Errorf("invalid node address: %w", err)
 	}
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-		req.Header.Set("X-API-Key", token)
-	}
-	if password != "" {
-		req.Header.Set("X-M3TAL-Password", password)
-	}
 	if token != "" && nonce != "" && clientNonce != "" {
 		req.Header.Set("X-M3TAL-Nonce", nonce)
 		req.Header.Set("X-M3TAL-Client-Nonce", clientNonce)
 		req.Header.Set("X-M3TAL-Proof", requestProof(token, nonce, clientNonce, peerFingerprint))
+	}
+	if password != "" {
+		req.Header.Set("X-M3TAL-Password", password)
 	}
 	resp, err := meshHTTPClient.Do(req)
 	latency := int(time.Since(started).Milliseconds())
@@ -415,7 +460,6 @@ func pairAndPersistPeer(address, name, role, token string, password ...string) (
 
 	if cfg.PairingToken == "" && token != "" {
 		cfg.PairingToken = token
-		cfg.DefaultAPIToken = token
 		if err := saveMeshConfig(cfg); err != nil {
 			return MeshNode{}, fmt.Errorf("could not save pairing token: %w", err)
 		}
@@ -519,10 +563,10 @@ func persistPeerUpsert(node MeshNode) error {
 	updated := false
 	for i := range peers {
 		if peers[i].ID == node.ID || strings.EqualFold(peers[i].IP, node.IP) {
-			if node.APIToken == "" && peers[i].APIToken != "" {
+			if !node.ClearAPIToken && node.APIToken == "" && peers[i].APIToken != "" {
 				node.APIToken = peers[i].APIToken
 			}
-			if node.Password == "" && peers[i].Password != "" {
+			if !node.ClearPassword && node.Password == "" && peers[i].Password != "" {
 				node.Password = peers[i].Password
 			}
 			node.HasPassword = node.Password != ""
@@ -571,8 +615,8 @@ func persistPeerRemoval(nodeID string) (bool, error) {
 	return true, nil
 }
 
-func testPeerConnection(address, token, password string, port int) (MeshNode, error) {
-	return fetchRemoteWithAuth(address, token, password, port)
+func testPeerConnection(address, token, password string, port int, expectedFingerprint ...string) (MeshNode, error) {
+	return fetchRemoteWithAuth(address, token, password, port, expectedFingerprint...)
 }
 
 func snapshotPeers() []MeshNode {
@@ -618,13 +662,19 @@ func refreshRemotePeers() {
 			defer nodeMutex.Unlock()
 			for i := range remoteNodes {
 				if remoteNodes[i].ID == existing.ID {
-					name, role := remoteNodes[i].Name, remoteNodes[i].Role
+					current := remoteNodes[i]
+					if current.IP != existing.IP || current.APIToken != existing.APIToken || current.Password != existing.Password {
+						// Configuration changed while request in flight; discard stale result
+						break
+					}
+					name, role := current.Name, current.Role
 					if err == nil {
 						updated.ID, updated.Name, updated.Role = existing.ID, name, role
-						updated.APIToken = tok
-						updated.Password = pass
-						updated.HasPassword = pass != ""
-						updated.HasAPIToken = tok != ""
+						updated.IP = current.IP
+						updated.APIToken = current.APIToken
+						updated.Password = current.Password
+						updated.HasPassword = current.HasPassword
+						updated.HasAPIToken = current.HasAPIToken
 						remoteNodes[i] = updated
 					} else {
 						remoteNodes[i].Status = "offline"
