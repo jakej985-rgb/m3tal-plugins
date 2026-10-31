@@ -266,7 +266,7 @@ func handleInit(req *RPCRequest) {
 	result := map[string]interface{}{
 		"name":         PluginName,
 		"version":      PluginVersion,
-		"capabilities": []string{"collector", "actions", "ui_view"},
+		"capabilities": []string{"collector", "actions", "ui_view", "settings"},
 		"tabs": []map[string]interface{}{
 			{
 				"id":             "mesh_fleet",
@@ -542,7 +542,17 @@ func handleAction(req *RPCRequest) {
 		})
 
 	case "scan_network":
-		if loadMeshConfig().PairingToken == "" {
+		cfg := loadMeshConfig()
+		if !cfg.IsDiscoveryEnabled() {
+			sendResponse(req.ID, map[string]interface{}{
+				"success":    true,
+				"discovered": 0,
+				"nodes":      []MeshNode{},
+				"message":    "LAN discovery via mDNS is disabled in Mesh Settings.",
+			})
+			return
+		}
+		if cfg.IsPairingTokenRequired() && cfg.PairingToken == "" {
 			sendResponse(req.ID, map[string]interface{}{
 				"success":    true,
 				"discovered": 0,
@@ -563,10 +573,16 @@ func handleAction(req *RPCRequest) {
 		})
 	case "set_settings":
 		cfg := loadMeshConfig()
-		if value, ok := raw.Args["pairing_token"].(string); ok {
-			if value = strings.TrimSpace(value); value != "" {
-				cfg.PairingToken = value
-			}
+		if value, ok := raw.Args["pairing_token"].(string); ok && strings.TrimSpace(value) != "" {
+			cfg.PairingToken = strings.TrimSpace(value)
+		} else if clear, ok := raw.Args["clear_pairing_token"].(bool); ok && clear {
+			cfg.PairingToken = ""
+		}
+		if value, ok := raw.Args["require_pairing_token"].(bool); ok {
+			cfg.RequirePairingToken = &value
+		}
+		if value, ok := raw.Args["discovery_enabled"].(bool); ok {
+			cfg.DiscoveryEnabled = &value
 		}
 		if value, ok := raw.Args["listen_port"].(float64); ok {
 			cfg.ListenPort = int(value)
@@ -575,7 +591,14 @@ func handleAction(req *RPCRequest) {
 			sendError(req.ID, -32010, "Settings save failed", err.Error())
 			return
 		}
-		sendResponse(req.ID, map[string]interface{}{"success": true, "message": "Mesh settings saved"})
+		sendResponse(req.ID, map[string]interface{}{
+			"success":               true,
+			"message":               "Mesh settings saved",
+			"has_pairing_token":     cfg.PairingToken != "",
+			"require_pairing_token": cfg.IsPairingTokenRequired(),
+			"discovery_enabled":     cfg.IsDiscoveryEnabled(),
+			"listen_port":           cfg.ListenPort,
+		})
 	case "get_fleet":
 		sendResponse(req.ID, map[string]interface{}{
 			"success": true,
@@ -584,9 +607,11 @@ func handleAction(req *RPCRequest) {
 	case "get_settings":
 		cfg := loadMeshConfig()
 		sendResponse(req.ID, map[string]interface{}{
-			"success":           true,
-			"has_pairing_token": cfg.PairingToken != "",
-			"listen_port":       cfg.ListenPort,
+			"success":               true,
+			"has_pairing_token":     cfg.PairingToken != "",
+			"require_pairing_token": cfg.IsPairingTokenRequired(),
+			"discovery_enabled":     cfg.IsDiscoveryEnabled(),
+			"listen_port":           cfg.ListenPort,
 		})
 
 	default:

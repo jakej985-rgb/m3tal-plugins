@@ -128,6 +128,28 @@ func TestFetchRemoteRejectsWrongTokenAndIncompatiblePeer(t *testing.T) {
 	}
 }
 
+func TestFetchRemoteRejectsEmptyTokenWhenRequired(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	// Default config requires pairing token
+	if _, err := fetchRemote("127.0.0.1:9321", "", 9321); err == nil {
+		t.Fatal("expected fetchRemote to reject empty token when required")
+	}
+}
+
+func TestRefreshRemotePeersAuthenticationRequiredWhenTokenMissing(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	defaultTrue := true
+	if err := saveMeshConfig(meshConfig{PairingToken: "", RequirePairingToken: &defaultTrue, ListenPort: 9321}); err != nil {
+		t.Fatal(err)
+	}
+	remoteNodes = []MeshNode{{ID: "node-test", Name: "Node Test", IP: "127.0.0.1:9321", Status: "online"}}
+	refreshRemotePeers()
+	peers := snapshotPeers()
+	if len(peers) != 1 || peers[0].Status != "offline" || peers[0].LastSeen != "authentication required" {
+		t.Fatalf("expected node to be marked offline with 'authentication required', got: %+v", peers)
+	}
+}
+
 func TestPeerPersistenceAcrossRestart(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	peers := []MeshNode{{ID: "node-one", Name: "server", IP: "192.0.2.10:9321", Status: "online"}}

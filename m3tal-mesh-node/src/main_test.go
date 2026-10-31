@@ -116,3 +116,107 @@ func TestNodeSetSettingsReturnsFlat(t *testing.T) {
 		t.Fatalf("unexpected saved config: %+v", cfg)
 	}
 }
+
+func TestNodeRequirePairingTokenSetting(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	// Default should be required
+	resp := runNodeActionForTest(t, 1, `{"action_id":"get_settings","args":{}}`)
+	if resp.Error != nil {
+		t.Fatalf("get_settings failed: %s", resp.Error.Message)
+	}
+	encoded, _ := json.Marshal(resp.Result)
+	var result map[string]interface{}
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result["require_pairing_token"] != true {
+		t.Fatalf("expected require_pairing_token=true by default, got %v", result["require_pairing_token"])
+	}
+
+	// Disable requirement
+	setResp := runNodeActionForTest(t, 2, `{"action_id":"set_settings","args":{"require_pairing_token":false}}`)
+	if setResp.Error != nil {
+		t.Fatalf("set_settings failed: %s", setResp.Error.Message)
+	}
+
+	// Verify persistence
+	resp2 := runNodeActionForTest(t, 3, `{"action_id":"get_settings","args":{}}`)
+	encoded2, _ := json.Marshal(resp2.Result)
+	var result2 map[string]interface{}
+	if err := json.Unmarshal(encoded2, &result2); err != nil {
+		t.Fatal(err)
+	}
+	if result2["require_pairing_token"] != false {
+		t.Fatalf("expected require_pairing_token=false, got %v", result2["require_pairing_token"])
+	}
+}
+
+func TestNodeSetSettingsBlankTokenPreservesExisting(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := saveNodeRuntimeConfig(nodeRuntimeConfig{PairingToken: "existing-node-secret", ListenPort: 9321, BroadcastMDNS: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := runNodeActionForTest(t, 1, `{"action_id":"set_settings","args":{"pairing_token":"","listen_port":9400}}`)
+	if resp.Error != nil {
+		t.Fatalf("set_settings failed: %s", resp.Error.Message)
+	}
+	encoded, _ := json.Marshal(resp.Result)
+	var result map[string]interface{}
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result["has_pairing_token"] != true {
+		t.Fatalf("expected has_pairing_token=true, got %v", result["has_pairing_token"])
+	}
+
+	cfg := loadNodeRuntimeConfig()
+	if cfg.PairingToken != "existing-node-secret" {
+		t.Fatalf("expected PairingToken='existing-node-secret', got %q", cfg.PairingToken)
+	}
+	if cfg.ListenPort != 9400 {
+		t.Fatalf("expected ListenPort=9400, got %d", cfg.ListenPort)
+	}
+}
+
+func TestNodeSetSettingsClearPairingToken(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := saveNodeRuntimeConfig(nodeRuntimeConfig{PairingToken: "existing-node-secret", ListenPort: 9321, BroadcastMDNS: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := runNodeActionForTest(t, 1, `{"action_id":"set_settings","args":{"clear_pairing_token":true}}`)
+	if resp.Error != nil {
+		t.Fatalf("set_settings failed: %s", resp.Error.Message)
+	}
+	encoded, _ := json.Marshal(resp.Result)
+	var result map[string]interface{}
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result["has_pairing_token"] != false {
+		t.Fatalf("expected has_pairing_token=false, got %v", result["has_pairing_token"])
+	}
+
+	cfg := loadNodeRuntimeConfig()
+	if cfg.PairingToken != "" {
+		t.Fatalf("expected PairingToken to be empty, got %q", cfg.PairingToken)
+	}
+}
+
+func TestNodeSetSettingsReplacementPrioritizedOverClear(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := saveNodeRuntimeConfig(nodeRuntimeConfig{PairingToken: "existing-node-secret", ListenPort: 9321, BroadcastMDNS: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := runNodeActionForTest(t, 1, `{"action_id":"set_settings","args":{"pairing_token":"new-replacement","clear_pairing_token":true}}`)
+	if resp.Error != nil {
+		t.Fatalf("set_settings failed: %s", resp.Error.Message)
+	}
+	cfg := loadNodeRuntimeConfig()
+	if cfg.PairingToken != "new-replacement" {
+		t.Fatalf("expected replacement token 'new-replacement', got %q", cfg.PairingToken)
+	}
+}

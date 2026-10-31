@@ -114,7 +114,7 @@ func handleInit(req *RPCRequest) {
 	result := map[string]interface{}{
 		"name":         PluginName,
 		"version":      PluginVersion,
-		"capabilities": []string{"collector", "actions", "ui_view"},
+		"capabilities": []string{"collector", "actions", "ui_view", "settings"},
 		"tabs":         []map[string]interface{}{},
 		"actions": []map[string]interface{}{
 			{
@@ -299,10 +299,13 @@ func handleAction(req *RPCRequest) {
 		})
 	case "set_settings":
 		cfg := loadNodeRuntimeConfig()
-		if value, ok := params.Args["pairing_token"].(string); ok {
-			if value = strings.TrimSpace(value); value != "" {
-				cfg.PairingToken = value
-			}
+		if value, ok := params.Args["pairing_token"].(string); ok && strings.TrimSpace(value) != "" {
+			cfg.PairingToken = strings.TrimSpace(value)
+		} else if clear, ok := params.Args["clear_pairing_token"].(bool); ok && clear {
+			cfg.PairingToken = ""
+		}
+		if value, ok := params.Args["require_pairing_token"].(bool); ok {
+			cfg.RequirePairingToken = &value
 		}
 		if value, ok := params.Args["listen_port"].(float64); ok {
 			cfg.ListenPort = int(value)
@@ -314,14 +317,22 @@ func handleAction(req *RPCRequest) {
 			sendError(req.ID, -32010, "Settings save failed", err.Error())
 			return
 		}
-		sendResponse(req.ID, map[string]interface{}{"success": true, "message": "Settings saved. Restart the plugin if you changed its port or LAN discovery setting."})
+		sendResponse(req.ID, map[string]interface{}{
+			"success":               true,
+			"message":               "Settings saved. Restart the plugin if you changed its port or LAN discovery setting.",
+			"has_pairing_token":     cfg.PairingToken != "",
+			"require_pairing_token": cfg.IsPairingTokenRequired(),
+			"listen_port":           cfg.ListenPort,
+			"broadcast_mdns":        cfg.BroadcastMDNS,
+		})
 	case "get_settings":
 		cfg := loadNodeRuntimeConfig()
 		sendResponse(req.ID, map[string]interface{}{
-			"success":           true,
-			"has_pairing_token": cfg.PairingToken != "",
-			"listen_port":       cfg.ListenPort,
-			"broadcast_mdns":    cfg.BroadcastMDNS,
+			"success":               true,
+			"has_pairing_token":     cfg.PairingToken != "",
+			"require_pairing_token": cfg.IsPairingTokenRequired(),
+			"listen_port":           cfg.ListenPort,
+			"broadcast_mdns":        cfg.BroadcastMDNS,
 		})
 
 	default:

@@ -13,3 +13,7 @@ node_modules/
 
 # OS specific
 .DS_Store
+
+# Tool caches
+.claude/
+.entire/
