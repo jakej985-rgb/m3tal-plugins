@@ -599,6 +599,16 @@ func handleAction(req *RPCRequest) {
 		}
 		clearTok, _ := raw.Args["clear_api_token"].(bool)
 		clearPass, _ := raw.Args["clear_password"].(bool)
+		if addressChanged {
+			if effectiveToken == "" {
+				foundNode.APIToken = ""
+				clearTok = true
+			}
+			if password == "" {
+				foundNode.Password = ""
+				clearPass = true
+			}
+		}
 		credsChanged := false
 		if effectiveToken != "" {
 			foundNode.APIToken = effectiveToken

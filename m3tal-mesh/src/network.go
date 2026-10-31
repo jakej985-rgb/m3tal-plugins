@@ -466,24 +466,41 @@ func effectiveCredentials(explicitToken, explicitPass string, passwordOnly bool,
 }
 
 // connectAndNegotiateNode attempts to authenticate with a remote node using effective credentials.
+// To prevent exfiltration of mesh-wide secrets to untrusted or unpinned hosts, cfg.DefaultPassword
+// is not sent upfront unless an explicit password or a pinned certificate fingerprint is present.
+// If the remote host returns an authenticated password_required response, it retries with DefaultPassword.
 // If an inherited token was rejected and an explicit password was provided without an explicit token,
 // it retries in password-only mode against the remote node.
 func connectAndNegotiateNode(address, explicitToken, explicitPass string, cfg meshConfig, expectedFingerprint ...string) (MeshNode, bool, error) {
-	tok, pass := effectiveCredentials(explicitToken, explicitPass, false, cfg)
-	if cfg.IsPairingTokenRequired() && tok == "" && pass == "" {
+	hasPinnedFP := len(expectedFingerprint) > 0 && expectedFingerprint[0] != ""
+	tok := explicitToken
+	if tok == "" {
+		tok = cfg.PairingToken
+	}
+	initialPass := explicitPass
+	if initialPass == "" && hasPinnedFP {
+		initialPass = cfg.DefaultPassword
+	}
+	if cfg.IsPairingTokenRequired() && tok == "" && initialPass == "" && cfg.DefaultPassword == "" {
 		return MeshNode{}, false, fmt.Errorf("pairing token is required to authenticate remote mesh nodes; configure a shared secret in Mesh Settings or enter a pairing token")
 	}
-	node, err := fetchRemoteWithAuth(address, tok, pass, cfg.ListenPort, expectedFingerprint...)
+	node, err := fetchRemoteWithAuth(address, tok, initialPass, cfg.ListenPort, expectedFingerprint...)
 	if err != nil {
+		// Only send default password to unpinned address after an authenticated password_required response
+		if errors.Is(err, ErrPasswordRequired) && explicitPass == "" && cfg.DefaultPassword != "" {
+			if authNode, authErr := fetchRemoteWithAuth(address, tok, cfg.DefaultPassword, cfg.ListenPort, expectedFingerprint...); authErr == nil {
+				return authNode, false, nil
+			}
+		}
 		// Only retry in password-only mode when the inherited token was specifically rejected by the node
 		if explicitToken == "" && explicitPass != "" && tok != "" && errors.Is(err, ErrTokenRejected) {
-			if altNode, altErr := fetchRemoteWithAuth(address, "", pass, cfg.ListenPort, expectedFingerprint...); altErr == nil {
+			if altNode, altErr := fetchRemoteWithAuth(address, "", explicitPass, cfg.ListenPort, expectedFingerprint...); altErr == nil {
 				return altNode, true, nil
 			}
 		}
 		return MeshNode{}, false, err
 	}
-	passwordOnly := tok == "" && pass != ""
+	passwordOnly := tok == "" && initialPass != ""
 	return node, passwordOnly, nil
 }
 
@@ -660,11 +677,13 @@ func persistPeerUpsert(node MeshNode, clearToken, clearPassword bool) error {
 	if targetIdx >= 0 {
 		old := peers[targetIdx]
 		if existingIDIdx >= 0 {
-			if !clearToken && node.APIToken == "" && old.APIToken != "" {
-				node.APIToken = old.APIToken
-			}
-			if !clearPassword && node.Password == "" && old.Password != "" {
-				node.Password = old.Password
+			if node.IP == old.IP {
+				if !clearToken && node.APIToken == "" && old.APIToken != "" {
+					node.APIToken = old.APIToken
+				}
+				if !clearPassword && node.Password == "" && old.Password != "" {
+					node.Password = old.Password
+				}
 			}
 		}
 		peers[targetIdx] = node

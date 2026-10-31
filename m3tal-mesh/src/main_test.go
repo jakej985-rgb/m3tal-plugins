@@ -710,15 +710,21 @@ func TestTestNodeDoesNotLeakSavedCredentialsToDifferentAddress(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 2. Untrusted server at new address checks if sensitive password is leaked
-	var leakedPassword string
+	// 2. Untrusted server at new address checks credentials sent by client
+	var receivedPassword string
+	var receivedProof string
+	var receivedNonce string
+	var receivedClientNonce string
 	var newServer *httptest.Server
 	newServer = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if writeTestChallenge(w, r) {
 			return
 		}
 		if r.URL.Path == "/api/v1/telemetry" {
-			leakedPassword = r.Header.Get("X-M3TAL-Password")
+			receivedPassword = r.Header.Get("X-M3TAL-Password")
+			receivedProof = r.Header.Get("X-M3TAL-Proof")
+			receivedNonce = r.Header.Get("X-M3TAL-Nonce")
+			receivedClientNonce = r.Header.Get("X-M3TAL-Client-Nonce")
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -730,10 +736,66 @@ func TestTestNodeDoesNotLeakSavedCredentialsToDifferentAddress(t *testing.T) {
 
 	// 3. test_node with new IP and node_id="saved-peer-1", leaving token and password empty
 	testReq := fmt.Sprintf(`{"action":"test_node","args":{"node_id":"saved-peer-1","ip":%q}}`, newAddr)
-	_ = runActionForTest(t, 22, testReq)
+	resp := runActionForTest(t, 22, testReq)
 
-	// 4. Verify sensitive password was NOT sent to the untrusted new IP
-	if leakedPassword == "sensitive-peer-password" {
-		t.Fatal("security violation: test_node leaked saved peer password to arbitrary new address")
+	// 4. Verify test_node returned an error (untrusted server rejected probe)
+	if resp.Error == nil {
+		t.Fatal("expected test_node to report error when probe fails")
+	}
+
+	// 5. Verify sensitive password was NOT sent to the untrusted new IP
+	if receivedPassword != "" {
+		t.Fatalf("security violation: test_node sent password to arbitrary new address: %q", receivedPassword)
+	}
+
+	// 6. Verify custom per-peer token was NOT sent (only mesh default token proof may be used)
+	fp := testServerFingerprint(newServer)
+	customProof := requestProof("custom-peer-token", receivedNonce, receivedClientNonce, fp)
+	if receivedProof == customProof {
+		t.Fatal("security violation: test_node sent saved per-peer custom token to arbitrary new address")
+	}
+	defaultProof := requestProof("default-mesh-token", receivedNonce, receivedClientNonce, fp)
+	if receivedProof != defaultProof {
+		t.Fatalf("expected test_node to fall back to default mesh token proof, got: %s", receivedProof)
 	}
 }
+
+func TestUpdateNodeClearsCredentialsOnAddressChange(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	remoteNodes = []MeshNode{}
+
+	// 1. Initial saved peer with per-peer custom token and password
+	initialNode := MeshNode{
+		ID:       "peer-to-move",
+		Name:     "Moveable Peer",
+		IP:       "127.0.0.1:8888",
+		APIToken: "secret-token-to-clear",
+		Password: "secret-password-to-clear",
+	}
+	if err := persistPeerUpsert(initialNode, false, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. update_node changing IP only without supplying credentials
+	updateReq := `{"action":"update_node","args":{"node_id":"peer-to-move","ip":"127.0.0.2:9999"}}`
+	resp := runActionForTest(t, 23, updateReq)
+	if resp.Error != nil {
+		t.Fatalf("update_node failed: %s", resp.Error.Message)
+	}
+
+	// 3. Verify credentials and fingerprint were cleared on address change
+	persisted := loadPeers()
+	if len(persisted) != 1 {
+		t.Fatalf("expected 1 persisted peer, got %d", len(persisted))
+	}
+	if persisted[0].APIToken != "" {
+		t.Fatalf("expected APIToken to be cleared on address change, got: %s", persisted[0].APIToken)
+	}
+	if persisted[0].Password != "" {
+		t.Fatalf("expected Password to be cleared on address change, got: %s", persisted[0].Password)
+	}
+	if persisted[0].Fingerprint != "" {
+		t.Fatalf("expected Fingerprint to be cleared on address change, got: %s", persisted[0].Fingerprint)
+	}
+}
+
