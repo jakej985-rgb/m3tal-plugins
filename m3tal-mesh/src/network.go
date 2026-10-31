@@ -216,9 +216,10 @@ func savePeers(peers []MeshNode) error {
 	records := make([]peerDiskRecord, len(peers))
 	for i, p := range peers {
 		records[i] = peerDiskRecord{
-			MeshNode: p,
-			APIToken: p.APIToken,
-			Password: p.Password,
+			MeshNode:     p,
+			APIToken:     p.APIToken,
+			Password:     p.Password,
+			PasswordOnly: p.PasswordOnly,
 		}
 	}
 	b, err := json.MarshalIndent(records, "", "  ")
@@ -457,29 +458,33 @@ func effectiveCredentials(explicitToken, explicitPass string, passwordOnly bool,
 	return tok, pass
 }
 
-func pairAndPersistPeer(address, name, role, token, password string, passwordOnly bool) (MeshNode, error) {
-	cfg := loadMeshConfig()
-	explicitToken := token
-	explicitPass := password
-
-	connectToken, connectPass := effectiveCredentials(explicitToken, explicitPass, passwordOnly, cfg)
-	if cfg.IsPairingTokenRequired() && connectToken == "" && connectPass == "" {
-		return MeshNode{}, fmt.Errorf("pairing token is required to authenticate remote mesh nodes; configure a shared secret in Mesh Settings or enter a pairing token")
+// connectAndNegotiateNode attempts to authenticate with a remote node using effective credentials.
+// If an inherited token was rejected and an explicit password was provided without an explicit token,
+// it retries in password-only mode against the remote node.
+func connectAndNegotiateNode(address, explicitToken, explicitPass string, cfg meshConfig, expectedFingerprint ...string) (MeshNode, bool, error) {
+	tok, pass := effectiveCredentials(explicitToken, explicitPass, false, cfg)
+	if cfg.IsPairingTokenRequired() && tok == "" && pass == "" {
+		return MeshNode{}, false, fmt.Errorf("pairing token is required to authenticate remote mesh nodes; configure a shared secret in Mesh Settings or enter a pairing token")
 	}
-	node, err := fetchRemoteWithAuth(address, connectToken, connectPass, cfg.ListenPort)
+	node, err := fetchRemoteWithAuth(address, tok, pass, cfg.ListenPort, expectedFingerprint...)
 	if err != nil {
-		// If pairing failed with inherited token and the user gave a password without an explicit token,
-		// check if the remote node is a password-only node.
-		if !passwordOnly && explicitToken == "" && explicitPass != "" && connectToken != "" {
-			if altNode, altErr := fetchRemoteWithAuth(address, "", connectPass, cfg.ListenPort); altErr == nil {
-				node = altNode
-				passwordOnly = true
-				err = nil
+		// Only retry in password-only mode when the inherited token was specifically rejected by the node
+		if explicitToken == "" && explicitPass != "" && tok != "" && strings.Contains(strings.ToLower(err.Error()), "pairing token was rejected") {
+			if altNode, altErr := fetchRemoteWithAuth(address, "", pass, cfg.ListenPort, expectedFingerprint...); altErr == nil {
+				return altNode, true, nil
 			}
 		}
-		if err != nil {
-			return MeshNode{}, err
-		}
+		return MeshNode{}, false, err
+	}
+	passwordOnly := tok == "" && pass != ""
+	return node, passwordOnly, nil
+}
+
+func pairAndPersistPeer(address, name, role, token, password string) (MeshNode, error) {
+	cfg := loadMeshConfig()
+	node, passwordOnly, err := connectAndNegotiateNode(address, token, password, cfg)
+	if err != nil {
+		return MeshNode{}, err
 	}
 	if name != "" {
 		node.Name = name
@@ -487,12 +492,12 @@ func pairAndPersistPeer(address, name, role, token, password string, passwordOnl
 	if role != "" {
 		node.Role = role
 	}
-	node.APIToken = explicitToken
-	node.Password = explicitPass
+	node.APIToken = token
+	node.Password = password
 	node.PasswordOnly = passwordOnly
 
-	if cfg.PairingToken == "" && explicitToken != "" {
-		cfg.PairingToken = explicitToken
+	if cfg.PairingToken == "" && token != "" {
+		cfg.PairingToken = token
 		if err := saveMeshConfig(cfg); err != nil {
 			return MeshNode{}, fmt.Errorf("could not save pairing token: %w", err)
 		}

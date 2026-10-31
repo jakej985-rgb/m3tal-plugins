@@ -54,7 +54,7 @@ type MeshNode struct {
 	Role             string  `json:"role"`   // "workstation", "server", "nas", "edge"
 	Status           string  `json:"status"` // "online", "warning", "offline", "unverified"
 	PasswordRequired bool    `json:"password_required,omitempty"`
-	PasswordOnly     bool    `json:"password_only,omitempty"`
+	PasswordOnly     bool    `json:"-"`
 	Fingerprint      string  `json:"fingerprint,omitempty"`
 	APIToken         string  `json:"-"`
 	Password         string  `json:"-"`
@@ -507,8 +507,7 @@ func handleAction(req *RPCRequest) {
 			sendError(req.ID, -32602, "Invalid params", "Node IP address is required")
 			return
 		}
-		passwordOnly, _ := raw.Args["password_only"].(bool)
-		newNode, err := pairAndPersistPeer(ip, name, role, effectiveToken, password, passwordOnly)
+		newNode, err := pairAndPersistPeer(ip, name, role, effectiveToken, password)
 		if err != nil {
 			sendError(req.ID, -32002, "Node pairing failed", err.Error())
 			return
@@ -547,16 +546,11 @@ func handleAction(req *RPCRequest) {
 		if explicitPass == "" && samePeerIP {
 			explicitPass = savedPeer.Password
 		}
-		passwordOnly, _ := raw.Args["password_only"].(bool)
-		if !passwordOnly && samePeerIP {
-			passwordOnly = savedPeer.PasswordOnly
-		}
-		tok, pass := effectiveCredentials(explicitTok, explicitPass, passwordOnly, cfg)
 		var expectedFP string
 		if samePeerIP {
 			expectedFP = savedPeer.Fingerprint
 		}
-		testedNode, err := fetchRemoteWithAuth(ip, tok, pass, cfg.ListenPort, expectedFP)
+		testedNode, _, err := connectAndNegotiateNode(ip, explicitTok, explicitPass, cfg, expectedFP)
 		if err != nil {
 			sendError(req.ID, -32002, "Connection test failed", err.Error())
 			return
@@ -615,9 +609,6 @@ func handleAction(req *RPCRequest) {
 		}
 		if effectiveToken != "" || clearTok || clearPass {
 			foundNode.PasswordOnly = false
-		}
-		if pwOnly, ok := raw.Args["password_only"].(bool); ok {
-			foundNode.PasswordOnly = pwOnly
 		}
 		if err := persistPeerUpsert(*foundNode, clearTok, clearPass); err != nil {
 			sendError(req.ID, -32003, "Could not save updated node", err.Error())
