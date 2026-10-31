@@ -1013,8 +1013,9 @@
         return;
       }
 
-      if (!editNodeId && meshConfig.require_auth !== false && meshConfig.require_pairing_token !== false && !pairToken && !meshConfig.has_pairing_token) {
-        alert('API Token / Secret is required. Enter a token above or configure a shared secret in Mesh Settings first.');
+      const hasCreds = !!(pairToken || pairPassword || meshConfig.has_pairing_token || meshConfig.has_api_token || meshConfig.has_default_password || meshConfig.has_password);
+      if (!editNodeId && meshConfig.require_auth !== false && meshConfig.require_pairing_token !== false && !hasCreds) {
+        alert('Authentication credentials required. Enter an API Token or Password above, or configure defaults in Mesh Settings first.');
         return;
       }
 

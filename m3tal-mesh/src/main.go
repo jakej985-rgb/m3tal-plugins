@@ -709,12 +709,12 @@ func handleAction(req *RPCRequest) {
 			})
 			return
 		}
-		if cfg.IsPairingTokenRequired() && cfg.PairingToken == "" {
+		if cfg.IsPairingTokenRequired() && cfg.PairingToken == "" && cfg.DefaultPassword == "" {
 			sendResponse(req.ID, map[string]interface{}{
 				"success":    true,
 				"discovered": 0,
 				"nodes":      []MeshNode{},
-				"message":    "Set the shared pairing token in Mesh Settings to verify discovered nodes.",
+				"message":    "Set the shared pairing token or default password in Mesh Settings to verify discovered nodes.",
 			})
 			return
 		}

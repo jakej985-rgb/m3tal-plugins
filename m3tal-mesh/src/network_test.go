@@ -326,7 +326,7 @@ func TestDiscoveryConcurrentVerification(t *testing.T) {
 
 	candidates := []string{slowServer.Listener.Addr().String(), fastServer.Listener.Addr().String()}
 	start := time.Now()
-	discovered := verifyCandidates(candidates, "discovery-token", 9321)
+	discovered := verifyCandidates(candidates, "discovery-token", "", 9321)
 	elapsed := time.Since(start)
 	if len(discovered) != 1 || discovered[0].Name != "fast-node" {
 		t.Fatalf("concurrent verification failed to find fast node: %+v", discovered)
@@ -508,4 +508,96 @@ func TestFetchRemoteRESTTokenAndOptionalPassword(t *testing.T) {
 		t.Fatalf("expected persisted peer with credentials, got: %+v", peers)
 	}
 }
+
+func TestPairingWithBlankCredentialsInheritsDefaultsAndFollowsRotatedToken(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	remoteNodes = []MeshNode{}
+
+	currentSharedToken := "initial-token"
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
+		if r.URL.Path == "/api/v1/telemetry" {
+			nonce := r.Header.Get("X-M3TAL-Nonce")
+			clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
+			fp := testServerFingerprint(server)
+			if r.Header.Get("X-M3TAL-Proof") != requestProof(currentSharedToken, nonce, clientNonce, fp) {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			body, _ := json.Marshal(remoteResponse{
+				Name: "default-peer", Hostname: "default-peer",
+				Telemetry: remoteTelemetry{Hostname: "default-peer", Cores: 4, RAMTotalGB: 16, StorageTotalGB: 200},
+			})
+			w.Header().Set("X-M3TAL-Proof", responseProof(currentSharedToken, nonce, clientNonce, body, fp))
+			_, _ = w.Write(body)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	if err := saveMeshConfig(meshConfig{PairingToken: "initial-token", ListenPort: 9321}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pair with blank credentials
+	addr := server.Listener.Addr().String()
+	paired, err := pairAndPersistPeer(addr, "Default Peer", "worker", "", "")
+	if err != nil {
+		t.Fatalf("pairAndPersistPeer failed: %v", err)
+	}
+	if paired.APIToken != "" || paired.Password != "" || paired.HasAPIToken || paired.HasPassword {
+		t.Fatalf("expected empty credential overrides on peer, got: %+v", paired)
+	}
+
+	// Rotate shared token on both mesh config and server
+	currentSharedToken = "rotated-token"
+	if err := saveMeshConfig(meshConfig{PairingToken: "rotated-token", ListenPort: 9321}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Refresh remote peers - should use the rotated default token
+	refreshRemotePeers()
+	peers := snapshotPeers()
+	if len(peers) != 1 || peers[0].Status != "online" {
+		t.Fatalf("expected peer to refresh successfully with rotated token, got: %+v", peers)
+	}
+}
+
+func TestDiscoveryVerifyCandidatesUsesDefaultPassword(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	remoteNodes = []MeshNode{}
+
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
+		if r.URL.Path == "/api/v1/telemetry" {
+			if r.Header.Get("X-M3TAL-Password") != "discovery-secret-pwd" {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(remoteResponse{
+				Name: "discovered-box", Hostname: "discovered-box",
+				Telemetry: remoteTelemetry{Hostname: "discovered-box", Cores: 8, RAMTotalGB: 32, StorageTotalGB: 1000},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	addr := server.Listener.Addr().String()
+	discovered := verifyCandidates([]string{addr}, "", "discovery-secret-pwd", 9321)
+	if len(discovered) != 1 || discovered[0].Name != "discovered-box" {
+		t.Fatalf("expected candidate to be verified using default password, got: %+v", discovered)
+	}
+}
+
 

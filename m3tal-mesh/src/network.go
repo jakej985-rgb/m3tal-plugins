@@ -284,7 +284,8 @@ func responseProof(token, nonce, clientNonce string, body []byte, certFingerprin
 }
 
 func fetchRemote(address, token string, port int, expectedFingerprint ...string) (MeshNode, error) {
-	return fetchRemoteWithAuth(address, token, "", port, expectedFingerprint...)
+	cfg := loadMeshConfig()
+	return fetchRemoteWithAuth(address, token, cfg.DefaultPassword, port, expectedFingerprint...)
 }
 
 func fetchRemoteWithAuth(address, token, password string, port int, expectedFingerprint ...string) (MeshNode, error) {
@@ -427,20 +428,24 @@ func fetchRemoteWithAuth(address, token, password string, port int, expectedFing
 
 func pairAndPersistPeer(address, name, role, token, password string) (MeshNode, error) {
 	cfg := loadMeshConfig()
-	pass := password
-	if token == "" {
-		token = cfg.GetDefaultAPIToken()
+	explicitToken := token
+	explicitPass := password
+
+	connectToken := explicitToken
+	if connectToken == "" {
+		connectToken = cfg.GetDefaultAPIToken()
 	}
-	if pass == "" && cfg.DefaultPassword != "" {
-		pass = cfg.DefaultPassword
+	connectPass := explicitPass
+	if connectPass == "" && cfg.DefaultPassword != "" {
+		connectPass = cfg.DefaultPassword
 	}
-	if cfg.IsPairingTokenRequired() && token == "" && pass == "" {
+	if cfg.IsPairingTokenRequired() && connectToken == "" && connectPass == "" {
 		return MeshNode{}, fmt.Errorf("pairing token is required to authenticate remote mesh nodes; configure a shared secret in Mesh Settings or enter a pairing token")
 	}
-	if cfg.PairingToken != "" && token != "" && token != cfg.PairingToken && pass == "" {
+	if cfg.PairingToken != "" && connectToken != "" && connectToken != cfg.PairingToken && connectPass == "" {
 		return MeshNode{}, fmt.Errorf("this mesh uses one shared pairing token; configure the same token in Mesh Settings before pairing")
 	}
-	node, err := fetchRemoteWithAuth(address, token, pass, cfg.ListenPort)
+	node, err := fetchRemoteWithAuth(address, connectToken, connectPass, cfg.ListenPort)
 	if err != nil {
 		return MeshNode{}, err
 	}
@@ -450,13 +455,13 @@ func pairAndPersistPeer(address, name, role, token, password string) (MeshNode, 
 	if role != "" {
 		node.Role = role
 	}
-	node.APIToken = token
-	node.Password = pass
-	node.HasPassword = pass != ""
-	node.HasAPIToken = token != ""
+	node.APIToken = explicitToken
+	node.Password = explicitPass
+	node.HasPassword = explicitPass != ""
+	node.HasAPIToken = explicitToken != ""
 
-	if cfg.PairingToken == "" && token != "" {
-		cfg.PairingToken = token
+	if cfg.PairingToken == "" && explicitToken != "" {
+		cfg.PairingToken = explicitToken
 		if err := saveMeshConfig(cfg); err != nil {
 			return MeshNode{}, fmt.Errorf("could not save pairing token: %w", err)
 		}
@@ -472,7 +477,7 @@ func discoverAndVerifyPeers() ([]MeshNode, error) {
 	if !cfg.IsDiscoveryEnabled() {
 		return []MeshNode{}, nil
 	}
-	if cfg.IsPairingTokenRequired() && cfg.PairingToken == "" {
+	if cfg.IsPairingTokenRequired() && cfg.PairingToken == "" && cfg.DefaultPassword == "" {
 		return []MeshNode{}, nil
 	}
 	resolver, err := zeroconf.NewResolver(zeroconf.SelectIPTraffic(zeroconf.IPv4))
@@ -527,12 +532,12 @@ func discoverAndVerifyPeers() ([]MeshNode, error) {
 				candidates = append(candidates, address)
 			}
 		case <-ctx.Done():
-			return verifyCandidates(candidates, cfg.PairingToken, cfg.ListenPort), nil
+			return verifyCandidates(candidates, cfg.PairingToken, cfg.DefaultPassword, cfg.ListenPort), nil
 		}
 	}
 }
 
-func verifyCandidates(candidates []string, token string, port int) []MeshNode {
+func verifyCandidates(candidates []string, token, password string, port int) []MeshNode {
 	var wg sync.WaitGroup
 	mu := sync.Mutex{}
 	discovered := make([]MeshNode, 0)
@@ -541,7 +546,7 @@ func verifyCandidates(candidates []string, token string, port int) []MeshNode {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			node, err := fetchRemote(address, token, port)
+			node, err := fetchRemoteWithAuth(address, token, password, port)
 			if err == nil {
 				mu.Lock()
 				discovered = append(discovered, node)
