@@ -539,6 +539,88 @@
       setTimeout(() => { toast.style.display = 'none'; }, 3000);
     }
 
+    async function loadConnectionsTable() {
+      const tbody = document.getElementById('connections-table-body');
+      if (!tbody) return;
+      try {
+        const res = await fetch(`/api/v2/plugins/mesh/action?token=${encodeURIComponent(token)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'get_peers', args: {} })
+        });
+        const body = await res.json();
+        const actionData = {
+          ...(body.data?.payload ?? {}),
+          ...(body.data ?? {})
+        };
+        const peers = actionData.peers || [];
+        renderConnectionsTable(peers);
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="6" style="padding:14px;text-align:center;color:var(--rose)">Failed to load connections: ${escapeHtml(err.message)}</td></tr>`;
+      }
+    }
+
+    function renderConnectionsTable(peers) {
+      const tbody = document.getElementById('connections-table-body');
+      if (!tbody) return;
+      if (!peers || peers.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="6" style="padding:24px 10px;text-align:center;color:var(--text-muted)">
+              No remote node connections configured yet. Click <strong>+ Add Connection</strong> above to pair a node.
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      tbody.innerHTML = '';
+      peers.forEach((peer) => {
+        const live = fleetNodes.find(n => n.id === peer.id || n.ip === peer.ip);
+        const isOnline = live ? live.status === 'online' : (peer.status === 'online');
+        const pingMs = live?.ping_ms || peer.ping_ms || 0;
+
+        const row = document.createElement('tr');
+        row.style.borderBottom = '1px solid rgba(255,255,255,0.05)';
+
+        row.innerHTML = `
+          <td style="padding:10px">
+            <span class="status-badge ${isOnline ? 'status-online' : 'status-warning'}" style="font-size:0.7rem;padding:2px 6px">
+              <span style="width:6px; height:6px; border-radius:50%; background:${isOnline ? 'var(--emerald)' : 'var(--amber)'};"></span>
+              ${isOnline ? (pingMs + ' ms') : 'Offline'}
+            </span>
+          </td>
+          <td style="padding:10px;font-weight:600;color:#fff">${escapeHtml(peer.name || peer.id)}</td>
+          <td style="padding:10px;font-family:monospace;color:var(--cyan);font-size:0.75rem">${escapeHtml(peer.ip)}</td>
+          <td style="padding:10px">
+            <span class="node-role-badge role-${peer.role || 'server'}" style="font-size:0.65rem">${escapeHtml(peer.role || 'server')}</span>
+          </td>
+          <td style="padding:10px">
+            <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center">
+              ${peer.has_api_token
+                ? '<span style="font-size:0.68rem;padding:2px 5px;border-radius:4px;background:rgba(16,185,129,0.15);color:var(--emerald);border:1px solid rgba(16,185,129,0.3)">API Key</span>'
+                : (meshConfig.has_pairing_token
+                    ? '<span style="font-size:0.68rem;padding:2px 5px;border-radius:4px;background:rgba(255,255,255,0.06);color:var(--text-muted);border:1px solid var(--border)">Default Token</span>'
+                    : '<span style="font-size:0.68rem;padding:2px 5px;border-radius:4px;background:rgba(244,63,94,0.15);color:#fda4af;border:1px solid rgba(244,63,94,0.3)">No Token</span>')}
+              ${peer.has_password
+                ? '<span style="font-size:0.68rem;padding:2px 5px;border-radius:4px;background:rgba(56,189,248,0.15);color:var(--cyan);border:1px solid rgba(56,189,248,0.3)">Password</span>'
+                : (meshConfig.has_default_password
+                    ? '<span style="font-size:0.68rem;padding:2px 5px;border-radius:4px;background:rgba(255,255,255,0.06);color:var(--text-muted);border:1px solid var(--border)">Default Pass</span>'
+                    : '')}
+            </div>
+          </td>
+          <td style="padding:10px;text-align:right">
+            <div style="display:inline-flex;gap:6px">
+              <button class="btn" style="padding:3px 7px;font-size:0.7rem" onclick="testConnection('${escapeHtml(peer.ip)}', '${escapeHtml(peer.id)}')">⚡ Test</button>
+              <button class="btn" style="padding:3px 7px;font-size:0.7rem" onclick="editNodeConnection('${escapeHtml(peer.id)}', '${escapeHtml(peer.name)}', '${escapeHtml(peer.ip)}', '${escapeHtml(peer.role || 'server')}')">✏️ Edit</button>
+              <button class="btn" style="padding:3px 7px;font-size:0.7rem;color:var(--rose)" onclick="forgetNode('${escapeHtml(peer.id)}')">Disconnect</button>
+            </div>
+          </td>
+        `;
+        tbody.appendChild(row);
+      });
+    }
+
     function renderFleet() {
       const grid = document.getElementById('nodes-grid');
       grid.innerHTML = '';
@@ -646,8 +728,11 @@
           ` : ''}
 
           <div class="node-actions">
-            <div class="node-actions-left">
+            <div class="node-actions-left" style="display:flex;gap:6px">
               <button class="btn" style="padding:4px 8px; font-size:0.75rem;" onclick="pingNode('${escapeHtml(n.id)}')">⚡ Ping</button>
+              ${!n.is_local ? `
+                <button class="btn" style="padding:4px 8px; font-size:0.75rem;" onclick="editNodeConnection('${escapeHtml(n.id)}', '${escapeHtml(n.name)}', '${escapeHtml(n.ip)}', '${escapeHtml(n.role || 'server')}')">✏️ Edit</button>
+              ` : ''}
             </div>
             ${!n.is_local ? `
               <button class="btn" style="padding:4px 8px; font-size:0.75rem; color:var(--rose);" onclick="forgetNode('${escapeHtml(n.id)}')">Forget</button>
@@ -713,7 +798,18 @@
     }
 
     function openPairModal() {
-      const isRequired = meshConfig.require_pairing_token !== false;
+      document.getElementById('edit-node-id').value = '';
+      document.getElementById('modal-title').textContent = '🔗 Connect Remote M3TAL Node';
+      document.getElementById('btn-submit-pair').textContent = 'Connect & Pair Node';
+      document.getElementById('test-connection-status').textContent = 'Ready to test';
+      document.getElementById('test-connection-status').style.color = 'var(--text-muted)';
+
+      document.getElementById('input-name').value = '';
+      document.getElementById('input-ip').value = '';
+      document.getElementById('input-role').value = 'server';
+      document.getElementById('input-password').value = '';
+
+      const isRequired = meshConfig.require_auth !== false && meshConfig.require_pairing_token !== false;
       const badge = document.getElementById('badge-token-required');
       const warning = document.getElementById('modal-safety-warning');
       const help = document.getElementById('token-help-text');
@@ -727,19 +823,113 @@
         badge.style.borderColor = 'rgba(16,185,129,0.3)';
         warning.style.display = 'none';
         input.placeholder = meshConfig.has_pairing_token
-          ? 'Leave blank to use saved shared secret'
-          : 'Enter pairing token (required)';
-        help.textContent = 'Must match the token configured on the remote sender.';
+          ? 'Leave blank to use saved default API token'
+          : 'Enter node API token (required)';
+        help.textContent = 'Must match the API token configured on the remote node.';
       } else {
         badge.textContent = 'Optional (Insecure)';
         badge.style.background = 'rgba(244,63,94,0.15)';
         badge.style.color = '#fda4af';
         badge.style.borderColor = 'rgba(244,63,94,0.3)';
         warning.style.display = 'block';
-        input.placeholder = 'Optional — leave blank for unauthenticated pairing';
-        help.textContent = 'Warning: Node pairing without token authentication is not advised.';
+        input.placeholder = 'Optional — leave blank for unauthenticated connection';
+        help.textContent = 'Warning: Node connection without authentication is not recommended.';
       }
       document.getElementById('pair-modal').style.display = 'flex';
+    }
+
+    function editNodeConnection(id, name, ip, role) {
+      document.getElementById('edit-node-id').value = id;
+      document.getElementById('modal-title').textContent = '✏️ Edit Node Connection';
+      document.getElementById('btn-submit-pair').textContent = 'Save Changes';
+      document.getElementById('test-connection-status').textContent = 'Ready to test';
+      document.getElementById('test-connection-status').style.color = 'var(--text-muted)';
+
+      document.getElementById('input-name').value = name || '';
+      document.getElementById('input-ip').value = ip || '';
+      document.getElementById('input-role').value = role || 'server';
+
+      const inputToken = document.getElementById('input-token');
+      inputToken.value = '';
+      inputToken.placeholder = 'Leave blank to keep existing API token';
+
+      const inputPass = document.getElementById('input-password');
+      inputPass.value = '';
+      inputPass.placeholder = 'Leave blank to keep existing password';
+
+      document.getElementById('pair-modal').style.display = 'flex';
+    }
+
+    async function testModalConnection() {
+      const ip = document.getElementById('input-ip').value.trim();
+      const statusSpan = document.getElementById('test-connection-status');
+      if (!ip) {
+        statusSpan.textContent = 'Specify an IP or hostname first';
+        statusSpan.style.color = 'var(--rose)';
+        return;
+      }
+      const pairToken = document.getElementById('input-token').value.trim();
+      const pairPassword = document.getElementById('input-password').value.trim();
+      const nodeId = document.getElementById('edit-node-id').value.trim();
+
+      statusSpan.textContent = 'Testing connection...';
+      statusSpan.style.color = 'var(--text-muted)';
+
+      try {
+        const res = await fetch(`/api/v2/plugins/mesh/action?token=${encodeURIComponent(token)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'test_node',
+            args: {
+              address: ip,
+              node_id: nodeId,
+              token: pairToken,
+              password: pairPassword
+            }
+          })
+        });
+        const body = await res.json();
+        const actionData = {
+          ...(body.data?.payload ?? {}),
+          ...(body.data ?? {})
+        };
+        if (!res.ok || body.status !== 'success' || actionData.success === false) {
+          throw new Error(body.error?.message || actionData.error || actionData.message || 'Connection test failed');
+        }
+        statusSpan.textContent = `✓ Connected (${actionData.ping_ms || 0} ms)`;
+        statusSpan.style.color = 'var(--emerald)';
+      } catch (err) {
+        statusSpan.textContent = `✗ Failed: ${err.message}`;
+        statusSpan.style.color = 'var(--rose)';
+      }
+    }
+
+    async function testConnection(address, id) {
+      showToast(`Testing connection to ${address}...`);
+      try {
+        const res = await fetch(`/api/v2/plugins/mesh/action?token=${encodeURIComponent(token)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'test_node',
+            args: { address: address, node_id: id }
+          })
+        });
+        const body = await res.json();
+        const actionData = {
+          ...(body.data?.payload ?? {}),
+          ...(body.data ?? {})
+        };
+        if (!res.ok || body.status !== 'success' || actionData.success === false) {
+          throw new Error(body.error?.message || actionData.error || actionData.message || 'Test failed');
+        }
+        showToast(`✓ ${address} connected in ${actionData.ping_ms || 0} ms`);
+        await loadConnectionsTable();
+        await fetchCollect();
+      } catch (err) {
+        showToast(`Connection failed: ${err.message}`, true);
+      }
     }
 
     function closePairModal() {
@@ -747,28 +937,42 @@
     }
 
     async function submitPairNode() {
+      const editNodeId = document.getElementById('edit-node-id').value.trim();
       const name = document.getElementById('input-name').value.trim();
       const ip = document.getElementById('input-ip').value.trim();
       const role = document.getElementById('input-role').value;
       const pairToken = document.getElementById('input-token').value.trim();
+      const pairPassword = document.getElementById('input-password').value.trim();
 
       if (!ip) {
         alert('Please specify an IP address or hostname.');
         return;
       }
 
-      if (meshConfig.require_pairing_token !== false && !pairToken && !meshConfig.has_pairing_token) {
-        alert('Pairing Token / Secret is required. Enter a token above or configure a shared secret in Mesh Settings first.');
+      if (!editNodeId && meshConfig.require_auth !== false && meshConfig.require_pairing_token !== false && !pairToken && !meshConfig.has_pairing_token) {
+        alert('API Token / Secret is required. Enter a token above or configure a shared secret in Mesh Settings first.');
         return;
       }
 
       try {
+        const actionName = editNodeId ? 'update_node' : 'pair_node';
+        const actionArgs = {
+          name,
+          ip,
+          role,
+          token: pairToken,
+          password: pairPassword
+        };
+        if (editNodeId) {
+          actionArgs.node_id = editNodeId;
+        }
+
         const res = await fetch(`/api/v2/plugins/mesh/action?token=${encodeURIComponent(token)}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            action: 'pair_node',
-            args: { name, ip, role, token: pairToken }
+            action: actionName,
+            args: actionArgs
           })
         });
 
@@ -778,33 +982,23 @@
           ...(body.data?.payload ?? {}),
           ...(body.data ?? {})
         };
-        if (!res.ok) {
-          throw new Error(
-            body.error?.message ||
-            actionData.error ||
-            'Pairing request failed'
-          );
-        }
-
-        if (
-          body.status !== 'success' ||
-          actionData.success === false
-        ) {
+        if (!res.ok || body.status !== 'success' || actionData.success === false) {
           throw new Error(
             body.error?.message ||
             actionData.error ||
             actionData.message ||
-            'Pairing request failed'
+            (editNodeId ? 'Update failed' : 'Pairing request failed')
           );
         }
 
-        showToast(actionData.message || `Paired ${ip}`);
+        showToast(actionData.message || (editNodeId ? `Updated ${name || ip}` : `Paired ${ip}`));
         closePairModal();
         await loadMeshSettings();
+        await loadConnectionsTable();
         await fetchCollect();
 
       } catch (e) {
-        showToast(e.message || `Could not pair ${ip}`, true);
+        showToast(e.message || `Could not save connection for ${ip}`, true);
       }
     }
 
@@ -888,6 +1082,7 @@
         }
 
         await fetchCollect();
+        await loadConnectionsTable();
         showToast(actionData.message || 'Node removed');
       } catch (err) {
         showToast('Could not remove node. Try again.', true);

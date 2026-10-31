@@ -299,14 +299,34 @@ func handleAction(req *RPCRequest) {
 		})
 	case "set_settings":
 		cfg := loadNodeRuntimeConfig()
-		if value, ok := params.Args["pairing_token"].(string); ok && strings.TrimSpace(value) != "" {
+		if value, ok := params.Args["api_token"].(string); ok && strings.TrimSpace(value) != "" {
+			cfg.APIToken = strings.TrimSpace(value)
+			cfg.PairingToken = cfg.APIToken
+		} else if value, ok := params.Args["pairing_token"].(string); ok && strings.TrimSpace(value) != "" {
 			cfg.PairingToken = strings.TrimSpace(value)
+			cfg.APIToken = cfg.PairingToken
+		} else if clear, ok := params.Args["clear_api_token"].(bool); ok && clear {
+			cfg.APIToken = ""
+			cfg.PairingToken = ""
 		} else if clear, ok := params.Args["clear_pairing_token"].(bool); ok && clear {
 			cfg.PairingToken = ""
+			cfg.APIToken = ""
 		}
-		if value, ok := params.Args["require_pairing_token"].(bool); ok {
+
+		if value, ok := params.Args["password"].(string); ok && strings.TrimSpace(value) != "" {
+			cfg.Password = strings.TrimSpace(value)
+		} else if clear, ok := params.Args["clear_password"].(bool); ok && clear {
+			cfg.Password = ""
+		}
+
+		if value, ok := params.Args["require_auth"].(bool); ok {
+			cfg.RequireAuth = &value
 			cfg.RequirePairingToken = &value
+		} else if value, ok := params.Args["require_pairing_token"].(bool); ok {
+			cfg.RequirePairingToken = &value
+			cfg.RequireAuth = &value
 		}
+
 		if value, ok := params.Args["listen_port"].(float64); ok {
 			cfg.ListenPort = int(value)
 		}
@@ -320,8 +340,11 @@ func handleAction(req *RPCRequest) {
 		sendResponse(req.ID, map[string]interface{}{
 			"success":               true,
 			"message":               "Settings saved. Restart the plugin if you changed its port or LAN discovery setting.",
-			"has_pairing_token":     cfg.PairingToken != "",
-			"require_pairing_token": cfg.IsPairingTokenRequired(),
+			"has_api_token":         cfg.GetAPIToken() != "",
+			"has_password":          cfg.Password != "",
+			"has_pairing_token":     cfg.GetAPIToken() != "",
+			"require_auth":          cfg.IsAuthRequired(),
+			"require_pairing_token": cfg.IsAuthRequired(),
 			"listen_port":           cfg.ListenPort,
 			"broadcast_mdns":        cfg.BroadcastMDNS,
 		})
@@ -329,8 +352,11 @@ func handleAction(req *RPCRequest) {
 		cfg := loadNodeRuntimeConfig()
 		sendResponse(req.ID, map[string]interface{}{
 			"success":               true,
-			"has_pairing_token":     cfg.PairingToken != "",
-			"require_pairing_token": cfg.IsPairingTokenRequired(),
+			"has_api_token":         cfg.GetAPIToken() != "",
+			"has_password":          cfg.Password != "",
+			"has_pairing_token":     cfg.GetAPIToken() != "",
+			"require_auth":          cfg.IsAuthRequired(),
+			"require_pairing_token": cfg.IsAuthRequired(),
 			"listen_port":           cfg.ListenPort,
 			"broadcast_mdns":        cfg.BroadcastMDNS,
 		})

@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,17 +31,34 @@ import (
 const meshServiceType = "_m3tal-mesh-node._tcp"
 
 type nodeRuntimeConfig struct {
-	PairingToken        string `json:"pairing_token"`
+	PairingToken        string `json:"pairing_token,omitempty"`
+	APIToken            string `json:"api_token,omitempty"`
+	Password            string `json:"password,omitempty"`
 	RequirePairingToken *bool  `json:"require_pairing_token,omitempty"`
+	RequireAuth         *bool  `json:"require_auth,omitempty"`
 	ListenPort          int    `json:"listen_port"`
 	BroadcastMDNS       bool   `json:"broadcast_mdns"`
 }
 
-func (c nodeRuntimeConfig) IsPairingTokenRequired() bool {
-	if c.RequirePairingToken == nil {
-		return true
+func (c nodeRuntimeConfig) GetAPIToken() string {
+	if c.APIToken != "" {
+		return c.APIToken
 	}
-	return *c.RequirePairingToken
+	return c.PairingToken
+}
+
+func (c nodeRuntimeConfig) IsAuthRequired() bool {
+	if c.RequireAuth != nil {
+		return *c.RequireAuth
+	}
+	if c.RequirePairingToken != nil {
+		return *c.RequirePairingToken
+	}
+	return true
+}
+
+func (c nodeRuntimeConfig) IsPairingTokenRequired() bool {
+	return c.IsAuthRequired()
 }
 
 func nodeConfigPath() string {
@@ -188,16 +206,27 @@ func nodeTelemetryHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	current := loadNodeRuntimeConfig()
-	if current.IsPairingTokenRequired() && current.PairingToken == "" {
-		http.Error(w, "pairing token is not configured on this node", http.StatusServiceUnavailable)
+	expectedToken := current.GetAPIToken()
+	expectedPass := current.Password
+	authRequired := current.IsAuthRequired()
+
+	if authRequired && expectedToken == "" && expectedPass == "" {
+		http.Error(w, "authentication is required but neither API token nor password is configured on this node", http.StatusServiceUnavailable)
 		return
 	}
-	var nonce, clientNonce, fp string
-	if current.PairingToken != "" {
-		nonce = r.Header.Get("X-M3TAL-Nonce")
-		clientNonce = r.Header.Get("X-M3TAL-Client-Nonce")
-		supplied := r.Header.Get("X-M3TAL-Proof")
 
+	suppliedProof := r.Header.Get("X-M3TAL-Proof")
+	nonce := r.Header.Get("X-M3TAL-Nonce")
+	clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
+	var fp string
+	if r.TLS != nil {
+		nodeCertFingerprintMu.RLock()
+		fp = nodeCertFingerprint
+		nodeCertFingerprintMu.RUnlock()
+	}
+
+	if suppliedProof != "" && nonce != "" && clientNonce != "" {
+		// Legacy HMAC challenge-response verification
 		clientIP, _, err := net.SplitHostPort(r.RemoteAddr)
 		if err != nil {
 			clientIP = r.RemoteAddr
@@ -208,15 +237,51 @@ func nodeTelemetryHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if r.TLS != nil {
-			nodeCertFingerprintMu.RLock()
-			fp = nodeCertFingerprint
-			nodeCertFingerprintMu.RUnlock()
-		}
-
-		if subtle.ConstantTimeCompare([]byte(supplied), []byte(nodeRequestProof(current.PairingToken, nonce, clientNonce, fp))) != 1 {
+		if subtle.ConstantTimeCompare([]byte(suppliedProof), []byte(nodeRequestProof(expectedToken, nonce, clientNonce, fp))) != 1 {
 			http.Error(w, "invalid pairing token", http.StatusUnauthorized)
 			return
+		}
+	} else {
+		// Standard REST Bearer Token + Optional Password verification
+		var suppliedToken string
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
+			suppliedToken = strings.TrimSpace(authHeader[7:])
+		} else if key := r.Header.Get("X-API-Key"); key != "" {
+			suppliedToken = strings.TrimSpace(key)
+		}
+
+		suppliedPass := r.Header.Get("X-M3TAL-Password")
+		if suppliedPass == "" {
+			if u, p, ok := r.BasicAuth(); ok {
+				if suppliedToken == "" && u != "" {
+					suppliedToken = u
+				}
+				suppliedPass = p
+			}
+		}
+
+		if authRequired || expectedToken != "" || expectedPass != "" {
+			if expectedToken != "" {
+				if suppliedToken == "" {
+					http.Error(w, "API token required", http.StatusUnauthorized)
+					return
+				}
+				if subtle.ConstantTimeCompare([]byte(suppliedToken), []byte(expectedToken)) != 1 {
+					http.Error(w, "invalid API token", http.StatusUnauthorized)
+					return
+				}
+			}
+			if expectedPass != "" {
+				if suppliedPass == "" {
+					http.Error(w, "password required", http.StatusUnauthorized)
+					return
+				}
+				if subtle.ConstantTimeCompare([]byte(suppliedPass), []byte(expectedPass)) != 1 {
+					http.Error(w, "invalid password", http.StatusUnauthorized)
+					return
+				}
+			}
 		}
 	}
 
@@ -230,8 +295,8 @@ func nodeTelemetryHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	if current.PairingToken != "" {
-		w.Header().Set("X-M3TAL-Proof", nodeResponseProof(current.PairingToken, nonce, clientNonce, body, fp))
+	if suppliedProof != "" && expectedToken != "" {
+		w.Header().Set("X-M3TAL-Proof", nodeResponseProof(expectedToken, nonce, clientNonce, body, fp))
 	}
 	_, _ = w.Write(body)
 }
