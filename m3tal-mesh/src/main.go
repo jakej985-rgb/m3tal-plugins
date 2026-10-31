@@ -471,7 +471,6 @@ func handleAction(req *RPCRequest) {
 		sendResponse(req.ID, map[string]interface{}{
 			"success": true,
 			"message": fmt.Sprintf("Paired and verified %s (%s)", newNode.Name, newNode.IP),
-			"payload": map[string]interface{}{"node": newNode},
 			"node":    newNode,
 		})
 
@@ -504,11 +503,6 @@ func handleAction(req *RPCRequest) {
 		if nodeID == "node-local" {
 			sendResponse(req.ID, map[string]interface{}{
 				"success": true,
-				"payload": map[string]interface{}{
-					"node_id": nodeID,
-					"ping_ms": 0,
-					"status":  "online",
-				},
 				"node_id": nodeID,
 				"ping_ms": 0,
 				"status":  "online",
@@ -541,11 +535,6 @@ func handleAction(req *RPCRequest) {
 		}
 		sendResponse(req.ID, map[string]interface{}{
 			"success": true,
-			"payload": map[string]interface{}{
-				"node_id": nodeID,
-				"ping_ms": updated.PingMs,
-				"status":  updated.Status,
-			},
 			"node_id": nodeID,
 			"ping_ms": updated.PingMs,
 			"status":  updated.Status,
@@ -555,7 +544,6 @@ func handleAction(req *RPCRequest) {
 		if loadMeshConfig().PairingToken == "" {
 			sendResponse(req.ID, map[string]interface{}{
 				"success":    true,
-				"payload":    map[string]interface{}{"discovered": 0, "nodes": []MeshNode{}},
 				"discovered": 0,
 				"nodes":      []MeshNode{},
 				"message":    "Set the shared pairing token in Mesh Settings to verify discovered nodes.",
@@ -569,7 +557,6 @@ func handleAction(req *RPCRequest) {
 		}
 		sendResponse(req.ID, map[string]interface{}{
 			"success":    true,
-			"payload":    map[string]interface{}{"discovered": len(discovered), "nodes": discovered},
 			"discovered": len(discovered),
 			"nodes":      discovered,
 		})
@@ -589,21 +576,14 @@ func handleAction(req *RPCRequest) {
 		}
 		sendResponse(req.ID, map[string]interface{}{"success": true, "message": "Mesh settings saved"})
 	case "get_fleet":
-		nodes := getAllNodes()
 		sendResponse(req.ID, map[string]interface{}{
 			"success": true,
-			"payload": map[string]interface{}{"nodes": nodes},
-			"nodes":   nodes,
+			"nodes":   getAllNodes(),
 		})
 	case "get_settings":
 		cfg := loadMeshConfig()
-		payload := map[string]interface{}{
-			"has_pairing_token": cfg.PairingToken != "",
-			"listen_port":       cfg.ListenPort,
-		}
 		sendResponse(req.ID, map[string]interface{}{
 			"success":           true,
-			"payload":           payload,
 			"has_pairing_token": cfg.PairingToken != "",
 			"listen_port":       cfg.ListenPort,
 		})

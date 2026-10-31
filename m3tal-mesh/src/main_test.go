@@ -108,15 +108,8 @@ func TestGetSettingsReturnsFlat(t *testing.T) {
 	if port, ok := result["listen_port"].(float64); !ok || int(port) != 4242 {
 		t.Fatalf("expected listen_port=4242, got %v", result["listen_port"])
 	}
-	payload, ok := result["payload"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("expected payload map, got %v", result["payload"])
-	}
-	if payload["has_pairing_token"] != true {
-		t.Fatalf("expected payload.has_pairing_token=true, got %v", payload["has_pairing_token"])
-	}
-	if port, ok := payload["listen_port"].(float64); !ok || int(port) != 4242 {
-		t.Fatalf("expected payload.listen_port=4242, got %v", payload["listen_port"])
+	if _, hasPayload := result["payload"]; hasPayload {
+		t.Fatal("get_settings must not double-wrap fields under \"payload\"")
 	}
 }
 
@@ -141,19 +134,12 @@ func TestGetSettingsNoPairingToken(t *testing.T) {
 	if port, ok := result["listen_port"].(float64); !ok || int(port) != 9321 {
 		t.Fatalf("expected listen_port=9321, got %v", result["listen_port"])
 	}
-	payload, ok := result["payload"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("expected payload map, got %v", result["payload"])
-	}
-	if payload["has_pairing_token"] != false {
-		t.Fatalf("expected payload.has_pairing_token=false, got %v", payload["has_pairing_token"])
-	}
-	if port, ok := payload["listen_port"].(float64); !ok || int(port) != 9321 {
-		t.Fatalf("expected payload.listen_port=9321, got %v", payload["listen_port"])
+	if _, hasPayload := result["payload"]; hasPayload {
+		t.Fatal("get_settings must not double-wrap fields under \"payload\"")
 	}
 }
 
-func TestGetFleetReturnsPayload(t *testing.T) {
+func TestGetFleetReturnsFlat(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	remoteNodes = []MeshNode{}
 
@@ -172,11 +158,7 @@ func TestGetFleetReturnsPayload(t *testing.T) {
 	if _, ok := result["nodes"].([]interface{}); !ok {
 		t.Fatalf("expected nodes array, got %v", result["nodes"])
 	}
-	payload, ok := result["payload"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("expected payload map, got %v", result["payload"])
-	}
-	if _, ok := payload["nodes"].([]interface{}); !ok {
-		t.Fatalf("expected payload.nodes array, got %v", payload["nodes"])
+	if _, hasPayload := result["payload"]; hasPayload {
+		t.Fatal("get_fleet must not double-wrap fields under \"payload\"")
 	}
 }
