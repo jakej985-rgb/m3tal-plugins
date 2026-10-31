@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -103,6 +104,32 @@ var meshHTTPClient = &http.Client{
 		MaxIdleConns:        64,
 		MaxIdleConnsPerHost: 8,
 	},
+}
+
+func newPinnedHTTPClient(expectedFP string, timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+				MinVersion:         tls.VersionTLS12,
+				VerifyPeerCertificate: func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+					if len(rawCerts) == 0 {
+						return fmt.Errorf("no peer certificates presented")
+					}
+					sum := sha256.Sum256(rawCerts[0])
+					got := hex.EncodeToString(sum[:])
+					if expectedFP != "" && got != expectedFP {
+						return fmt.Errorf("certificate fingerprint mismatch during TLS handshake: expected %s, got %s", expectedFP, got)
+					}
+					return nil
+				},
+			},
+			IdleConnTimeout:     30 * time.Second,
+			MaxIdleConns:        64,
+			MaxIdleConnsPerHost: 8,
+		},
+	}
 }
 
 func meshConfigPath() string {
@@ -351,7 +378,11 @@ func fetchRemoteWithAuth(address, token, password string, port int, expectedFing
 	if password != "" {
 		req.Header.Set("X-M3TAL-Password", password)
 	}
-	resp, err := meshHTTPClient.Do(req)
+	telemetryClient := meshHTTPClient
+	if peerFingerprint != "" {
+		telemetryClient = newPinnedHTTPClient(peerFingerprint, 4*time.Second)
+	}
+	resp, err := telemetryClient.Do(req)
 	latency := int(time.Since(started).Milliseconds())
 	if err != nil {
 		return MeshNode{}, fmt.Errorf("cannot reach %s: %w", address, err)
