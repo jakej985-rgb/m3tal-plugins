@@ -1085,6 +1085,25 @@ func TestUpdateNodeAddressNormalizationPreservesCredentialsAndPin(t *testing.T) 
 func TestMeshInheritsCoreAPIKey(t *testing.T) {
 	tempHome := t.TempDir()
 	t.Setenv("HOME", tempHome)
+	t.Setenv("M3TAL_API_KEY", "")
+	t.Setenv("M3TAL_API_TOKEN", "")
+	t.Setenv("API_TOKEN", "")
+
+	// Negative Case: No Core API key configured in env or files
+	cfgNegative := loadMeshConfig()
+	if cfgNegative.PairingToken != "" {
+		t.Fatalf("expected empty PairingToken when no Core key configured, got %q", cfgNegative.PairingToken)
+	}
+	respNeg := runActionForTest(t, 98, `{"action":"get_settings"}`)
+	if respNeg.Error != nil {
+		t.Fatalf("get_settings error: %v", respNeg.Error)
+	}
+	rawNeg, _ := json.Marshal(respNeg.Result)
+	var negMap map[string]interface{}
+	_ = json.Unmarshal(rawNeg, &negMap)
+	if negMap["using_core_key"] != false {
+		t.Errorf("expected using_core_key=false in negative path, got %v", negMap["using_core_key"])
+	}
 
 	// Case 1: Core API key provided via environment variable
 	t.Setenv("M3TAL_API_KEY", "env-core-secret-key-32chars!!")
@@ -1095,6 +1114,8 @@ func TestMeshInheritsCoreAPIKey(t *testing.T) {
 
 	// Case 2: Core API key written to ~/.config/m3tal/api_keys.json (Core API Key Manager file)
 	t.Setenv("M3TAL_API_KEY", "")
+	t.Setenv("M3TAL_API_TOKEN", "")
+	t.Setenv("API_TOKEN", "")
 	coreDir := filepath.Join(tempHome, ".config", "m3tal")
 	_ = os.MkdirAll(coreDir, 0700)
 	keyData := []byte(`{"primary_token": "jellyfin-style-generated-key-123"}`)
@@ -1115,6 +1136,28 @@ func TestMeshInheritsCoreAPIKey(t *testing.T) {
 	_ = json.Unmarshal(raw, &settingsMap)
 	if settingsMap["using_core_key"] != true {
 		t.Errorf("expected using_core_key=true, got %v", settingsMap["using_core_key"])
+	}
+
+	// Verify set_settings also reports using_core_key: true
+	setResp := runActionForTest(t, 100, `{"action":"set_settings","args":{"listen_port":9444}}`)
+	if setResp.Error != nil {
+		t.Fatalf("set_settings error: %v", setResp.Error)
+	}
+	rawSet, _ := json.Marshal(setResp.Result)
+	var setMap map[string]interface{}
+	_ = json.Unmarshal(rawSet, &setMap)
+	if setMap["using_core_key"] != true {
+		t.Errorf("expected using_core_key=true on set_settings, got %v", setMap["using_core_key"])
+	}
+
+	// Verify saveMeshConfig does NOT persist the Core key to mesh/config.json
+	meshCfgPath := filepath.Join(tempHome, ".config", "m3tal", "plugins", "mesh", "config.json")
+	if fileBytes, err := os.ReadFile(meshCfgPath); err == nil {
+		var onDisk meshConfig
+		_ = json.Unmarshal(fileBytes, &onDisk)
+		if onDisk.PairingToken != "" {
+			t.Errorf("expected inherited Core API key to NOT be persisted to disk, got %q", onDisk.PairingToken)
+		}
 	}
 }
 

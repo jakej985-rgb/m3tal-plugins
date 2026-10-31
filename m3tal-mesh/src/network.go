@@ -127,7 +127,12 @@ func saveMeshConfig(cfg meshConfig) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(cfg, "", "  ")
+	// Do not persist dynamically inherited Core API key into local plugin config file
+	cfgToSave := cfg
+	if coreKey := resolveCoreAPIKey(); coreKey != "" && cfgToSave.PairingToken == coreKey {
+		cfgToSave.PairingToken = ""
+	}
+	b, err := json.MarshalIndent(cfgToSave, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -198,9 +203,11 @@ func loadMeshConfig() meshConfig {
 	if cfg.ListenPort < 1 || cfg.ListenPort > 65535 {
 		cfg.ListenPort = 9321
 	}
-	// Prefer Core's managed API key over local plugin configuration
+	// Inherit Core's managed API key if no explicit cluster token is configured
 	if coreKey := resolveCoreAPIKey(); coreKey != "" {
-		cfg.PairingToken = coreKey
+		if cfg.PairingToken == "" || cfg.PairingToken == coreKey {
+			cfg.PairingToken = coreKey
+		}
 	}
 	return cfg
 }

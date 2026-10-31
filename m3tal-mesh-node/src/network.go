@@ -63,7 +63,12 @@ func saveNodeRuntimeConfig(cfg nodeRuntimeConfig) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(cfg, "", "  ")
+	// Do not persist dynamically inherited Core API key to config file
+	cfgToSave := cfg
+	if coreKey := resolveCoreAPIKey(); coreKey != "" && cfgToSave.PairingToken == coreKey {
+		cfgToSave.PairingToken = ""
+	}
+	b, err := json.MarshalIndent(cfgToSave, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -132,8 +137,9 @@ func loadNodeRuntimeConfig() nodeRuntimeConfig {
 	if cfg.ListenPort < 1 || cfg.ListenPort > 65535 {
 		cfg.ListenPort = 9321
 	}
-	if cfg.PairingToken == "" {
-		if coreKey := resolveCoreAPIKey(); coreKey != "" {
+	// Inherit Core's central API key if no explicit per-node override is configured
+	if coreKey := resolveCoreAPIKey(); coreKey != "" {
+		if cfg.PairingToken == "" || cfg.PairingToken == coreKey {
 			cfg.PairingToken = coreKey
 		}
 	}
