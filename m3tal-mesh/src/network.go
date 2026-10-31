@@ -409,7 +409,7 @@ func fetchRemoteWithAuth(address, token, password string, port int, expectedFing
 	if token != "" && nonce != "" && clientNonce != "" {
 		expected := responseProof(token, nonce, clientNonce, body, peerFingerprint)
 		if !hmac.Equal([]byte(expected), []byte(resp.Header.Get("X-M3TAL-Proof"))) {
-			return MeshNode{}, fmt.Errorf("%s failed mesh node authentication: %w", address, ErrTokenRejected)
+			return MeshNode{}, fmt.Errorf("%s failed mesh node authentication", address)
 		}
 	}
 	var payload remoteResponse
@@ -661,9 +661,6 @@ func persistPeerUpsert(node MeshNode, clearToken, clearPassword bool) error {
 			}
 			if !clearPassword && node.Password == "" && old.Password != "" {
 				node.Password = old.Password
-			}
-			if node.IP == old.IP && node.APIToken == old.APIToken && node.Password == old.Password && old.PasswordOnly {
-				node.PasswordOnly = true
 			}
 		}
 		peers[targetIdx] = node

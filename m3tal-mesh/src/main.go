@@ -623,7 +623,7 @@ func handleAction(req *RPCRequest) {
 					foundNode.Fingerprint = testedNode.Fingerprint
 				}
 				foundNode.Status = "online"
-			} else {
+			} else if foundNode.APIToken != "" {
 				foundNode.PasswordOnly = false
 			}
 		}

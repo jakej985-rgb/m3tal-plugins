@@ -645,3 +645,45 @@ func TestUpdateNodeRenegotiatesPasswordOnlyWhenAddressOrCredentialsChange(t *tes
 		t.Fatalf("expected node to remain online on refresh, got: %+v", refreshed)
 	}
 }
+
+func TestUpdateNodePreservesPasswordOnlyWhenProbeFails(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	remoteNodes = []MeshNode{}
+
+	// Global default token configured in mesh settings
+	cfg := meshConfig{PairingToken: "default-mesh-token", ListenPort: 9321}
+	if err := saveMeshConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Initial node is password-only
+	initialNode := MeshNode{
+		ID:           "offline-target-id",
+		Name:         "Offline Password Box",
+		IP:           "127.0.0.1:8888",
+		Password:     "old-secret",
+		PasswordOnly: true,
+	}
+	if err := persistPeerUpsert(initialNode, false, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. update_node changing password while target is unreachable (no server listening on 127.0.0.1:8888)
+	updateReq := `{"action":"update_node","args":{"node_id":"offline-target-id","password":"updated-secret"}}`
+	resp := runActionForTest(t, 21, updateReq)
+	if resp.Error != nil {
+		t.Fatalf("update_node failed: %s", resp.Error.Message)
+	}
+
+	// 3. Verify PasswordOnly remains true because probe could not establish a new mode
+	persisted := loadPeers()
+	if len(persisted) != 1 {
+		t.Fatalf("expected 1 persisted peer, got %d", len(persisted))
+	}
+	if !persisted[0].PasswordOnly {
+		t.Fatalf("expected PasswordOnly to be preserved as true on failed probe, got false")
+	}
+	if persisted[0].Password != "updated-secret" {
+		t.Fatalf("expected password to be updated, got: %s", persisted[0].Password)
+	}
+}
