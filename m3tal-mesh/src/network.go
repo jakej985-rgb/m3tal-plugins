@@ -25,7 +25,10 @@ import (
 	"github.com/grandcat/zeroconf"
 )
 
-var ErrPasswordRequired = errors.New("password required")
+var (
+	ErrPasswordRequired = errors.New("password required")
+	ErrTokenRejected    = errors.New("pairing token was rejected")
+)
 
 const meshServiceType = "_m3tal-mesh-node._tcp"
 
@@ -387,10 +390,10 @@ func fetchRemoteWithAuth(address, token, password string, port int, expectedFing
 				}
 			}
 		}
-		return MeshNode{}, fmt.Errorf("pairing token was rejected by %s", address)
+		return MeshNode{}, fmt.Errorf("%w by %s", ErrTokenRejected, address)
 	}
 	if resp.StatusCode == http.StatusServiceUnavailable {
-		return MeshNode{}, fmt.Errorf("pairing token is not configured on %s", address)
+		return MeshNode{}, fmt.Errorf("pairing token is not configured on %s: %w", address, ErrTokenRejected)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return MeshNode{}, fmt.Errorf("%s is not a compatible m3tal-mesh-node (HTTP %d)", address, resp.StatusCode)
@@ -406,7 +409,7 @@ func fetchRemoteWithAuth(address, token, password string, port int, expectedFing
 	if token != "" && nonce != "" && clientNonce != "" {
 		expected := responseProof(token, nonce, clientNonce, body, peerFingerprint)
 		if !hmac.Equal([]byte(expected), []byte(resp.Header.Get("X-M3TAL-Proof"))) {
-			return MeshNode{}, fmt.Errorf("%s failed mesh node authentication", address)
+			return MeshNode{}, fmt.Errorf("%s failed mesh node authentication: %w", address, ErrTokenRejected)
 		}
 	}
 	var payload remoteResponse
@@ -469,7 +472,7 @@ func connectAndNegotiateNode(address, explicitToken, explicitPass string, cfg me
 	node, err := fetchRemoteWithAuth(address, tok, pass, cfg.ListenPort, expectedFingerprint...)
 	if err != nil {
 		// Only retry in password-only mode when the inherited token was specifically rejected by the node
-		if explicitToken == "" && explicitPass != "" && tok != "" && strings.Contains(strings.ToLower(err.Error()), "pairing token was rejected") {
+		if explicitToken == "" && explicitPass != "" && tok != "" && errors.Is(err, ErrTokenRejected) {
 			if altNode, altErr := fetchRemoteWithAuth(address, "", pass, cfg.ListenPort, expectedFingerprint...); altErr == nil {
 				return altNode, true, nil
 			}
@@ -659,8 +662,8 @@ func persistPeerUpsert(node MeshNode, clearToken, clearPassword bool) error {
 			if !clearPassword && node.Password == "" && old.Password != "" {
 				node.Password = old.Password
 			}
-			if !clearToken && !clearPassword && !node.PasswordOnly && old.PasswordOnly {
-				node.PasswordOnly = old.PasswordOnly
+			if node.IP == old.IP && node.APIToken == old.APIToken && node.Password == old.Password && old.PasswordOnly {
+				node.PasswordOnly = true
 			}
 		}
 		peers[targetIdx] = node

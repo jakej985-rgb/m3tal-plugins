@@ -589,26 +589,43 @@ func handleAction(req *RPCRequest) {
 		if role != "" {
 			foundNode.Role = role
 		}
+		addressChanged := false
 		if ip != "" {
 			if ip != foundNode.IP {
 				foundNode.Fingerprint = ""
+				addressChanged = true
 			}
 			foundNode.IP = ip
 		}
 		clearTok, _ := raw.Args["clear_api_token"].(bool)
 		clearPass, _ := raw.Args["clear_password"].(bool)
+		credsChanged := false
 		if effectiveToken != "" {
 			foundNode.APIToken = effectiveToken
+			credsChanged = true
 		} else if clearTok {
 			foundNode.APIToken = ""
+			credsChanged = true
 		}
 		if password != "" {
 			foundNode.Password = password
+			credsChanged = true
 		} else if clearPass {
 			foundNode.Password = ""
+			credsChanged = true
 		}
-		if effectiveToken != "" || clearTok || clearPass {
-			foundNode.PasswordOnly = false
+		if addressChanged || credsChanged {
+			cfg := loadMeshConfig()
+			testedNode, pwOnly, err := connectAndNegotiateNode(foundNode.IP, foundNode.APIToken, foundNode.Password, cfg, foundNode.Fingerprint)
+			if err == nil {
+				foundNode.PasswordOnly = pwOnly
+				if testedNode.Fingerprint != "" {
+					foundNode.Fingerprint = testedNode.Fingerprint
+				}
+				foundNode.Status = "online"
+			} else {
+				foundNode.PasswordOnly = false
+			}
 		}
 		if err := persistPeerUpsert(*foundNode, clearTok, clearPass); err != nil {
 			sendError(req.ID, -32003, "Could not save updated node", err.Error())

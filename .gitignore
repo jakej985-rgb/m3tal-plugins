@@ -17,3 +17,4 @@ node_modules/
 # Tool caches
 .claude/
 .entire/
+.m3tal-review/

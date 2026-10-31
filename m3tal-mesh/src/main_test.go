@@ -566,3 +566,82 @@ func TestActionsTestNodeUpdateNodeAndGetPeers(t *testing.T) {
 		t.Fatalf("unexpected peers list after duplicate update rejection: %+v", allPeers)
 	}
 }
+
+func TestUpdateNodeRenegotiatesPasswordOnlyWhenAddressOrCredentialsChange(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	remoteNodes = []MeshNode{}
+
+	// Global default token configured in mesh settings
+	cfg := meshConfig{PairingToken: "default-mesh-token", ListenPort: 9321}
+	if err := saveMeshConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Initial node is password-only
+	initialNode := MeshNode{
+		ID:           "target-node-id",
+		Name:         "Target Box",
+		IP:           "127.0.0.1:8888",
+		Password:     "pass-secret",
+		PasswordOnly: true,
+	}
+	if err := persistPeerUpsert(initialNode, false, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. New address requires default-mesh-token + new-secret
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
+		if r.URL.Path == "/api/v1/telemetry" {
+			nonce := r.Header.Get("X-M3TAL-Nonce")
+			clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
+			fp := testServerFingerprint(server)
+			if r.Header.Get("X-M3TAL-Proof") != requestProof("default-mesh-token", nonce, clientNonce, fp) {
+				http.Error(w, "invalid token proof", http.StatusUnauthorized)
+				return
+			}
+			if r.Header.Get("X-M3TAL-Password") != "new-secret" {
+				http.Error(w, "invalid password", http.StatusUnauthorized)
+				return
+			}
+			body, _ := json.Marshal(remoteResponse{
+				Name: "reconfigured-box", Hostname: "reconfigured-box",
+				Telemetry: remoteTelemetry{Hostname: "reconfigured-box", Cores: 4, RAMTotalGB: 16, StorageTotalGB: 500},
+			})
+			w.Header().Set("X-M3TAL-Proof", responseProof("default-mesh-token", nonce, clientNonce, body, fp))
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(body)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	addr := server.Listener.Addr().String()
+
+	// 3. update_node changing IP and entering new-secret, leaving token blank
+	updateReq := fmt.Sprintf(`{"action":"update_node","args":{"node_id":"target-node-id","ip":%q,"password":"new-secret"}}`, addr)
+	resp := runActionForTest(t, 20, updateReq)
+	if resp.Error != nil {
+		t.Fatalf("update_node failed: %s", resp.Error.Message)
+	}
+
+	// 4. Verify PasswordOnly is false on disk
+	persisted := loadPeers()
+	if len(persisted) != 1 {
+		t.Fatalf("expected 1 persisted peer, got %d", len(persisted))
+	}
+	if persisted[0].PasswordOnly {
+		t.Fatalf("expected PasswordOnly to be re-negotiated to false, got true")
+	}
+
+	// 5. Verify refresh succeeds and keeps the node online with inherited token
+	refreshRemotePeers()
+	refreshed := snapshotPeers()
+	if len(refreshed) != 1 || refreshed[0].Status != "online" {
+		t.Fatalf("expected node to remain online on refresh, got: %+v", refreshed)
+	}
+}

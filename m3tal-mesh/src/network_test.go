@@ -10,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"math/big"
 	"net/http"
@@ -1105,5 +1106,24 @@ func TestTestNodePasswordOnlyNodeWithDefaultTokenPasses(t *testing.T) {
 	}
 	if node.Name != "pass-only-node" {
 		t.Fatalf("unexpected node name: %s", node.Name)
+	}
+}
+
+func TestTokenRejectedSentinelWrapping(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
+		http.Error(w, "invalid pairing token", http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	_, err := fetchRemoteWithAuth(server.Listener.Addr().String(), "bad-tok", "", 9321)
+	if err == nil {
+		t.Fatal("expected unauthorized error")
+	}
+	if !errors.Is(err, ErrTokenRejected) {
+		t.Fatalf("expected error to wrap ErrTokenRejected, got: %v", err)
 	}
 }
