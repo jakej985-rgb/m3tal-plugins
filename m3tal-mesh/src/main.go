@@ -468,7 +468,12 @@ func handleAction(req *RPCRequest) {
 			sendError(req.ID, -32002, "Node pairing failed", err.Error())
 			return
 		}
-		sendResponse(req.ID, map[string]interface{}{"success": true, "message": fmt.Sprintf("Paired and verified %s (%s)", newNode.Name, newNode.IP), "node": newNode})
+		sendResponse(req.ID, map[string]interface{}{
+			"success": true,
+			"message": fmt.Sprintf("Paired and verified %s (%s)", newNode.Name, newNode.IP),
+			"payload": map[string]interface{}{"node": newNode},
+			"node":    newNode,
+		})
 
 	case "forget_node":
 		if nodeID == "" {
@@ -499,6 +504,11 @@ func handleAction(req *RPCRequest) {
 		if nodeID == "node-local" {
 			sendResponse(req.ID, map[string]interface{}{
 				"success": true,
+				"payload": map[string]interface{}{
+					"node_id": nodeID,
+					"ping_ms": 0,
+					"status":  "online",
+				},
 				"node_id": nodeID,
 				"ping_ms": 0,
 				"status":  "online",
@@ -529,11 +539,27 @@ func handleAction(req *RPCRequest) {
 			sendError(req.ID, -32005, "Could not save node status", err.Error())
 			return
 		}
-		sendResponse(req.ID, map[string]interface{}{"success": true, "node_id": nodeID, "ping_ms": updated.PingMs, "status": updated.Status})
+		sendResponse(req.ID, map[string]interface{}{
+			"success": true,
+			"payload": map[string]interface{}{
+				"node_id": nodeID,
+				"ping_ms": updated.PingMs,
+				"status":  updated.Status,
+			},
+			"node_id": nodeID,
+			"ping_ms": updated.PingMs,
+			"status":  updated.Status,
+		})
 
 	case "scan_network":
 		if loadMeshConfig().PairingToken == "" {
-			sendResponse(req.ID, map[string]interface{}{"success": true, "discovered": 0, "nodes": []MeshNode{}, "message": "Set the shared pairing token in Mesh Settings to verify discovered nodes."})
+			sendResponse(req.ID, map[string]interface{}{
+				"success":    true,
+				"payload":    map[string]interface{}{"discovered": 0, "nodes": []MeshNode{}},
+				"discovered": 0,
+				"nodes":      []MeshNode{},
+				"message":    "Set the shared pairing token in Mesh Settings to verify discovered nodes.",
+			})
 			return
 		}
 		discovered, err := discoverAndVerifyPeers()
@@ -541,7 +567,12 @@ func handleAction(req *RPCRequest) {
 			sendError(req.ID, -32001, "LAN scan failed", err.Error())
 			return
 		}
-		sendResponse(req.ID, map[string]interface{}{"success": true, "discovered": len(discovered), "nodes": discovered})
+		sendResponse(req.ID, map[string]interface{}{
+			"success":    true,
+			"payload":    map[string]interface{}{"discovered": len(discovered), "nodes": discovered},
+			"discovered": len(discovered),
+			"nodes":      discovered,
+		})
 	case "set_settings":
 		cfg := loadMeshConfig()
 		if value, ok := raw.Args["pairing_token"].(string); ok {
@@ -558,10 +589,24 @@ func handleAction(req *RPCRequest) {
 		}
 		sendResponse(req.ID, map[string]interface{}{"success": true, "message": "Mesh settings saved"})
 	case "get_fleet":
-		sendResponse(req.ID, map[string]interface{}{"success": true, "nodes": getAllNodes()})
+		nodes := getAllNodes()
+		sendResponse(req.ID, map[string]interface{}{
+			"success": true,
+			"payload": map[string]interface{}{"nodes": nodes},
+			"nodes":   nodes,
+		})
 	case "get_settings":
 		cfg := loadMeshConfig()
-		sendResponse(req.ID, map[string]interface{}{"success": true, "has_pairing_token": cfg.PairingToken != "", "listen_port": cfg.ListenPort})
+		payload := map[string]interface{}{
+			"has_pairing_token": cfg.PairingToken != "",
+			"listen_port":       cfg.ListenPort,
+		}
+		sendResponse(req.ID, map[string]interface{}{
+			"success":           true,
+			"payload":           payload,
+			"has_pairing_token": cfg.PairingToken != "",
+			"listen_port":       cfg.ListenPort,
+		})
 
 	default:
 		sendError(req.ID, -32601, "Unknown action", fmt.Sprintf("Unsupported action_id: %s", action))

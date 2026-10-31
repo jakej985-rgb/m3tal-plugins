@@ -286,13 +286,20 @@ func handleAction(req *RPCRequest) {
 		t := getTelemetry()
 		sendResponse(req.ID, map[string]interface{}{
 			"success":   true,
+			"payload":   map[string]interface{}{"telemetry": t},
 			"telemetry": t,
 		})
 
 	case "beacon_ping":
 		hostname, _ := os.Hostname()
+		payload := map[string]interface{}{
+			"hostname": hostname,
+			"status":   "online",
+			"version":  PluginVersion,
+		}
 		sendResponse(req.ID, map[string]interface{}{
 			"success":  true,
+			"payload":  payload,
 			"hostname": hostname,
 			"status":   "online",
 			"version":  PluginVersion,
@@ -317,8 +324,14 @@ func handleAction(req *RPCRequest) {
 		sendResponse(req.ID, map[string]interface{}{"success": true, "message": "Settings saved. Restart the plugin if you changed its port or LAN discovery setting."})
 	case "get_settings":
 		cfg := loadNodeRuntimeConfig()
+		payload := map[string]interface{}{
+			"has_pairing_token": cfg.PairingToken != "",
+			"listen_port":       cfg.ListenPort,
+			"broadcast_mdns":    cfg.BroadcastMDNS,
+		}
 		sendResponse(req.ID, map[string]interface{}{
 			"success":           true,
+			"payload":           payload,
 			"has_pairing_token": cfg.PairingToken != "",
 			"listen_port":       cfg.ListenPort,
 			"broadcast_mdns":    cfg.BroadcastMDNS,

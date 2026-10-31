@@ -108,6 +108,16 @@ func TestGetSettingsReturnsFlat(t *testing.T) {
 	if port, ok := result["listen_port"].(float64); !ok || int(port) != 4242 {
 		t.Fatalf("expected listen_port=4242, got %v", result["listen_port"])
 	}
+	payload, ok := result["payload"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected payload map, got %v", result["payload"])
+	}
+	if payload["has_pairing_token"] != true {
+		t.Fatalf("expected payload.has_pairing_token=true, got %v", payload["has_pairing_token"])
+	}
+	if port, ok := payload["listen_port"].(float64); !ok || int(port) != 4242 {
+		t.Fatalf("expected payload.listen_port=4242, got %v", payload["listen_port"])
+	}
 }
 
 func TestGetSettingsNoPairingToken(t *testing.T) {
@@ -130,5 +140,43 @@ func TestGetSettingsNoPairingToken(t *testing.T) {
 	}
 	if port, ok := result["listen_port"].(float64); !ok || int(port) != 9321 {
 		t.Fatalf("expected listen_port=9321, got %v", result["listen_port"])
+	}
+	payload, ok := result["payload"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected payload map, got %v", result["payload"])
+	}
+	if payload["has_pairing_token"] != false {
+		t.Fatalf("expected payload.has_pairing_token=false, got %v", payload["has_pairing_token"])
+	}
+	if port, ok := payload["listen_port"].(float64); !ok || int(port) != 9321 {
+		t.Fatalf("expected payload.listen_port=9321, got %v", payload["listen_port"])
+	}
+}
+
+func TestGetFleetReturnsPayload(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	remoteNodes = []MeshNode{}
+
+	resp := runActionForTest(t, 1, `{"action":"get_fleet","args":{}}`)
+	if resp.Error != nil {
+		t.Fatalf("get_fleet failed: %s", resp.Error.Message)
+	}
+	encoded, _ := json.Marshal(resp.Result)
+	var result map[string]interface{}
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		t.Fatalf("decode result: %v", err)
+	}
+	if result["success"] != true {
+		t.Fatalf("expected success=true, got %v", result["success"])
+	}
+	if _, ok := result["nodes"].([]interface{}); !ok {
+		t.Fatalf("expected nodes array, got %v", result["nodes"])
+	}
+	payload, ok := result["payload"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected payload map, got %v", result["payload"])
+	}
+	if _, ok := payload["nodes"].([]interface{}); !ok {
+		t.Fatalf("expected payload.nodes array, got %v", payload["nodes"])
 	}
 }
