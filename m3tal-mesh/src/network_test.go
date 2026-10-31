@@ -1097,7 +1097,7 @@ func TestTestNodePasswordOnlyNodeWithDefaultTokenPasses(t *testing.T) {
 	addr := server.Listener.Addr().String()
 
 	// Calling connectAndNegotiateNode with explicitPass and blank token under default global token
-	node, passwordOnly, err := connectAndNegotiateNode(addr, "", "node-secret", cfg, "")
+	node, passwordOnly, err := connectAndNegotiateNode(addr, "", "node-secret", cfg, "", false)
 	if err != nil {
 		t.Fatalf("connectAndNegotiateNode failed to negotiate password-only node: %v", err)
 	}
@@ -1236,7 +1236,7 @@ func TestDefaultPasswordWithheldFromUnpinnedHostUntilAuthenticated(t *testing.T)
 	defer server.Close()
 
 	// 1. Unpinned connection: expectedFingerprint is empty
-	node, passwordOnly, err := connectAndNegotiateNode(server.Listener.Addr().String(), "", "", cfg, "")
+	node, passwordOnly, err := connectAndNegotiateNode(server.Listener.Addr().String(), "", "", cfg, "", false)
 	if err != nil {
 		t.Fatalf("expected connectAndNegotiateNode to succeed after authenticated retry: %v", err)
 	}
@@ -1275,7 +1275,7 @@ func TestDefaultPasswordNotSentToUnauthenticatedRogueHost(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, _, err := connectAndNegotiateNode(server.Listener.Addr().String(), "", "", cfg, "")
+	_, _, err := connectAndNegotiateNode(server.Listener.Addr().String(), "", "", cfg, "", false)
 	if err == nil {
 		t.Fatal("expected rogue host connection to fail")
 	}
@@ -1314,7 +1314,7 @@ func TestDefaultPasswordSentDirectlyToPinnedHost(t *testing.T) {
 
 	fp := testServerFingerprint(server)
 	// Pinned host: pass expectedFingerprint
-	node, _, err := connectAndNegotiateNode(server.Listener.Addr().String(), "", "", cfg, fp)
+	node, _, err := connectAndNegotiateNode(server.Listener.Addr().String(), "", "", cfg, fp, false)
 	if err != nil {
 		t.Fatalf("expected pinned connection to succeed: %v", err)
 	}
@@ -1387,5 +1387,14 @@ func TestEffectiveCredentialsRequiresExplicitFingerprint(t *testing.T) {
 	tok3, pass3 := effectiveCredentials("", "", true, cfg, "sha256-pinned-fp")
 	if tok3 != "" || pass3 != "default-pass" {
 		t.Fatalf("expected ('', 'default-pass'), got (%q, %q)", tok3, pass3)
+	}
+
+	// Peer with custom per-peer token does NOT inherit DefaultPassword (prevents secret exfiltration)
+	tok4, pass4 := effectiveCredentials("attacker-custom-token", "", false, cfg, "sha256-attacker-fp")
+	if tok4 != "attacker-custom-token" {
+		t.Fatalf("expected custom token 'attacker-custom-token', got %q", tok4)
+	}
+	if pass4 != "" {
+		t.Fatalf("security violation: custom token peer inherited DefaultPassword: %q", pass4)
 	}
 }

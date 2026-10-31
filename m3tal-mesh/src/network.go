@@ -452,17 +452,19 @@ func fetchRemoteWithAuth(address, token, password string, port int, expectedFing
 
 // effectiveCredentials determines the token and password to use when connecting to a node.
 // To prevent exfiltration of mesh-wide secrets to untrusted or unpinned hosts, cfg.DefaultPassword
-// is only used when a pinned certificate fingerprint is present or explicit password is provided.
-// If passwordOnly is true, default token fallback is suppressed. Otherwise, an empty token
-// inherits cfg.PairingToken even when an explicit secondary password is provided.
+// is only used when a pinned certificate fingerprint is present and the peer is authenticated with
+// the mesh's own cfg.PairingToken (or inherits default credentials). Peers configured with a custom
+// per-peer token must configure their password explicitly on the peer itself.
+// If passwordOnly is true, default token fallback is suppressed.
 func effectiveCredentials(explicitToken, explicitPass string, passwordOnly bool, cfg meshConfig, expectedFingerprint string) (tok, pass string) {
 	pass = explicitPass
-	if pass == "" && expectedFingerprint != "" {
-		pass = cfg.DefaultPassword
-	}
 	tok = explicitToken
 	if tok == "" && !passwordOnly {
 		tok = cfg.PairingToken
+	}
+	usesCustomToken := explicitToken != "" && explicitToken != cfg.PairingToken
+	if pass == "" && expectedFingerprint != "" && !usesCustomToken {
+		pass = cfg.DefaultPassword
 	}
 	return tok, pass
 }
@@ -474,9 +476,8 @@ func effectiveCredentials(explicitToken, explicitPass string, passwordOnly bool,
 // pinning the peer certificate fingerprint authenticated by the first exchange.
 // If an inherited token was rejected and a password was available, it retries in password-only mode.
 // If passwordOnly is specified as true (e.g. for a saved password-only peer), token inheritance is suppressed.
-func connectAndNegotiateNode(address, explicitToken, explicitPass string, cfg meshConfig, expectedFingerprint string, passwordOnly ...bool) (MeshNode, bool, error) {
-	isPasswordOnly := len(passwordOnly) > 0 && passwordOnly[0]
-	tok, pass := effectiveCredentials(explicitToken, explicitPass, isPasswordOnly, cfg, expectedFingerprint)
+func connectAndNegotiateNode(address, explicitToken, explicitPass string, cfg meshConfig, expectedFingerprint string, passwordOnly bool) (MeshNode, bool, error) {
+	tok, pass := effectiveCredentials(explicitToken, explicitPass, passwordOnly, cfg, expectedFingerprint)
 	if cfg.IsPairingTokenRequired() && tok == "" && pass == "" {
 		return MeshNode{}, false, fmt.Errorf("pairing token is required to authenticate remote mesh nodes; configure a shared secret in Mesh Settings or enter a pairing token")
 	}
@@ -509,7 +510,7 @@ func connectAndNegotiateNode(address, explicitToken, explicitPass string, cfg me
 
 func pairAndPersistPeer(address, name, role, token, password string) (MeshNode, error) {
 	cfg := loadMeshConfig()
-	node, passwordOnly, err := connectAndNegotiateNode(address, token, password, cfg, "")
+	node, passwordOnly, err := connectAndNegotiateNode(address, token, password, cfg, "", false)
 	if err != nil {
 		return MeshNode{}, err
 	}

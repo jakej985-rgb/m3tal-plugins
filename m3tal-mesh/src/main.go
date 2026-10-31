@@ -608,6 +608,8 @@ func handleAction(req *RPCRequest) {
 			if password == "" {
 				clearPass = true
 			}
+			foundNode.Fingerprint = ""
+			foundNode.PasswordOnly = false
 		}
 		credsChanged := false
 		if effectiveToken != "" {
@@ -626,7 +628,7 @@ func handleAction(req *RPCRequest) {
 		}
 		if addressChanged || credsChanged {
 			cfg := loadMeshConfig()
-			testedNode, pwOnly, err := connectAndNegotiateNode(foundNode.IP, foundNode.APIToken, foundNode.Password, cfg, foundNode.Fingerprint)
+			testedNode, pwOnly, err := connectAndNegotiateNode(foundNode.IP, foundNode.APIToken, foundNode.Password, cfg, foundNode.Fingerprint, foundNode.PasswordOnly)
 			if err == nil {
 				foundNode.PasswordOnly = pwOnly
 				if testedNode.Fingerprint != "" {
