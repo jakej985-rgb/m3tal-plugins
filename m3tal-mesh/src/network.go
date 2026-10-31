@@ -106,24 +106,14 @@ func saveMeshConfig(cfg meshConfig) error {
 }
 
 func loadMeshConfig() meshConfig {
-	defaultTrue := true
-	defaultDiscovery := true
 	cfg := meshConfig{
-		ListenPort:          9321,
-		RequirePairingToken: &defaultTrue,
-		DiscoveryEnabled:    &defaultDiscovery,
+		ListenPort: 9321,
 	}
 	path := meshConfigPath()
 	if path != "" {
 		if b, err := os.ReadFile(path); err == nil {
 			_ = json.Unmarshal(b, &cfg)
 		}
-	}
-	if cfg.RequirePairingToken == nil {
-		cfg.RequirePairingToken = &defaultTrue
-	}
-	if cfg.DiscoveryEnabled == nil {
-		cfg.DiscoveryEnabled = &defaultDiscovery
 	}
 	if cfg.ListenPort < 1 || cfg.ListenPort > 65535 {
 		cfg.ListenPort = 9321

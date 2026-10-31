@@ -74,11 +74,9 @@ func saveNodeRuntimeConfig(cfg nodeRuntimeConfig) error {
 }
 
 func loadNodeRuntimeConfig() nodeRuntimeConfig {
-	defaultTrue := true
 	cfg := nodeRuntimeConfig{
-		ListenPort:          9321,
-		BroadcastMDNS:       true,
-		RequirePairingToken: &defaultTrue,
+		ListenPort:    9321,
+		BroadcastMDNS: true,
 	}
 	path := nodeConfigPath()
 	if path == "" {
@@ -89,9 +87,6 @@ func loadNodeRuntimeConfig() nodeRuntimeConfig {
 		return cfg
 	}
 	_ = json.Unmarshal(b, &cfg)
-	if cfg.RequirePairingToken == nil {
-		cfg.RequirePairingToken = &defaultTrue
-	}
 	if cfg.ListenPort < 1 || cfg.ListenPort > 65535 {
 		cfg.ListenPort = 9321
 	}
