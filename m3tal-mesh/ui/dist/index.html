@@ -385,58 +385,57 @@
       } catch (err) { status.textContent = err.message; }
     }
 
+    async function saveMeshSettings() {
+      const status = document.getElementById('mesh-settings-status');
+      const cfg = {
+        pairing_token: document.getElementById('mesh-pairing-token').value.trim(),
+        listen_port: Number(document.getElementById('mesh-node-port').value) || 9321,
+      };
 
-async function saveMeshSettings() {
-  const status = document.getElementById('mesh-settings-status');
-  const cfg = {
-    pairing_token: document.getElementById('mesh-pairing-token').value.trim(),
-    listen_port: Number(document.getElementById('mesh-node-port').value) || 9321,
-  };
+      try {
+        const res = await fetch(`/api/v2/plugins/mesh/action?token=${encodeURIComponent(token)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'set_settings', args: cfg })
+        });
 
-  try {
-    const res = await fetch(`/api/v2/plugins/mesh/action?token=${encodeURIComponent(token)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'set_settings', args: cfg })
-    });
+        const body = await res.json();
 
-    const body = await res.json();
+        const actionData = {
+          ...(body.data?.payload ?? {}),
+          ...(body.data ?? {})
+        };
+        if (
+          !res.ok ||
+          body.status !== 'success' ||
+          actionData.success === false
+        ) {
+          throw new Error(
+            body.error?.message ||
+            actionData.error ||
+            'Could not save Mesh settings'
+          );
+        }
 
-    const actionData = {
-      ...(body.data?.payload ?? {}),
-      ...(body.data ?? {})
-    };
-    if (
-      !res.ok ||
-      body.status !== 'success' ||
-      actionData.success === false
-    ) {
-      throw new Error(
-        body.error?.message ||
-        actionData.error ||
-        'Could not save Mesh settings'
-      );
+        meshConfig = {
+          has_pairing_token: !!cfg.pairing_token || meshConfig.has_pairing_token,
+          listen_port: cfg.listen_port
+        };
+
+        document.getElementById('mesh-pairing-token').value = '';
+        document.getElementById('mesh-pairing-token').placeholder =
+          meshConfig.has_pairing_token
+            ? 'Configured — leave blank to keep current'
+            : 'Create a shared pairing token';
+
+        status.textContent = 'Saved. Use the same token in Mesh Node Settings on each sender.';
+        status.style.color = 'var(--emerald)';
+
+      } catch (err) {
+        status.textContent = err.message;
+        status.style.color = 'var(--rose)';
+      }
     }
-
-    meshConfig = {
-      has_pairing_token: !!cfg.pairing_token || meshConfig.has_pairing_token,
-      listen_port: cfg.listen_port
-    };
-
-    document.getElementById('mesh-pairing-token').value = '';
-    document.getElementById('mesh-pairing-token').placeholder =
-      meshConfig.has_pairing_token
-        ? 'Configured — leave blank to keep current'
-        : 'Create a shared pairing token';
-
-    status.textContent = 'Saved. Use the same token in Mesh Node Settings on each sender.';
-    status.style.color = 'var(--emerald)';
-
-  } catch (err) {
-    status.textContent = err.message;
-    status.style.color = 'var(--rose)';
-  }
-}
 
     function showToast(msg, isError = false) {
       const toast = document.getElementById('toast');
@@ -631,241 +630,235 @@ async function saveMeshSettings() {
     function closePairModal() {
       document.getElementById('pair-modal').style.display = 'none';
     }
- 
-async function submitPairNode() {
-  const name = document.getElementById('input-name').value.trim();
-  const ip = document.getElementById('input-ip').value.trim();
-  const role = document.getElementById('input-role').value;
-  const pairToken = document.getElementById('input-token').value.trim();
 
-  if (!ip) {
-    alert('Please specify an IP address or hostname.');
-    return;
-  }
+    async function submitPairNode() {
+      const name = document.getElementById('input-name').value.trim();
+      const ip = document.getElementById('input-ip').value.trim();
+      const role = document.getElementById('input-role').value;
+      const pairToken = document.getElementById('input-token').value.trim();
 
-  try {
-    const res = await fetch(`/api/v2/plugins/mesh/action?token=${encodeURIComponent(token)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'pair_node',
-        args: { name, ip, role, token: pairToken }
-      })
-    });
+      if (!ip) {
+        alert('Please specify an IP address or hostname.');
+        return;
+      }
 
-    const body = await res.json();
+      try {
+        const res = await fetch(`/api/v2/plugins/mesh/action?token=${encodeURIComponent(token)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'pair_node',
+            args: { name, ip, role, token: pairToken }
+          })
+        });
 
-    const actionData = {
-      ...(body.data?.payload ?? {}),
-      ...(body.data ?? {})
-    };
-    if (!res.ok) {
-      throw new Error(
-        body.error?.message ||
-        actionData.error ||
-        'Pairing request failed'
-      );
+        const body = await res.json();
+
+        const actionData = {
+          ...(body.data?.payload ?? {}),
+          ...(body.data ?? {})
+        };
+        if (!res.ok) {
+          throw new Error(
+            body.error?.message ||
+            actionData.error ||
+            'Pairing request failed'
+          );
+        }
+
+        if (
+          body.status !== 'success' ||
+          actionData.success === false
+        ) {
+          throw new Error(
+            body.error?.message ||
+            actionData.error ||
+            actionData.message ||
+            'Pairing request failed'
+          );
+        }
+
+        showToast(actionData.message || `Paired ${ip}`);
+        closePairModal();
+        await fetchCollect();
+
+      } catch (e) {
+        showToast(e.message || `Could not pair ${ip}`, true);
+      }
     }
 
-    if (
-      body.status !== 'success' ||
-      actionData.success === false
-    ) {
-      throw new Error(
-        body.error?.message ||
-        actionData.error ||
-        actionData.message ||
-        'Pairing request failed'
-      );
-    }
+    async function pingNode(id) {
+      try {
+        const res = await fetch(`/api/v2/plugins/mesh/action?token=${encodeURIComponent(token)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'ping_node',
+            action_id: 'ping_node',
+            target: id,
+            args: { node_id: id },
+            node_id: id
+          })
+        });
 
-    showToast(actionData.message || `Paired ${ip}`);
-    closePairModal();
-    await fetchCollect();
+        const body = await res.json();
+        const actionData = {
+          ...(body.data?.payload ?? {}),
+          ...(body.data ?? {})
+        };
+        if (
+          !res.ok ||
+          body.status !== 'success' ||
+          actionData.success === false
+        ) {
+          throw new Error(
+            body.error?.message ||
+            actionData.error ||
+            actionData.message ||
+            'Ping failed'
+          );
+        }
 
-  } catch (e) {
-    showToast(e.message || `Could not pair ${ip}`, true);
-  }
-}
-
-
-async function pingNode(id) {
-  try {
-    const res = await fetch(`/api/v2/plugins/mesh/action?token=${encodeURIComponent(token)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'ping_node',
-        action_id: 'ping_node',
-        target: id,
-        args: { node_id: id },
-        node_id: id
-      })
-    });
-
-    const body = await res.json();
-    const actionData = {
-      ...(body.data?.payload ?? {}),
-      ...(body.data ?? {})
-    };
-    if (
-      !res.ok ||
-      body.status !== 'success' ||
-      actionData.success === false
-    ) {
-      throw new Error(
-        body.error?.message ||
-        actionData.error ||
-        actionData.message ||
-        'Ping failed'
-      );
-    }
-
-    showToast(
-      actionData.message ||
-      `Node responded in ${actionData.ping_ms ?? 0} ms`
-    );
-
-    await fetchCollect();
-  } catch (err) {
-    showToast(
-      (err instanceof TypeError ? 'Node did not respond. Check its connection and pairing token.' : (err.message || 'Node did not respond. Check its connection and pairing token.')),
-      true
-    );
-  }
-}
-
-
-async function forgetNode(id) {
-  if (!confirm(`Are you sure you want to forget and disconnect node ${id}?`)) {
-    return;
-  }
-
-  try {
-    const res = await fetch(`/api/v2/plugins/mesh/action?token=${encodeURIComponent(token)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'forget_node',
-        action_id: 'forget_node',
-        target: id,
-        args: { node_id: id },
-        node_id: id
-      })
-    });
-
-    const body = await res.json();
-    const actionData = {
-      ...(body.data?.payload ?? {}),
-      ...(body.data ?? {})
-    };
-    if (
-      !res.ok ||
-      body.status !== 'success' ||
-      actionData.success === false
-    ) {
-      throw new Error(
-        body.error?.message ||
-        actionData.error ||
-        actionData.message ||
-        'Could not remove node'
-      );
-    }
-
-    await fetchCollect();
-    showToast(actionData.message || 'Node removed');
-  } catch (err) {
-    showToast((err instanceof TypeError ? 'Could not remove node. Check its connection and try again.' : (err.message || 'Could not remove node. Try again.')), true);
-  }
-}
-
-
-async function scanNetwork() {
-  if (!meshConfig.has_pairing_token) {
-    showMeshView('settings');
-    document.getElementById('mesh-settings-status').textContent =
-      'Set a pairing token before scanning.';
-    document.getElementById('mesh-settings-status').style.color = 'var(--amber)';
-    return;
-  }
-
-  showToast('Searching for M3TAL mesh nodes via mDNS…');
-
-  try {
-    const res = await fetch(`/api/v2/plugins/mesh/action?token=${encodeURIComponent(token)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'scan_network',
-        args: {}
-      })
-    });
-
-    const body = await res.json();
-    const actionData = {
-      ...(body.data?.payload ?? {}),
-      ...(body.data ?? {})
-    };
-    if (
-      !res.ok ||
-      body.status !== 'success' ||
-      actionData.success === false
-    ) {
-      throw new Error(
-        body.error?.message ||
-        actionData.error ||
-        actionData.message ||
-        'LAN scan failed'
-      );
-    }
-
-    const candidates = Array.isArray(actionData.nodes)
-      ? actionData.nodes
-      : [];
-
-    openPairModal();
-
-    const results = document.getElementById('discovery-results');
-
-    if (!candidates.length) {
-      results.textContent =
-        'No unpaired M3TAL mesh nodes were found. You can still enter an IP address or hostname above.';
-    } else {
-      results.replaceChildren();
-
-      const heading = document.createElement('div');
-      heading.textContent =
-        `Found ${candidates.length} node(s). Choose one to pair:`;
-      heading.style.cssText =
-        'font-weight:700;color:#fff;margin:4px 0 8px';
-      results.appendChild(heading);
-
-      candidates.forEach((node) => {
-        const row = document.createElement('div');
-        row.style.cssText =
-          'display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--border)';
-
-        const label = document.createElement('span');
-        label.textContent = `${node.name} — ${node.ip}`;
-
-        const pairButton = document.createElement('button');
-        pairButton.className = 'btn btn-primary';
-        pairButton.textContent = 'Pair';
-        pairButton.addEventListener(
-          'click',
-          () => pairDiscoveredNode(node.ip, node.name)
+        showToast(
+          actionData.message ||
+          `Node responded in ${actionData.ping_ms ?? 0} ms`
         );
 
-        row.append(label, pairButton);
-        results.appendChild(row);
-      });
+        await fetchCollect();
+      } catch (err) {
+        showToast('Node did not respond. Check its connection and pairing token.', true);
+      }
     }
 
-    showToast(`Found ${candidates.length} authenticated sender(s).`);
-  } catch (err) {
-    showToast(err.message || 'LAN scan failed', true);
-  }
-}
+    async function forgetNode(id) {
+      if (!confirm(`Are you sure you want to forget and disconnect node ${id}?`)) {
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/v2/plugins/mesh/action?token=${encodeURIComponent(token)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'forget_node',
+            action_id: 'forget_node',
+            target: id,
+            args: { node_id: id },
+            node_id: id
+          })
+        });
+
+        const body = await res.json();
+        const actionData = {
+          ...(body.data?.payload ?? {}),
+          ...(body.data ?? {})
+        };
+        if (
+          !res.ok ||
+          body.status !== 'success' ||
+          actionData.success === false
+        ) {
+          throw new Error(
+            body.error?.message ||
+            actionData.error ||
+            actionData.message ||
+            'Could not remove node'
+          );
+        }
+
+        await fetchCollect();
+        showToast(actionData.message || 'Node removed');
+      } catch (err) {
+        showToast('Could not remove node. Try again.', true);
+      }
+    }
+
+    async function scanNetwork() {
+      if (!meshConfig.has_pairing_token) {
+        showMeshView('settings');
+        document.getElementById('mesh-settings-status').textContent =
+          'Set a pairing token before scanning.';
+        document.getElementById('mesh-settings-status').style.color = 'var(--amber)';
+        return;
+      }
+
+      showToast('Searching for M3TAL mesh nodes via mDNS…');
+
+      try {
+        const res = await fetch(`/api/v2/plugins/mesh/action?token=${encodeURIComponent(token)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'scan_network',
+            args: {}
+          })
+        });
+
+        const body = await res.json();
+        const actionData = {
+          ...(body.data?.payload ?? {}),
+          ...(body.data ?? {})
+        };
+        if (
+          !res.ok ||
+          body.status !== 'success' ||
+          actionData.success === false
+        ) {
+          throw new Error(
+            body.error?.message ||
+            actionData.error ||
+            actionData.message ||
+            'LAN scan failed'
+          );
+        }
+
+        const candidates = Array.isArray(actionData.nodes)
+          ? actionData.nodes
+          : [];
+
+        openPairModal();
+
+        const results = document.getElementById('discovery-results');
+
+        if (!candidates.length) {
+          results.textContent =
+            'No unpaired M3TAL mesh nodes were found. You can still enter an IP address or hostname above.';
+        } else {
+          results.replaceChildren();
+
+          const heading = document.createElement('div');
+          heading.textContent =
+            `Found ${candidates.length} node(s). Choose one to pair:`;
+          heading.style.cssText =
+            'font-weight:700;color:#fff;margin:4px 0 8px';
+          results.appendChild(heading);
+
+          candidates.forEach((node) => {
+            const row = document.createElement('div');
+            row.style.cssText =
+              'display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--border)';
+
+            const label = document.createElement('span');
+            label.textContent = `${node.name} — ${node.ip}`;
+
+            const pairButton = document.createElement('button');
+            pairButton.className = 'btn btn-primary';
+            pairButton.textContent = 'Pair';
+            pairButton.addEventListener(
+              'click',
+              () => pairDiscoveredNode(node.ip, node.name)
+            );
+
+            row.append(label, pairButton);
+            results.appendChild(row);
+          });
+        }
+
+        showToast(`Found ${candidates.length} authenticated sender(s).`);
+      } catch (err) {
+        showToast(err.message || 'LAN scan failed', true);
+      }
+    }
 
     async function pairDiscoveredNode(ip, name) {
       document.getElementById('input-ip').value = ip;
