@@ -1184,3 +1184,183 @@ func TestMismatchedProofDoesNotWrapTokenRejected(t *testing.T) {
 		t.Fatalf("expected mismatched proof to NOT wrap ErrTokenRejected, got: %v", err)
 	}
 }
+
+func TestDefaultPasswordWithheldFromUnpinnedHostUntilAuthenticated(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := meshConfig{PairingToken: "mesh-shared-token", DefaultPassword: "mesh-default-secret", ListenPort: 9321}
+
+	var firstReqPassword string
+	var secondReqPassword string
+	reqCount := 0
+
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
+		if r.URL.Path == "/api/v1/telemetry" {
+			reqCount++
+			nonce := r.Header.Get("X-M3TAL-Nonce")
+			clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
+			fp := testServerFingerprint(server)
+			if r.Header.Get("X-M3TAL-Proof") != requestProof("mesh-shared-token", nonce, clientNonce, fp) {
+				http.Error(w, "invalid token proof", http.StatusUnauthorized)
+				return
+			}
+			pass := r.Header.Get("X-M3TAL-Password")
+			if reqCount == 1 {
+				firstReqPassword = pass
+				if pass == "" {
+					w.Header().Set("X-M3TAL-Auth-Status", "password_required")
+					w.Header().Set("X-M3TAL-Proof", responseProof("mesh-shared-token", nonce, clientNonce, []byte("password required\n"), fp))
+					http.Error(w, "password required", http.StatusUnauthorized)
+					return
+				}
+			}
+			secondReqPassword = pass
+			if pass != "mesh-default-secret" {
+				http.Error(w, "invalid password", http.StatusUnauthorized)
+				return
+			}
+			body, _ := json.Marshal(remoteResponse{
+				Name: "dual-box", Hostname: "dual-box",
+				Telemetry: remoteTelemetry{Hostname: "dual-box", Cores: 4, RAMTotalGB: 16, StorageTotalGB: 500},
+			})
+			w.Header().Set("X-M3TAL-Proof", responseProof("mesh-shared-token", nonce, clientNonce, body, fp))
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(body)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	// 1. Unpinned connection: expectedFingerprint is empty
+	node, passwordOnly, err := connectAndNegotiateNode(server.Listener.Addr().String(), "", "", cfg)
+	if err != nil {
+		t.Fatalf("expected connectAndNegotiateNode to succeed after authenticated retry: %v", err)
+	}
+	if passwordOnly {
+		t.Fatal("expected passwordOnly to be false")
+	}
+	if node.Name != "dual-box" {
+		t.Fatalf("unexpected node name: %s", node.Name)
+	}
+	if firstReqPassword != "" {
+		t.Fatalf("security violation: DefaultPassword was sent on unpinned initial request: %q", firstReqPassword)
+	}
+	if secondReqPassword != "mesh-default-secret" {
+		t.Fatalf("expected DefaultPassword on authenticated retry, got: %q", secondReqPassword)
+	}
+}
+
+func TestDefaultPasswordNotSentToUnauthenticatedRogueHost(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := meshConfig{PairingToken: "mesh-shared-token", DefaultPassword: "mesh-default-secret", ListenPort: 9321}
+
+	var receivedPassword string
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
+		if r.URL.Path == "/api/v1/telemetry" {
+			receivedPassword = r.Header.Get("X-M3TAL-Password")
+			// Rogue host asks for password, but has NO valid token proof
+			w.Header().Set("X-M3TAL-Auth-Status", "password_required")
+			http.Error(w, "password required", http.StatusUnauthorized)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	_, _, err := connectAndNegotiateNode(server.Listener.Addr().String(), "", "", cfg)
+	if err == nil {
+		t.Fatal("expected rogue host connection to fail")
+	}
+	if receivedPassword != "" {
+		t.Fatalf("security violation: DefaultPassword sent to unauthenticated rogue host: %q", receivedPassword)
+	}
+}
+
+func TestDefaultPasswordSentDirectlyToPinnedHost(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := meshConfig{PairingToken: "mesh-shared-token", DefaultPassword: "mesh-default-secret", ListenPort: 9321}
+
+	var receivedPassword string
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
+		if r.URL.Path == "/api/v1/telemetry" {
+			receivedPassword = r.Header.Get("X-M3TAL-Password")
+			nonce := r.Header.Get("X-M3TAL-Nonce")
+			clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
+			fp := testServerFingerprint(server)
+			body, _ := json.Marshal(remoteResponse{
+				Name: "pinned-box", Hostname: "pinned-box",
+				Telemetry: remoteTelemetry{Hostname: "pinned-box", Cores: 4, RAMTotalGB: 16, StorageTotalGB: 500},
+			})
+			w.Header().Set("X-M3TAL-Proof", responseProof("mesh-shared-token", nonce, clientNonce, body, fp))
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(body)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	fp := testServerFingerprint(server)
+	// Pinned host: pass expectedFingerprint
+	node, _, err := connectAndNegotiateNode(server.Listener.Addr().String(), "", "", cfg, fp)
+	if err != nil {
+		t.Fatalf("expected pinned connection to succeed: %v", err)
+	}
+	if node.Name != "pinned-box" {
+		t.Fatalf("unexpected node name: %s", node.Name)
+	}
+	if receivedPassword != "mesh-default-secret" {
+		t.Fatalf("expected DefaultPassword to be sent directly to pinned host, got: %q", receivedPassword)
+	}
+}
+
+func TestRefreshRemotePeersWithholdsDefaultPasswordFromUnpinnedPeer(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	remoteNodes = []MeshNode{}
+	cfg := meshConfig{PairingToken: "mesh-shared-token", DefaultPassword: "mesh-default-secret", ListenPort: 9321}
+	if err := saveMeshConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	var receivedPassword string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
+		if r.URL.Path == "/api/v1/telemetry" {
+			receivedPassword = r.Header.Get("X-M3TAL-Password")
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	// Peer has empty Fingerprint (unpinned)
+	unpinnedPeer := MeshNode{
+		ID:          "unpinned-peer-1",
+		Name:        "Unpinned Peer",
+		IP:          server.Listener.Addr().String(),
+		Fingerprint: "",
+	}
+	if err := persistPeerUpsert(unpinnedPeer, false, false); err != nil {
+		t.Fatal(err)
+	}
+
+	refreshRemotePeers()
+	if receivedPassword != "" {
+		t.Fatalf("security violation: refreshRemotePeers sent DefaultPassword to unpinned peer: %q", receivedPassword)
+	}
+}

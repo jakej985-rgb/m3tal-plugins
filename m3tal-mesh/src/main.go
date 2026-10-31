@@ -601,11 +601,9 @@ func handleAction(req *RPCRequest) {
 		clearPass, _ := raw.Args["clear_password"].(bool)
 		if addressChanged {
 			if effectiveToken == "" {
-				foundNode.APIToken = ""
 				clearTok = true
 			}
 			if password == "" {
-				foundNode.Password = ""
 				clearPass = true
 			}
 		}
@@ -696,7 +694,7 @@ func handleAction(req *RPCRequest) {
 			return
 		}
 		cfg := loadMeshConfig()
-		tok, pass := effectiveCredentials(target.APIToken, target.Password, target.PasswordOnly, cfg)
+		tok, pass := effectiveCredentials(target.APIToken, target.Password, target.PasswordOnly, cfg, target.Fingerprint)
 		updated, err := fetchRemoteWithAuth(target.IP, tok, pass, cfg.ListenPort, target.Fingerprint)
 		if err != nil {
 			sendError(req.ID, -32004, "Node ping failed", err.Error())

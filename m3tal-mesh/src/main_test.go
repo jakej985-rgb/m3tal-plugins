@@ -764,13 +764,14 @@ func TestUpdateNodeClearsCredentialsOnAddressChange(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	remoteNodes = []MeshNode{}
 
-	// 1. Initial saved peer with per-peer custom token and password
+	// 1. Initial saved peer with per-peer custom token, password, and pinned fingerprint
 	initialNode := MeshNode{
-		ID:       "peer-to-move",
-		Name:     "Moveable Peer",
-		IP:       "127.0.0.1:8888",
-		APIToken: "secret-token-to-clear",
-		Password: "secret-password-to-clear",
+		ID:          "peer-to-move",
+		Name:        "Moveable Peer",
+		IP:          "127.0.0.1:8888",
+		APIToken:    "secret-token-to-clear",
+		Password:    "secret-password-to-clear",
+		Fingerprint: "saved-cert-fingerprint-9999",
 	}
 	if err := persistPeerUpsert(initialNode, false, false); err != nil {
 		t.Fatal(err)
@@ -798,4 +799,3 @@ func TestUpdateNodeClearsCredentialsOnAddressChange(t *testing.T) {
 		t.Fatalf("expected Fingerprint to be cleared on address change, got: %s", persisted[0].Fingerprint)
 	}
 }
-
