@@ -656,8 +656,6 @@ func persistPeerUpsertInternal(node MeshNode, clearToken, clearPassword, isPairi
 	defer peerMutationMu.Unlock()
 	peers := snapshotPeers()
 
-	pairingMode := isPairing
-
 	existingIDIdx := -1
 	for i := range peers {
 		if peers[i].ID == node.ID {
@@ -668,7 +666,7 @@ func persistPeerUpsertInternal(node MeshNode, clearToken, clearPassword, isPairi
 
 	// In pairing path, detect conflict if an existing peer already uses this ID at a different IP address
 	// (e.g. if a peer previously at this address was moved to another IP via update_node)
-	if pairingMode && existingIDIdx >= 0 && node.IP != "" && !strings.EqualFold(peers[existingIDIdx].IP, node.IP) {
+	if isPairing && existingIDIdx >= 0 && node.IP != "" && !strings.EqualFold(peers[existingIDIdx].IP, node.IP) {
 		return fmt.Errorf("node ID %s conflicts with existing peer %s (%s)", node.ID, peers[existingIDIdx].Name, peers[existingIDIdx].IP)
 	}
 

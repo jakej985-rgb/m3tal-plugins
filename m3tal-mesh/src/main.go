@@ -646,19 +646,19 @@ func handleAction(req *RPCRequest) {
 			credsChanged = true
 		}
 		if addressChanged || credsChanged {
-			probePasswordOnly := foundNode.PasswordOnly
-			if addressChanged {
-				probePasswordOnly = false
-			}
-			testedNode, pwOnly, err := connectAndNegotiateNode(foundNode.IP, foundNode.APIToken, foundNode.Password, cfg, foundNode.Fingerprint, probePasswordOnly)
+			prevPasswordOnly := foundNode.PasswordOnly
+			testedNode, pwOnly, err := connectAndNegotiateNode(foundNode.IP, foundNode.APIToken, foundNode.Password, cfg, foundNode.Fingerprint, false)
 			if err == nil {
 				foundNode.PasswordOnly = pwOnly
 				if testedNode.Fingerprint != "" {
 					foundNode.Fingerprint = testedNode.Fingerprint
 				}
 				foundNode.Status = "online"
-			} else if foundNode.APIToken != "" {
-				foundNode.PasswordOnly = false
+			} else {
+				foundNode.PasswordOnly = prevPasswordOnly
+				if foundNode.APIToken != "" {
+					foundNode.PasswordOnly = false
+				}
 			}
 		}
 		if err := persistPeerUpsert(*foundNode, clearTok, clearPass); err != nil {
