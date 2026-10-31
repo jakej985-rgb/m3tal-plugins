@@ -680,6 +680,7 @@
 
         showToast(actionData.message || `Paired ${ip}`);
         closePairModal();
+        await loadMeshSettings();
         await fetchCollect();
 
       } catch (e) {
