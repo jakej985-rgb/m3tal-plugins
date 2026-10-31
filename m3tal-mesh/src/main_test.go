@@ -963,6 +963,82 @@ func TestTestNodePreservesPasswordOnlyModeForUnchangedSavedAddress(t *testing.T)
 	}
 }
 
+func TestTestNodeRenegotiatesPasswordOnlyWhenCredentialsChange(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	remoteNodes = []MeshNode{}
+
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
+		if r.URL.Path == "/api/v1/telemetry" {
+			nonce := r.Header.Get("X-M3TAL-Nonce")
+			clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
+			fp := testServerFingerprint(server)
+			// Reconfigured server requires default-mesh-token + new-secret
+			if r.Header.Get("X-M3TAL-Proof") != requestProof("default-mesh-token", nonce, clientNonce, fp) {
+				http.Error(w, "missing or invalid token proof", http.StatusUnauthorized)
+				return
+			}
+			if r.Header.Get("X-M3TAL-Password") != "new-secret" {
+				http.Error(w, "invalid password", http.StatusUnauthorized)
+				return
+			}
+			body, _ := json.Marshal(remoteResponse{
+				Name: "reconfigured-box", Hostname: "reconfigured-box",
+				Telemetry: remoteTelemetry{Hostname: "reconfigured-box", Cores: 4, RAMTotalGB: 16, StorageTotalGB: 500},
+			})
+			w.Header().Set("X-M3TAL-Proof", responseProof("default-mesh-token", nonce, clientNonce, body, fp))
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(body)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	addr := server.Listener.Addr().String()
+	fp := testServerFingerprint(server)
+
+	// Peer originally saved in PasswordOnly mode
+	savedPeer := MeshNode{
+		ID:           "saved-reconfigured-node",
+		Name:         "saved-node",
+		IP:           addr,
+		Fingerprint:  fp,
+		PasswordOnly: true,
+		Password:     "old-secret",
+	}
+	if err := persistPeerUpsert(savedPeer, false, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// Default token configured in mesh settings
+	cfg := meshConfig{PairingToken: "default-mesh-token", ListenPort: 9321}
+	if err := saveMeshConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. test_node with unchanged credentials preserves PasswordOnly=true and fails because token is suppressed
+	unchangedReq := fmt.Sprintf(`{"action":"test_node","args":{"node_id":"saved-reconfigured-node","ip":%q}}`, addr)
+	unchangedResp := runActionForTest(t, 26, unchangedReq)
+	if unchangedResp.Error == nil {
+		t.Fatal("expected test_node with unchanged credentials to fail due to token suppression")
+	}
+
+	// 2. test_node with updated password in edit modal renegotiates mode, inherits default token, and succeeds
+	changedReq := fmt.Sprintf(`{"action":"test_node","args":{"node_id":"saved-reconfigured-node","ip":%q,"password":"new-secret"}}`, addr)
+	changedResp := runActionForTest(t, 27, changedReq)
+	if changedResp.Error != nil {
+		t.Fatalf("expected test_node with changed credentials to renegotiate mode and succeed, got error: %s", changedResp.Error.Message)
+	}
+	resMap, ok := changedResp.Result.(map[string]interface{})
+	if !ok || resMap["success"] != true {
+		t.Fatalf("expected successful test_node response, got: %+v", changedResp.Result)
+	}
+}
+
 func TestUpdateNodeAddressNormalizationPreservesCredentialsAndPin(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	remoteNodes = []MeshNode{}

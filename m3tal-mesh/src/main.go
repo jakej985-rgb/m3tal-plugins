@@ -552,19 +552,32 @@ func handleAction(req *RPCRequest) {
 			normSaved, _ := normalizeNodeAddress(savedPeer.IP, cfg.ListenPort)
 			samePeerIP = strings.EqualFold(ip, normSaved)
 		}
+		clearTok := false
+		clearPass := false
+		if raw.Args != nil {
+			if v, ok := raw.Args["clear_token"].(bool); ok {
+				clearTok = v
+			}
+			if v, ok := raw.Args["clear_password"].(bool); ok {
+				clearPass = v
+			}
+		}
+		credsChanged := effectiveToken != "" || password != "" || clearTok || clearPass
 		explicitTok := effectiveToken
-		if explicitTok == "" && samePeerIP {
+		if explicitTok == "" && samePeerIP && !clearTok {
 			explicitTok = savedPeer.APIToken
 		}
 		explicitPass := password
-		if explicitPass == "" && samePeerIP {
+		if explicitPass == "" && samePeerIP && !clearPass {
 			explicitPass = savedPeer.Password
 		}
 		var expectedFP string
 		savedPasswordOnly := false
 		if samePeerIP {
 			expectedFP = savedPeer.Fingerprint
-			savedPasswordOnly = savedPeer.PasswordOnly
+			if !credsChanged {
+				savedPasswordOnly = savedPeer.PasswordOnly
+			}
 		}
 		testedNode, _, err := connectAndNegotiateNode(ip, explicitTok, explicitPass, cfg, expectedFP, savedPasswordOnly)
 		if err != nil {
