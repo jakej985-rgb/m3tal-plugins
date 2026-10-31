@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.0] - 2026-10-31
+
+### 🚀 Changes & Improvements
+- **merge: resolve changelog conflicts with origin/main** (`7dd0e07`)
+- **refactor(mesh): rely exclusively on nil-safe accessors for default configuration flags** (`9afbf1d`)
+- **refactor(mesh): remove redundant fingerprint check and unreachable refresh error branch** (`a279f89`)
+- **fix(mesh): prioritize replacement tokens, enforce policy on tokenless fetches, and share response parsing tail** (`2692e32`)
+- **fix(mesh): preserve tokens on blank settings save, wire discovery toggle, and optimize unauthenticated flow** (`d13a6f8`)
+- **feat(mesh): enforce pairing token by default and add settings to make optional with safety warnings** (`5da9b8f`)
+
+---
+
 ## [Unreleased]
 ### Added
 - Register `settings` capability and `spec.settings` in `plugin.yaml` so Mesh Fleet appears under M3TAL Core's "System Settings & Configurations → PLUGIN SETTINGS".
