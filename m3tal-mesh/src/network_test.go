@@ -398,3 +398,55 @@ func TestFetchRemoteRejectsRelayedChallengeToDifferentServer(t *testing.T) {
 		t.Fatal("expected relayed challenge to different TLS server to be rejected")
 	}
 }
+
+func TestFetchRemoteRESTTokenAndOptionalPassword(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	nodeMutex.Lock()
+	remoteNodes = []MeshNode{}
+	nodeMutex.Unlock()
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		pass := r.Header.Get("X-M3TAL-Password")
+		if auth != "Bearer node-api-token" || pass != "node-pass" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(remoteResponse{
+			Name: "auth-server", Hostname: "auth-server",
+			Telemetry: remoteTelemetry{Hostname: "auth-server", Cores: 16, RAMTotalGB: 64, StorageTotalGB: 2000},
+		})
+	}))
+	defer server.Close()
+
+	// 1. Valid token and password
+	node, err := fetchRemoteWithAuth(server.Listener.Addr().String(), "node-api-token", "node-pass", 9321)
+	if err != nil {
+		t.Fatalf("fetchRemoteWithAuth failed: %v", err)
+	}
+	if node.Name != "auth-server" || node.Cores != 16 || !node.HasPassword || !node.HasAPIToken {
+		t.Fatalf("unexpected node payload: %+v", node)
+	}
+
+	// 2. Wrong password -> error
+	_, err = fetchRemoteWithAuth(server.Listener.Addr().String(), "node-api-token", "wrong-pass", 9321)
+	if err == nil {
+		t.Fatal("expected failure with wrong password")
+	}
+
+	// 3. Pair and persist
+	paired, err := pairAndPersistPeer(server.Listener.Addr().String(), "Auth Box", "nas", "node-api-token", "node-pass")
+	if err != nil {
+		t.Fatalf("pairAndPersistPeer failed: %v", err)
+	}
+	if paired.Name != "Auth Box" || paired.Role != "nas" || !paired.HasPassword {
+		t.Fatalf("unexpected paired node: %+v", paired)
+	}
+
+	// 4. Verify peers persistence
+	peers := loadPeers()
+	if len(peers) != 1 || peers[0].Password != "node-pass" || peers[0].APIToken != "node-api-token" {
+		t.Fatalf("expected persisted peer with credentials, got: %+v", peers)
+	}
+}
+
