@@ -747,23 +747,10 @@ func refreshRemotePeers() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			tok, pass := effectiveCredentials(existing.APIToken, existing.Password, existing.PasswordOnly, cfg, existing.Fingerprint)
-			if cfg.IsPairingTokenRequired() && tok == "" && pass == "" {
-				nodeMutex.Lock()
-				for i := range remoteNodes {
-					if remoteNodes[i].ID == existing.ID {
-						remoteNodes[i].Status = "offline"
-						remoteNodes[i].LastSeen = "authentication required"
-						break
-					}
-				}
-				nodeMutex.Unlock()
-				return
-			}
-
-			updated, err := fetchRemoteWithAuth(existing.IP, tok, pass, cfg.ListenPort, existing.Fingerprint)
+			updated, pwOnly, err := connectAndNegotiateNode(existing.IP, existing.APIToken, existing.Password, cfg, existing.Fingerprint, existing.PasswordOnly)
+			var shouldPersist bool
+			var nodeToPersist MeshNode
 			nodeMutex.Lock()
-			defer nodeMutex.Unlock()
 			for i := range remoteNodes {
 				if remoteNodes[i].ID == existing.ID {
 					current := remoteNodes[i]
@@ -777,14 +764,29 @@ func refreshRemotePeers() {
 						updated.IP = current.IP
 						updated.APIToken = current.APIToken
 						updated.Password = current.Password
-						updated.PasswordOnly = current.PasswordOnly
+						updated.PasswordOnly = pwOnly
+						if updated.Fingerprint == "" && current.Fingerprint != "" {
+							updated.Fingerprint = current.Fingerprint
+						}
 						remoteNodes[i] = updated
+						if current.Fingerprint == "" && updated.Fingerprint != "" {
+							shouldPersist = true
+							nodeToPersist = updated
+						}
 					} else {
 						remoteNodes[i].Status = "offline"
-						remoteNodes[i].LastSeen = "unreachable"
+						if cfg.IsPairingTokenRequired() && existing.APIToken == "" && existing.Password == "" && cfg.PairingToken == "" {
+							remoteNodes[i].LastSeen = "authentication required"
+						} else {
+							remoteNodes[i].LastSeen = "unreachable"
+						}
 					}
 					break
 				}
+			}
+			nodeMutex.Unlock()
+			if shouldPersist {
+				_ = persistPeerUpsert(nodeToPersist, false, false)
 			}
 		}()
 	}

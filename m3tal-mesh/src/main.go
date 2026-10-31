@@ -720,8 +720,7 @@ func handleAction(req *RPCRequest) {
 			return
 		}
 		cfg := loadMeshConfig()
-		tok, pass := effectiveCredentials(target.APIToken, target.Password, target.PasswordOnly, cfg, target.Fingerprint)
-		updated, err := fetchRemoteWithAuth(target.IP, tok, pass, cfg.ListenPort, target.Fingerprint)
+		updated, pwOnly, err := connectAndNegotiateNode(target.IP, target.APIToken, target.Password, cfg, target.Fingerprint, target.PasswordOnly)
 		if err != nil {
 			sendError(req.ID, -32004, "Node ping failed", err.Error())
 			return
@@ -729,7 +728,10 @@ func handleAction(req *RPCRequest) {
 		updated.ID, updated.Name, updated.Role = target.ID, target.Name, target.Role
 		updated.APIToken = target.APIToken
 		updated.Password = target.Password
-		updated.PasswordOnly = target.PasswordOnly
+		updated.PasswordOnly = pwOnly
+		if updated.Fingerprint == "" && target.Fingerprint != "" {
+			updated.Fingerprint = target.Fingerprint
+		}
 		if err := persistPeerUpsert(updated, false, false); err != nil {
 			sendError(req.ID, -32005, "Could not save node status", err.Error())
 			return

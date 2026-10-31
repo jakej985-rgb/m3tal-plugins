@@ -1449,3 +1449,82 @@ func TestDefaultPasswordNotSentOnRetryWhenCustomTokenSupplied(t *testing.T) {
 		t.Fatalf("security violation: DefaultPassword was sent on retry to custom-token peer: %q", receivedPassword)
 	}
 }
+
+func TestRefreshRemotePeersRetainsNegotiatedPinWhenUnpinnedNodeRecovers(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	remoteNodes = []MeshNode{}
+	cfg := meshConfig{PairingToken: "mesh-shared-token", DefaultPassword: "mesh-default-secret", ListenPort: 9321}
+	if err := saveMeshConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	var reqCount int
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
+		if r.URL.Path == "/api/v1/telemetry" {
+			reqCount++
+			nonce := r.Header.Get("X-M3TAL-Nonce")
+			clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
+			fp := testServerFingerprint(server)
+			if r.Header.Get("X-M3TAL-Proof") != requestProof("mesh-shared-token", nonce, clientNonce, fp) {
+				http.Error(w, "invalid token proof", http.StatusUnauthorized)
+				return
+			}
+			pass := r.Header.Get("X-M3TAL-Password")
+			if reqCount == 1 {
+				// First request has no password (fingerprint unpinned) -> responds password_required with token proof
+				w.Header().Set("X-M3TAL-Auth-Status", "password_required")
+				w.Header().Set("X-M3TAL-Proof", responseProof("mesh-shared-token", nonce, clientNonce, []byte("password required\n"), fp))
+				http.Error(w, "password required", http.StatusUnauthorized)
+				return
+			}
+			if pass != "mesh-default-secret" {
+				http.Error(w, "invalid password", http.StatusUnauthorized)
+				return
+			}
+			body, _ := json.Marshal(remoteResponse{
+				Name: "recovered-node", Hostname: "recovered-node",
+				Telemetry: remoteTelemetry{Hostname: "recovered-node", Cores: 4, RAMTotalGB: 16, StorageTotalGB: 500},
+			})
+			w.Header().Set("X-M3TAL-Proof", responseProof("mesh-shared-token", nonce, clientNonce, body, fp))
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(body)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	addr := server.Listener.Addr().String()
+	fp := testServerFingerprint(server)
+
+	// Peer saved with empty fingerprint (unpinned, e.g. after address change while offline)
+	unpinnedPeer := MeshNode{
+		ID:          "recovered-peer-1",
+		Name:        "Recovered Peer",
+		IP:          addr,
+		Fingerprint: "",
+	}
+	if err := persistPeerUpsert(unpinnedPeer, false, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// refreshRemotePeers should run authenticated negotiation retry and retain the pin
+	refreshRemotePeers()
+	peers := snapshotPeers()
+	if len(peers) != 1 || peers[0].Status != "online" {
+		t.Fatalf("expected recovered peer to come online, got: %+v", peers)
+	}
+	if peers[0].Fingerprint != fp {
+		t.Fatalf("expected memory peer fingerprint to be pinned to %s, got: %s", fp, peers[0].Fingerprint)
+	}
+
+	// Persistent storage must also retain the new pin
+	persisted := loadPeers()
+	if len(persisted) != 1 || persisted[0].Fingerprint != fp {
+		t.Fatalf("expected persisted peer fingerprint to be pinned to %s, got: %s", fp, persisted[0].Fingerprint)
+	}
+}
