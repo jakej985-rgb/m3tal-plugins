@@ -330,7 +330,7 @@ func handleAction(req *RPCRequest) {
 			"message":               "Settings saved. Restart the plugin if you changed its port or LAN discovery setting.",
 			"has_password":          cfg.Password != "",
 			"has_pairing_token":     cfg.PairingToken != "",
-			"require_pairing_token": cfg.RequirePairingToken == nil || *cfg.RequirePairingToken,
+			"require_pairing_token": cfg.IsPairingTokenRequired(),
 			"listen_port":           cfg.ListenPort,
 			"broadcast_mdns":        cfg.BroadcastMDNS,
 		})
@@ -340,7 +340,7 @@ func handleAction(req *RPCRequest) {
 			"success":               true,
 			"has_password":          cfg.Password != "",
 			"has_pairing_token":     cfg.PairingToken != "",
-			"require_pairing_token": cfg.RequirePairingToken == nil || *cfg.RequirePairingToken,
+			"require_pairing_token": cfg.IsPairingTokenRequired(),
 			"listen_port":           cfg.ListenPort,
 			"broadcast_mdns":        cfg.BroadcastMDNS,
 		})

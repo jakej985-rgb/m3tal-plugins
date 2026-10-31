@@ -202,7 +202,7 @@ func TestTelemetryEndpointUnauthenticatedWhenRequirementDisabled(t *testing.T) {
 	}
 }
 
-func TestTelemetryEndpointRESTBearerAndOptionalPassword(t *testing.T) {
+func TestTelemetryEndpointRejectsPlaintextTokenWithoutHMAC(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	defaultTrue := true
 	cfg := nodeRuntimeConfig{
@@ -227,45 +227,20 @@ func TestTelemetryEndpointRESTBearerAndOptionalPassword(t *testing.T) {
 		t.Fatalf("expected 401 for missing token, got %d", resp.StatusCode)
 	}
 
-	// 2. Token only, missing password -> 401
+	// 2. Plaintext Bearer token with password -> 401 (HMAC proof required)
 	req, _ := http.NewRequest(http.MethodGet, server.URL+"/api/v1/telemetry", nil)
-	req.Header.Set("Authorization", "Bearer my-secret-token")
-	resp, err = http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("expected 401 for missing password, got %d", resp.StatusCode)
-	}
-
-	// 3. Token + wrong password -> 401
-	req, _ = http.NewRequest(http.MethodGet, server.URL+"/api/v1/telemetry", nil)
-	req.Header.Set("Authorization", "Bearer my-secret-token")
-	req.Header.Set("X-M3TAL-Password", "wrong-password")
-	resp, err = http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("expected 401 for wrong password, got %d", resp.StatusCode)
-	}
-
-	// 4. Token + correct password -> 200 OK
-	req, _ = http.NewRequest(http.MethodGet, server.URL+"/api/v1/telemetry", nil)
 	req.Header.Set("Authorization", "Bearer my-secret-token")
 	req.Header.Set("X-M3TAL-Password", "my-secret-pass")
 	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200 for valid token and password, got %d", resp.StatusCode)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for plaintext Bearer token without HMAC proof, got %d", resp.StatusCode)
 	}
 
-	// 5. Basic auth fallback -> 200 OK
+	// 3. Basic auth plaintext -> 401
 	req, _ = http.NewRequest(http.MethodGet, server.URL+"/api/v1/telemetry", nil)
 	req.SetBasicAuth("my-secret-token", "my-secret-pass")
 	resp, err = http.DefaultClient.Do(req)
@@ -273,8 +248,8 @@ func TestTelemetryEndpointRESTBearerAndOptionalPassword(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200 for valid BasicAuth, got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for plaintext BasicAuth without HMAC proof, got %d", resp.StatusCode)
 	}
 }
 

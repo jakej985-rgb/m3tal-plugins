@@ -34,6 +34,13 @@ type meshConfig struct {
 	DiscoveryEnabled    *bool  `json:"discovery_enabled,omitempty"`
 }
 
+func (c meshConfig) IsPairingTokenRequired() bool {
+	if c.RequirePairingToken == nil {
+		return true
+	}
+	return *c.RequirePairingToken
+}
+
 func (c meshConfig) IsDiscoveryEnabled() bool {
 	if c.DiscoveryEnabled == nil {
 		return true
@@ -279,7 +286,7 @@ func fetchRemote(address, token string, port int, expectedFingerprint ...string)
 
 func fetchRemoteWithAuth(address, token, password string, port int, expectedFingerprint ...string) (MeshNode, error) {
 	cfg := loadMeshConfig()
-	if token == "" && password == "" && (cfg.RequirePairingToken == nil || *cfg.RequirePairingToken) {
+	if token == "" && password == "" && cfg.IsPairingTokenRequired() {
 		return MeshNode{}, fmt.Errorf("pairing token is required to authenticate mesh nodes; configure a shared secret in Mesh Settings or enter a pairing token")
 	}
 	endpoint, err := normalizeNodeAddress(address, port)
@@ -423,7 +430,7 @@ func pairAndPersistPeer(address, name, role, token, password string) (MeshNode, 
 	if connectPass == "" && cfg.DefaultPassword != "" {
 		connectPass = cfg.DefaultPassword
 	}
-	if (cfg.RequirePairingToken == nil || *cfg.RequirePairingToken) && connectToken == "" && connectPass == "" {
+	if cfg.IsPairingTokenRequired() && connectToken == "" && connectPass == "" {
 		return MeshNode{}, fmt.Errorf("pairing token is required to authenticate remote mesh nodes; configure a shared secret in Mesh Settings or enter a pairing token")
 	}
 	if cfg.PairingToken != "" && connectToken != "" && connectToken != cfg.PairingToken && connectPass == "" {
@@ -463,7 +470,7 @@ func discoverAndVerifyPeers() ([]MeshNode, error) {
 	if !cfg.IsDiscoveryEnabled() {
 		return []MeshNode{}, nil
 	}
-	if (cfg.RequirePairingToken == nil || *cfg.RequirePairingToken) && cfg.PairingToken == "" && cfg.DefaultPassword == "" {
+	if cfg.IsPairingTokenRequired() && cfg.PairingToken == "" && cfg.DefaultPassword == "" {
 		return []MeshNode{}, nil
 	}
 	resolver, err := zeroconf.NewResolver(zeroconf.SelectIPTraffic(zeroconf.IPv4))
@@ -651,7 +658,7 @@ func refreshRemotePeers() {
 			if pass == "" {
 				pass = cfg.DefaultPassword
 			}
-			if (cfg.RequirePairingToken == nil || *cfg.RequirePairingToken) && tok == "" && pass == "" {
+			if cfg.IsPairingTokenRequired() && tok == "" && pass == "" {
 				nodeMutex.Lock()
 				for i := range remoteNodes {
 					if remoteNodes[i].ID == existing.ID {

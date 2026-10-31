@@ -597,10 +597,6 @@ func handleAction(req *RPCRequest) {
 			foundNode.APIToken = ""
 			foundNode.HasAPIToken = false
 			foundNode.ClearAPIToken = true
-		} else if clearTok, ok := raw.Args["clear_token"].(bool); ok && clearTok {
-			foundNode.APIToken = ""
-			foundNode.HasAPIToken = false
-			foundNode.ClearAPIToken = true
 		}
 		if password != "" {
 			foundNode.Password = password
@@ -710,7 +706,7 @@ func handleAction(req *RPCRequest) {
 			})
 			return
 		}
-		if (cfg.RequirePairingToken == nil || *cfg.RequirePairingToken) && cfg.PairingToken == "" && cfg.DefaultPassword == "" {
+		if cfg.IsPairingTokenRequired() && cfg.PairingToken == "" && cfg.DefaultPassword == "" {
 			sendResponse(req.ID, map[string]interface{}{
 				"success":    true,
 				"discovered": 0,
@@ -761,7 +757,7 @@ func handleAction(req *RPCRequest) {
 			"message":               "Mesh settings saved",
 			"has_password":          cfg.DefaultPassword != "",
 			"has_pairing_token":     cfg.PairingToken != "",
-			"require_pairing_token": cfg.RequirePairingToken == nil || *cfg.RequirePairingToken,
+			"require_pairing_token": cfg.IsPairingTokenRequired(),
 			"discovery_enabled":     cfg.IsDiscoveryEnabled(),
 			"listen_port":           cfg.ListenPort,
 		})
@@ -799,7 +795,7 @@ func handleAction(req *RPCRequest) {
 			"success":               true,
 			"has_password":          cfg.DefaultPassword != "",
 			"has_pairing_token":     cfg.PairingToken != "",
-			"require_pairing_token": cfg.RequirePairingToken == nil || *cfg.RequirePairingToken,
+			"require_pairing_token": cfg.IsPairingTokenRequired(),
 			"discovery_enabled":     cfg.IsDiscoveryEnabled(),
 			"listen_port":           cfg.ListenPort,
 		})
