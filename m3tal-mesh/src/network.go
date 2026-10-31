@@ -454,7 +454,7 @@ func fetchRemoteWithAuth(address, token, password string, port int, expectedFing
 // must be configured explicitly on the peer itself; mesh-wide default secrets are never
 // transmitted ambiently across routine refresh or ping.
 // If passwordOnly is true, default token fallback is suppressed.
-func effectiveCredentials(explicitToken, explicitPass string, passwordOnly bool, cfg meshConfig, expectedFingerprint string) (tok, pass string) {
+func effectiveCredentials(explicitToken, explicitPass string, passwordOnly bool, cfg meshConfig) (tok, pass string) {
 	pass = explicitPass
 	tok = explicitToken
 	if tok == "" && !passwordOnly {
@@ -464,14 +464,13 @@ func effectiveCredentials(explicitToken, explicitPass string, passwordOnly bool,
 }
 
 // connectAndNegotiateNode attempts to authenticate with a remote node using effective credentials.
-// To prevent exfiltration of mesh-wide secrets to untrusted or unpinned hosts, cfg.DefaultPassword
-// is not sent upfront unless an explicit password or a pinned certificate fingerprint is present.
+// To prevent exfiltration of mesh-wide secrets to untrusted hosts, DefaultPassword is never sent upfront.
 // If the remote host returns an authenticated password_required response, it retries with DefaultPassword,
 // pinning the peer certificate fingerprint authenticated by the first exchange.
 // If an inherited token was rejected and a password was available, it retries in password-only mode.
 // If passwordOnly is specified as true (e.g. for a saved password-only peer), token inheritance is suppressed.
 func connectAndNegotiateNode(address, explicitToken, explicitPass string, cfg meshConfig, expectedFingerprint string, passwordOnly bool) (MeshNode, bool, error) {
-	tok, pass := effectiveCredentials(explicitToken, explicitPass, passwordOnly, cfg, expectedFingerprint)
+	tok, pass := effectiveCredentials(explicitToken, explicitPass, passwordOnly, cfg)
 	if cfg.IsPairingTokenRequired() && tok == "" && pass == "" {
 		return MeshNode{}, false, fmt.Errorf("pairing token is required to authenticate remote mesh nodes; configure a shared secret in Mesh Settings or enter a pairing token")
 	}
@@ -516,9 +515,7 @@ func pairAndPersistPeer(address, name, role, token, password string) (MeshNode, 
 		node.Role = role
 	}
 	node.APIToken = token
-	if password != "" {
-		node.Password = password
-	}
+	node.Password = password
 	node.PasswordOnly = passwordOnly
 
 	if cfg.PairingToken == "" && token != "" {

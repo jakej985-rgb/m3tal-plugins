@@ -1383,8 +1383,8 @@ func TestRefreshRemotePeersWithholdsDefaultPasswordFromUnpinnedPeer(t *testing.T
 func TestEffectiveCredentialsRequiresPasswordConfiguredOnPeer(t *testing.T) {
 	cfg := meshConfig{PairingToken: "default-tok", DefaultPassword: "default-pass"}
 
-	// When peer password is empty, effectiveCredentials does not leak DefaultPassword even with pinned fingerprint
-	tok, pass := effectiveCredentials("", "", false, cfg, "sha256-pinned-fp")
+	// When peer password is empty, effectiveCredentials does not leak DefaultPassword
+	tok, pass := effectiveCredentials("", "", false, cfg)
 	if tok != "default-tok" {
 		t.Fatalf("expected inherited token 'default-tok', got %q", tok)
 	}
@@ -1393,24 +1393,24 @@ func TestEffectiveCredentialsRequiresPasswordConfiguredOnPeer(t *testing.T) {
 	}
 
 	// Password configured explicitly on peer is returned
-	tok2, pass2 := effectiveCredentials("", "peer-configured-pass", false, cfg, "sha256-pinned-fp")
+	tok2, pass2 := effectiveCredentials("", "peer-configured-pass", false, cfg)
 	if tok2 != "default-tok" || pass2 != "peer-configured-pass" {
 		t.Fatalf("expected ('default-tok', 'peer-configured-pass'), got (%q, %q)", tok2, pass2)
 	}
 
 	// PasswordOnly mode suppresses token and requires password to be configured on the peer itself
-	tok3, pass3 := effectiveCredentials("", "", true, cfg, "sha256-pinned-fp")
+	tok3, pass3 := effectiveCredentials("", "", true, cfg)
 	if tok3 != "" || pass3 != "" {
 		t.Fatalf("expected ('', ''), got (%q, %q)", tok3, pass3)
 	}
 	// PasswordOnly with explicit password configured on the peer
-	tok3Explicit, pass3Explicit := effectiveCredentials("", "explicit-peer-pass", true, cfg, "sha256-pinned-fp")
+	tok3Explicit, pass3Explicit := effectiveCredentials("", "explicit-peer-pass", true, cfg)
 	if tok3Explicit != "" || pass3Explicit != "explicit-peer-pass" {
 		t.Fatalf("expected ('', 'explicit-peer-pass'), got (%q, %q)", tok3Explicit, pass3Explicit)
 	}
 
 	// Peer with custom per-peer token does NOT inherit DefaultPassword
-	tok4, pass4 := effectiveCredentials("attacker-custom-token", "", false, cfg, "sha256-attacker-fp")
+	tok4, pass4 := effectiveCredentials("attacker-custom-token", "", false, cfg)
 	if tok4 != "attacker-custom-token" {
 		t.Fatalf("expected custom token 'attacker-custom-token', got %q", tok4)
 	}
@@ -1420,7 +1420,7 @@ func TestEffectiveCredentialsRequiresPasswordConfiguredOnPeer(t *testing.T) {
 
 	// Mesh without pairing token does NOT inherit DefaultPassword
 	cfgNoTok := meshConfig{PairingToken: "", DefaultPassword: "default-pass"}
-	tok5, pass5 := effectiveCredentials("", "", false, cfgNoTok, "sha256-some-fp")
+	tok5, pass5 := effectiveCredentials("", "", false, cfgNoTok)
 	if tok5 != "" || pass5 != "" {
 		t.Fatalf("security violation: peer without mesh pairing token inherited DefaultPassword: %q", pass5)
 	}
@@ -1574,5 +1574,81 @@ func TestPersistPeerFingerprintDoesNotResurrectRemovedPeerOrStaleConfig(t *testi
 	persisted := loadPeers()
 	if len(persisted) != 1 || persisted[0].Fingerprint != "" {
 		t.Fatalf("expected fingerprint to remain empty due to configuration mismatch, got: %q", persisted[0].Fingerprint)
+	}
+}
+
+func TestPairingWithDefaultPasswordLeavesStoredPasswordEmptyToTrackSettingsChanges(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	remoteNodes = []MeshNode{}
+	cfg := meshConfig{PairingToken: "mesh-shared-token", DefaultPassword: "initial-default-pass", ListenPort: 9321}
+	if err := saveMeshConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	activeDefaultPass := "initial-default-pass"
+	var receivedPassword string
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
+		if r.URL.Path == "/api/v1/telemetry" {
+			receivedPassword = r.Header.Get("X-M3TAL-Password")
+			nonce := r.Header.Get("X-M3TAL-Nonce")
+			clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
+			fp := testServerFingerprint(server)
+			if receivedPassword == "" {
+				w.Header().Set("X-M3TAL-Auth-Status", "password_required")
+				w.Header().Set("X-M3TAL-Proof", responseProof("mesh-shared-token", nonce, clientNonce, []byte("password required\n"), fp))
+				http.Error(w, "password required", http.StatusUnauthorized)
+				return
+			}
+			if receivedPassword != activeDefaultPass {
+				http.Error(w, "invalid password", http.StatusUnauthorized)
+				return
+			}
+			body, _ := json.Marshal(remoteResponse{
+				Name: "default-pass-node", Hostname: "default-pass-node",
+				Telemetry: remoteTelemetry{Hostname: "default-pass-node", Cores: 2, RAMTotalGB: 8, StorageTotalGB: 200},
+			})
+			w.Header().Set("X-M3TAL-Proof", responseProof("mesh-shared-token", nonce, clientNonce, body, fp))
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(body)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	// Pair with blank password -> negotiates DefaultPassword retry
+	paired, err := pairAndPersistPeer(server.Listener.Addr().String(), "Test Node", "server", "", "")
+	if err != nil {
+		t.Fatalf("pairing failed: %v", err)
+	}
+	if paired.Password != "" {
+		t.Fatalf("expected stored password to remain empty to track settings changes, got: %q", paired.Password)
+	}
+	persisted := loadPeers()
+	if len(persisted) != 1 || persisted[0].Password != "" {
+		t.Fatalf("expected persisted peer password to remain empty, got: %q", persisted[0].Password)
+	}
+
+	// Now user rotates DefaultPassword in settings
+	activeDefaultPass = "rotated-default-pass"
+	cfg.DefaultPassword = "rotated-default-pass"
+	if err := saveMeshConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	// Subsequent connectAndNegotiateNode should use the new rotated default password
+	refreshed, _, err := connectAndNegotiateNode(server.Listener.Addr().String(), "", "", cfg, paired.Fingerprint, false)
+	if err != nil {
+		t.Fatalf("expected connection with rotated DefaultPassword to succeed: %v", err)
+	}
+	if refreshed.Status != "online" {
+		t.Fatalf("expected node to be online with rotated password, got status %s", refreshed.Status)
+	}
+	if receivedPassword != "rotated-default-pass" {
+		t.Fatalf("expected rotated password to be sent, got: %q", receivedPassword)
 	}
 }
