@@ -22,6 +22,11 @@
       "type": "string",
       "description": "Shared secret used to authenticate remote mesh nodes."
     },
+    "require_pairing_token": {
+      "type": "boolean",
+      "default": true,
+      "description": "Require pairing token/secret for remote node authentication. Disabling this removes token requirement and makes pairing optional (⚠️ SAFETY WARNING: Not recommended or safe on untrusted networks)."
+    },
     "listen_port": {
       "type": "integer",
       "default": 9321,

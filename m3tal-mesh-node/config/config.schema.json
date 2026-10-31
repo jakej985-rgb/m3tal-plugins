@@ -21,6 +21,11 @@
     "pairing_token": {
       "type": "string",
       "description": "Shared secret required for remote telemetry requests."
+    },
+    "require_pairing_token": {
+      "type": "boolean",
+      "default": true,
+      "description": "Enforce pairing token requirement. If false, token is optional (⚠️ SAFETY WARNING: Not recommended or safe on untrusted networks)."
     }
   },
   "additionalProperties": false

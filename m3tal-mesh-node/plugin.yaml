@@ -20,6 +20,33 @@ spec:
     - collector
     - actions
     - ui_view
+    - settings
+
+  settings:
+    - id: "mesh_node_settings"
+      title: "Mesh Node Broadcaster"
+      description: "Mesh Node telemetry sender, authentication token, and discovery settings"
+      fields:
+        - key: "pairing_token"
+          label: "Pairing Token / Shared Secret"
+          type: "password"
+          default: ""
+          description: "Shared secret required for remote mesh federation readers to pull telemetry"
+        - key: "require_pairing_token"
+          label: "Require Pairing Token / Secret"
+          type: "boolean"
+          default: true
+          description: "Enforce authentication token before serving telemetry. Disabling makes pairing token optional (⚠️ SAFETY WARNING: Not recommended or safe on untrusted/shared networks!)."
+        - key: "listen_port"
+          label: "Telemetry Port"
+          type: "number"
+          default: 9321
+          description: "Port used for direct peer telemetry connections"
+        - key: "broadcast_mdns"
+          label: "LAN Discovery (mDNS)"
+          type: "boolean"
+          default: true
+          description: "Announce node presence on local subnet via mDNS"
 
   ui:
     entry: "ui/dist/index.html"

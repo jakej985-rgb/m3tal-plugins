@@ -20,6 +20,33 @@ spec:
     - collector
     - actions
     - ui_view
+    - settings
+
+  settings:
+    - id: "mesh_settings"
+      title: "Mesh Fleet Federation"
+      description: "Mesh cluster federation, shared pairing secret, and remote node authentication"
+      fields:
+        - key: "pairing_token"
+          label: "Shared Pairing Token / Secret"
+          type: "password"
+          default: ""
+          description: "Shared secret used to authenticate and encrypt pairing requests with remote m3tal-mesh-node daemons"
+        - key: "require_pairing_token"
+          label: "Require Pairing Token / Secret"
+          type: "boolean"
+          default: true
+          description: "Enforce shared secret authentication for all remote nodes. Disabling this removes the token requirement and makes pairing optional (⚠️ SAFETY WARNING: Not recommended or safe on untrusted/shared networks!)."
+        - key: "listen_port"
+          label: "Default Node Port"
+          type: "number"
+          default: 9321
+          description: "Default TCP port for communicating with remote m3tal-mesh-node instances"
+        - key: "discovery_enabled"
+          label: "Enable LAN Discovery (mDNS)"
+          type: "boolean"
+          default: true
+          description: "Automatically discover local m3tal-mesh-node daemons via mDNS on local subnet"
 
   ui:
     entry: "ui/dist/index.html"

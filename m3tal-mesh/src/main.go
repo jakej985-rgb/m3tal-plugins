@@ -266,7 +266,7 @@ func handleInit(req *RPCRequest) {
 	result := map[string]interface{}{
 		"name":         PluginName,
 		"version":      PluginVersion,
-		"capabilities": []string{"collector", "actions", "ui_view"},
+		"capabilities": []string{"collector", "actions", "ui_view", "settings"},
 		"tabs": []map[string]interface{}{
 			{
 				"id":             "mesh_fleet",
@@ -542,7 +542,8 @@ func handleAction(req *RPCRequest) {
 		})
 
 	case "scan_network":
-		if loadMeshConfig().PairingToken == "" {
+		cfg := loadMeshConfig()
+		if cfg.IsPairingTokenRequired() && cfg.PairingToken == "" {
 			sendResponse(req.ID, map[string]interface{}{
 				"success":    true,
 				"discovered": 0,
@@ -564,12 +565,15 @@ func handleAction(req *RPCRequest) {
 	case "set_settings":
 		cfg := loadMeshConfig()
 		if value, ok := raw.Args["pairing_token"].(string); ok {
-			if value = strings.TrimSpace(value); value != "" {
-				cfg.PairingToken = value
-			}
+			cfg.PairingToken = strings.TrimSpace(value)
+		}
+		if value, ok := raw.Args["require_pairing_token"].(bool); ok {
+			cfg.RequirePairingToken = &value
 		}
 		if value, ok := raw.Args["listen_port"].(float64); ok {
 			cfg.ListenPort = int(value)
+		} else if value, ok := raw.Args["listen_port"].(int); ok {
+			cfg.ListenPort = value
 		}
 		if err := saveMeshConfig(cfg); err != nil {
 			sendError(req.ID, -32010, "Settings save failed", err.Error())
@@ -584,9 +588,10 @@ func handleAction(req *RPCRequest) {
 	case "get_settings":
 		cfg := loadMeshConfig()
 		sendResponse(req.ID, map[string]interface{}{
-			"success":           true,
-			"has_pairing_token": cfg.PairingToken != "",
-			"listen_port":       cfg.ListenPort,
+			"success":               true,
+			"has_pairing_token":     cfg.PairingToken != "",
+			"require_pairing_token": cfg.IsPairingTokenRequired(),
+			"listen_port":           cfg.ListenPort,
 		})
 
 	default:

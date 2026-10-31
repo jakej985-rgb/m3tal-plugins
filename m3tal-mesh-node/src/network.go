@@ -30,9 +30,17 @@ import (
 const meshServiceType = "_m3tal-mesh-node._tcp"
 
 type nodeRuntimeConfig struct {
-	PairingToken  string `json:"pairing_token"`
-	ListenPort    int    `json:"listen_port"`
-	BroadcastMDNS bool   `json:"broadcast_mdns"`
+	PairingToken        string `json:"pairing_token"`
+	RequirePairingToken *bool  `json:"require_pairing_token,omitempty"`
+	ListenPort          int    `json:"listen_port"`
+	BroadcastMDNS       bool   `json:"broadcast_mdns"`
+}
+
+func (c nodeRuntimeConfig) IsPairingTokenRequired() bool {
+	if c.RequirePairingToken == nil {
+		return true
+	}
+	return *c.RequirePairingToken
 }
 
 func nodeConfigPath() string {
@@ -66,7 +74,12 @@ func saveNodeRuntimeConfig(cfg nodeRuntimeConfig) error {
 }
 
 func loadNodeRuntimeConfig() nodeRuntimeConfig {
-	cfg := nodeRuntimeConfig{ListenPort: 9321, BroadcastMDNS: true}
+	defaultTrue := true
+	cfg := nodeRuntimeConfig{
+		ListenPort:          9321,
+		BroadcastMDNS:       true,
+		RequirePairingToken: &defaultTrue,
+	}
 	path := nodeConfigPath()
 	if path == "" {
 		return cfg
@@ -76,6 +89,9 @@ func loadNodeRuntimeConfig() nodeRuntimeConfig {
 		return cfg
 	}
 	_ = json.Unmarshal(b, &cfg)
+	if cfg.RequirePairingToken == nil {
+		cfg.RequirePairingToken = &defaultTrue
+	}
 	if cfg.ListenPort < 1 || cfg.ListenPort > 65535 {
 		cfg.ListenPort = 9321
 	}
@@ -177,8 +193,22 @@ func nodeTelemetryHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	current := loadNodeRuntimeConfig()
-	if current.PairingToken == "" {
+	if current.IsPairingTokenRequired() && current.PairingToken == "" {
 		http.Error(w, "pairing token is not configured on this node", http.StatusServiceUnavailable)
+		return
+	}
+	if current.PairingToken == "" {
+		hostname, _ := os.Hostname()
+		body, err := json.Marshal(map[string]any{
+			"name": hostname, "hostname": hostname, "version": PluginVersion,
+			"telemetry": getTelemetry(),
+		})
+		if err != nil {
+			http.Error(w, "could not encode telemetry", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
 		return
 	}
 	nonce := r.Header.Get("X-M3TAL-Nonce")

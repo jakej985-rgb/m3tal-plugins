@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+### Added
+- Register `settings` capability and `spec.settings` in `plugin.yaml` so Mesh Fleet appears under M3TAL Core's "System Settings & Configurations → PLUGIN SETTINGS".
+- Add `require_pairing_token` setting (default `true`), enforcing Pairing Token / Secret authentication by default across modal and background synchronization.
+- Provide a configuration toggle to make Pairing Token / Secret optional with prominent safety warnings across Settings and the Pair Node modal.
+
 ## [0.1.4] - 2026-10-28
 ### Fixed
 - Convert LAN discovery to concurrent verification to prevent slow peers from blocking discovery

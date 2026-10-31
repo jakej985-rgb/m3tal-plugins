@@ -26,8 +26,16 @@ import (
 const meshServiceType = "_m3tal-mesh-node._tcp"
 
 type meshConfig struct {
-	PairingToken string `json:"pairing_token"`
-	ListenPort   int    `json:"listen_port"`
+	PairingToken        string `json:"pairing_token"`
+	RequirePairingToken *bool  `json:"require_pairing_token,omitempty"`
+	ListenPort          int    `json:"listen_port"`
+}
+
+func (c meshConfig) IsPairingTokenRequired() bool {
+	if c.RequirePairingToken == nil {
+		return true
+	}
+	return *c.RequirePairingToken
 }
 
 type remoteTelemetry struct {
@@ -90,12 +98,19 @@ func saveMeshConfig(cfg meshConfig) error {
 }
 
 func loadMeshConfig() meshConfig {
-	cfg := meshConfig{ListenPort: 9321}
+	defaultTrue := true
+	cfg := meshConfig{
+		ListenPort:          9321,
+		RequirePairingToken: &defaultTrue,
+	}
 	path := meshConfigPath()
 	if path != "" {
 		if b, err := os.ReadFile(path); err == nil {
 			_ = json.Unmarshal(b, &cfg)
 		}
+	}
+	if cfg.RequirePairingToken == nil {
+		cfg.RequirePairingToken = &defaultTrue
 	}
 	if cfg.ListenPort < 1 || cfg.ListenPort > 65535 {
 		cfg.ListenPort = 9321
@@ -214,8 +229,9 @@ func responseProof(token, nonce, clientNonce string, body []byte, certFingerprin
 }
 
 func fetchRemote(address, token string, port int, expectedFingerprint ...string) (MeshNode, error) {
-	if token == "" {
-		return MeshNode{}, fmt.Errorf("set the pairing token in Mesh Settings first")
+	cfg := loadMeshConfig()
+	if token == "" && cfg.IsPairingTokenRequired() {
+		return MeshNode{}, fmt.Errorf("pairing token is required to authenticate mesh nodes; configure a shared secret in Mesh Settings or enter a pairing token")
 	}
 	endpoint, err := normalizeNodeAddress(address, port)
 	if err != nil {
@@ -268,9 +284,11 @@ func fetchRemote(address, token string, port int, expectedFingerprint ...string)
 		return MeshNode{}, fmt.Errorf("invalid node address: %w", err)
 	}
 	nonce := challenge.Nonce
-	req.Header.Set("X-M3TAL-Nonce", nonce)
-	req.Header.Set("X-M3TAL-Client-Nonce", clientNonce)
-	req.Header.Set("X-M3TAL-Proof", requestProof(token, nonce, clientNonce, peerFingerprint))
+	if token != "" {
+		req.Header.Set("X-M3TAL-Nonce", nonce)
+		req.Header.Set("X-M3TAL-Client-Nonce", clientNonce)
+		req.Header.Set("X-M3TAL-Proof", requestProof(token, nonce, clientNonce, peerFingerprint))
+	}
 	resp, err := meshHTTPClient.Do(req)
 	latency := int(time.Since(started).Milliseconds())
 	if err != nil {
@@ -297,9 +315,11 @@ func fetchRemote(address, token string, port int, expectedFingerprint ...string)
 	if err != nil {
 		return MeshNode{}, fmt.Errorf("could not read telemetry from %s: %w", address, err)
 	}
-	expected := responseProof(token, nonce, clientNonce, body, peerFingerprint)
-	if !hmac.Equal([]byte(expected), []byte(resp.Header.Get("X-M3TAL-Proof"))) {
-		return MeshNode{}, fmt.Errorf("%s failed mesh node authentication", address)
+	if token != "" {
+		expected := responseProof(token, nonce, clientNonce, body, peerFingerprint)
+		if !hmac.Equal([]byte(expected), []byte(resp.Header.Get("X-M3TAL-Proof"))) {
+			return MeshNode{}, fmt.Errorf("%s failed mesh node authentication", address)
+		}
 	}
 	var payload remoteResponse
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -338,7 +358,10 @@ func pairAndPersistPeer(address, name, role, token string) (MeshNode, error) {
 	if token == "" {
 		token = cfg.PairingToken
 	}
-	if cfg.PairingToken != "" && token != cfg.PairingToken {
+	if cfg.IsPairingTokenRequired() && token == "" {
+		return MeshNode{}, fmt.Errorf("pairing token is required to authenticate remote mesh nodes; configure a shared secret in Mesh Settings or enter a pairing token")
+	}
+	if cfg.PairingToken != "" && token != "" && token != cfg.PairingToken {
 		return MeshNode{}, fmt.Errorf("this mesh uses one shared pairing token; configure the same token in Mesh Settings before pairing")
 	}
 	node, err := fetchRemote(address, token, cfg.ListenPort)
@@ -351,7 +374,7 @@ func pairAndPersistPeer(address, name, role, token string) (MeshNode, error) {
 	if role != "" {
 		node.Role = role
 	}
-	if cfg.PairingToken == "" {
+	if cfg.PairingToken == "" && token != "" {
 		cfg.PairingToken = token
 		if err := saveMeshConfig(cfg); err != nil {
 			return MeshNode{}, fmt.Errorf("could not save pairing token: %w", err)
@@ -365,7 +388,7 @@ func pairAndPersistPeer(address, name, role, token string) (MeshNode, error) {
 
 func discoverAndVerifyPeers() ([]MeshNode, error) {
 	cfg := loadMeshConfig()
-	if cfg.PairingToken == "" {
+	if cfg.IsPairingTokenRequired() && cfg.PairingToken == "" {
 		return []MeshNode{}, nil
 	}
 	resolver, err := zeroconf.NewResolver(zeroconf.SelectIPTraffic(zeroconf.IPv4))

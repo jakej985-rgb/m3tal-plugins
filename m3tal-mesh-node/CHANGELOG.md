@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+### Added
+- Register `settings` capability and `spec.settings` in `plugin.yaml` for M3TAL Core settings integration.
+- Add `require_pairing_token` setting (default `true`) and safety warning banner when token requirement is disabled.
+
 ## [0.1.4] - 2026-10-28
 
 ### Fixed

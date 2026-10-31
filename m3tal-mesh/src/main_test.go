@@ -229,3 +229,52 @@ func TestScanNetworkEmptyTokenReturnsFlat(t *testing.T) {
 	}
 }
 
+func TestRequirePairingTokenSettings(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	// Default setting should require pairing token
+	resp := runActionForTest(t, 1, `{"action":"get_settings","args":{}}`)
+	if resp.Error != nil {
+		t.Fatalf("get_settings failed: %s", resp.Error.Message)
+	}
+	encoded, _ := json.Marshal(resp.Result)
+	var result map[string]interface{}
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result["require_pairing_token"] != true {
+		t.Fatalf("expected require_pairing_token=true by default, got %v", result["require_pairing_token"])
+	}
+
+	// Disable token requirement (make optional)
+	setResp := runActionForTest(t, 2, `{"action":"set_settings","args":{"require_pairing_token":false}}`)
+	if setResp.Error != nil {
+		t.Fatalf("set_settings failed: %s", setResp.Error.Message)
+	}
+
+	// Verify it was persisted
+	resp2 := runActionForTest(t, 3, `{"action":"get_settings","args":{}}`)
+	encoded2, _ := json.Marshal(resp2.Result)
+	var result2 map[string]interface{}
+	if err := json.Unmarshal(encoded2, &result2); err != nil {
+		t.Fatal(err)
+	}
+	if result2["require_pairing_token"] != false {
+		t.Fatalf("expected require_pairing_token=false after update, got %v", result2["require_pairing_token"])
+	}
+}
+
+func TestPairNodeRejectsMissingTokenWhenRequired(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	remoteNodes = []MeshNode{}
+
+	// No token configured, require_pairing_token is true by default
+	resp := runActionForTest(t, 1, `{"action":"pair_node","args":{"ip":"127.0.0.1:9321","name":"unauth-node","token":""}}`)
+	if resp.Error == nil {
+		t.Fatal("expected pair_node to fail when pairing token is required but empty")
+	}
+	if resp.Error.Code != -32002 {
+		t.Fatalf("expected error code -32002, got %d (%s)", resp.Error.Code, resp.Error.Message)
+	}
+}
+
