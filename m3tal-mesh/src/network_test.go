@@ -1528,3 +1528,36 @@ func TestRefreshRemotePeersRetainsNegotiatedPinWhenUnpinnedNodeRecovers(t *testi
 		t.Fatalf("expected persisted peer fingerprint to be pinned to %s, got: %s", fp, persisted[0].Fingerprint)
 	}
 }
+
+func TestPersistPeerFingerprintDoesNotResurrectRemovedPeerOrStaleConfig(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	remoteNodes = []MeshNode{}
+
+	// Test 1: Node was removed/disconnected while in-flight
+	if err := persistPeerFingerprint("non-existent-id", "127.0.0.1:9321", "", "", "some-fp"); err != nil {
+		t.Fatal(err)
+	}
+	if len(loadPeers()) != 0 {
+		t.Fatalf("expected 0 persisted peers after attempting fingerprint update on non-existent peer, got %d", len(loadPeers()))
+	}
+
+	// Test 2: Node exists, but configuration (IP or credentials) changed while in-flight
+	existing := MeshNode{
+		ID:          "peer-1",
+		Name:        "Peer 1",
+		IP:          "127.0.0.1:9321",
+		APIToken:    "new-token",
+		Fingerprint: "",
+	}
+	if err := persistPeerUpsert(existing, false, false); err != nil {
+		t.Fatal(err)
+	}
+	// Try updating fingerprint with stale expected token "old-stale-token"
+	if err := persistPeerFingerprint("peer-1", "127.0.0.1:9321", "old-stale-token", "", "new-fp"); err != nil {
+		t.Fatal(err)
+	}
+	persisted := loadPeers()
+	if len(persisted) != 1 || persisted[0].Fingerprint != "" {
+		t.Fatalf("expected fingerprint to remain empty due to configuration mismatch, got: %q", persisted[0].Fingerprint)
+	}
+}

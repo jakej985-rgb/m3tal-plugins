@@ -302,8 +302,7 @@ func responseProof(token, nonce, clientNonce string, body []byte, certFingerprin
 }
 
 func fetchRemote(address, token string, port int, expectedFingerprint ...string) (MeshNode, error) {
-	cfg := loadMeshConfig()
-	return fetchRemoteWithAuth(address, token, cfg.DefaultPassword, port, expectedFingerprint...)
+	return fetchRemoteWithAuth(address, token, "", port, expectedFingerprint...)
 }
 
 func fetchRemoteWithAuth(address, token, password string, port int, expectedFingerprint ...string) (MeshNode, error) {
@@ -465,7 +464,7 @@ func effectiveCredentials(explicitToken, explicitPass string, passwordOnly bool,
 	// Only fall back to DefaultPassword for peers authenticated with the mesh's own cfg.PairingToken.
 	// Peers with custom tokens, password-only peers, or unauthenticated peers must configure their password
 	// on the peer itself.
-	authenticatedWithMeshToken := cfg.PairingToken != "" && tok == cfg.PairingToken && (explicitToken == "" || explicitToken == cfg.PairingToken) && !passwordOnly
+	authenticatedWithMeshToken := cfg.PairingToken != "" && tok == cfg.PairingToken && explicitToken == "" && !passwordOnly
 	if pass == "" && expectedFingerprint != "" && authenticatedWithMeshToken {
 		pass = cfg.DefaultPassword
 	}
@@ -489,8 +488,7 @@ func connectAndNegotiateNode(address, explicitToken, explicitPass string, cfg me
 		// Only send default password to unpinned address after an authenticated password_required response,
 		// and strictly pin the retry to the peer certificate fingerprint authenticated by the first exchange.
 		// A peer authenticated only with a custom per-peer token must not receive mesh DefaultPassword.
-		usesCustomToken := explicitToken != "" && explicitToken != cfg.PairingToken
-		if errors.Is(err, ErrPasswordRequired) && explicitPass == "" && cfg.DefaultPassword != "" && !usesCustomToken && cfg.PairingToken != "" {
+		if errors.Is(err, ErrPasswordRequired) && explicitPass == "" && cfg.DefaultPassword != "" && explicitToken == "" && cfg.PairingToken != "" {
 			authFP := node.Fingerprint
 			if authFP == "" {
 				authFP = expectedFingerprint
@@ -706,6 +704,43 @@ func persistPeerUpsert(node MeshNode, clearToken, clearPassword bool) error {
 	return nil
 }
 
+func persistPeerFingerprint(nodeID, expectedIP, expectedToken, expectedPass, fingerprint string) error {
+	if fingerprint == "" {
+		return nil
+	}
+	peerMutationMu.Lock()
+	defer peerMutationMu.Unlock()
+	peers := loadPeers()
+	var modified bool
+	for i := range peers {
+		if peers[i].ID == nodeID {
+			if peers[i].IP != expectedIP || peers[i].APIToken != expectedToken || peers[i].Password != expectedPass {
+				// Configuration changed while request in flight; discard stale pin update
+				return nil
+			}
+			if peers[i].Fingerprint == "" {
+				peers[i].Fingerprint = fingerprint
+				modified = true
+			}
+			break
+		}
+	}
+	if !modified {
+		return nil
+	}
+	if err := savePeers(peers); err != nil {
+		return err
+	}
+	nodeMutex.Lock()
+	for i := range remoteNodes {
+		if remoteNodes[i].ID == nodeID && remoteNodes[i].Fingerprint == "" {
+			remoteNodes[i].Fingerprint = fingerprint
+		}
+	}
+	nodeMutex.Unlock()
+	return nil
+}
+
 func persistPeerRemoval(nodeID string) (bool, error) {
 	peerMutationMu.Lock()
 	defer peerMutationMu.Unlock()
@@ -748,8 +783,7 @@ func refreshRemotePeers() {
 		go func() {
 			defer wg.Done()
 			updated, pwOnly, err := connectAndNegotiateNode(existing.IP, existing.APIToken, existing.Password, cfg, existing.Fingerprint, existing.PasswordOnly)
-			var shouldPersist bool
-			var nodeToPersist MeshNode
+			var pinToPersist string
 			nodeMutex.Lock()
 			for i := range remoteNodes {
 				if remoteNodes[i].ID == existing.ID {
@@ -770,8 +804,7 @@ func refreshRemotePeers() {
 						}
 						remoteNodes[i] = updated
 						if current.Fingerprint == "" && updated.Fingerprint != "" {
-							shouldPersist = true
-							nodeToPersist = updated
+							pinToPersist = updated.Fingerprint
 						}
 					} else {
 						remoteNodes[i].Status = "offline"
@@ -785,8 +818,8 @@ func refreshRemotePeers() {
 				}
 			}
 			nodeMutex.Unlock()
-			if shouldPersist {
-				_ = persistPeerUpsert(nodeToPersist, false, false)
+			if pinToPersist != "" {
+				_ = persistPeerFingerprint(existing.ID, existing.IP, existing.APIToken, existing.Password, pinToPersist)
 			}
 		}()
 	}
