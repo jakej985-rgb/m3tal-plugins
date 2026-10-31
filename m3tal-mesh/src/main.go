@@ -507,7 +507,13 @@ func handleAction(req *RPCRequest) {
 			sendError(req.ID, -32602, "Invalid params", "Node IP address is required")
 			return
 		}
-		newNode, err := pairAndPersistPeer(ip, name, role, effectiveToken, password)
+		cfg := loadMeshConfig()
+		normIP, err := normalizeNodeAddress(ip, cfg.ListenPort)
+		if err != nil {
+			sendError(req.ID, -32602, "Invalid params", err.Error())
+			return
+		}
+		newNode, err := pairAndPersistPeer(normIP, name, role, effectiveToken, password)
 		if err != nil {
 			sendError(req.ID, -32002, "Node pairing failed", err.Error())
 			return
@@ -537,7 +543,15 @@ func handleAction(req *RPCRequest) {
 			return
 		}
 		cfg := loadMeshConfig()
-		samePeerIP := savedPeer != nil && strings.EqualFold(ip, savedPeer.IP)
+		normIP, normErr := normalizeNodeAddress(ip, cfg.ListenPort)
+		if normErr == nil {
+			ip = normIP
+		}
+		samePeerIP := false
+		if savedPeer != nil {
+			normSaved, _ := normalizeNodeAddress(savedPeer.IP, cfg.ListenPort)
+			samePeerIP = strings.EqualFold(ip, normSaved)
+		}
 		explicitTok := effectiveToken
 		if explicitTok == "" && samePeerIP {
 			explicitTok = savedPeer.APIToken
@@ -591,13 +605,20 @@ func handleAction(req *RPCRequest) {
 		if role != "" {
 			foundNode.Role = role
 		}
+		cfg := loadMeshConfig()
 		addressChanged := false
 		if ip != "" {
-			if ip != foundNode.IP {
+			normUpdateIP, err := normalizeNodeAddress(ip, cfg.ListenPort)
+			if err != nil {
+				sendError(req.ID, -32602, "Invalid params", err.Error())
+				return
+			}
+			normCurrent, _ := normalizeNodeAddress(foundNode.IP, cfg.ListenPort)
+			if !strings.EqualFold(normUpdateIP, normCurrent) {
 				foundNode.Fingerprint = ""
 				addressChanged = true
 			}
-			foundNode.IP = ip
+			foundNode.IP = normUpdateIP
 		}
 		clearTok, _ := raw.Args["clear_api_token"].(bool)
 		clearPass, _ := raw.Args["clear_password"].(bool)

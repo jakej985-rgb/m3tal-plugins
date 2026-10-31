@@ -1383,10 +1383,15 @@ func TestEffectiveCredentialsRequiresExplicitFingerprint(t *testing.T) {
 		t.Fatalf("expected ('default-tok', 'default-pass'), got (%q, %q)", tok2, pass2)
 	}
 
-	// PasswordOnly mode suppresses token
+	// PasswordOnly mode suppresses token and requires password to be configured on the peer itself
 	tok3, pass3 := effectiveCredentials("", "", true, cfg, "sha256-pinned-fp")
-	if tok3 != "" || pass3 != "default-pass" {
-		t.Fatalf("expected ('', 'default-pass'), got (%q, %q)", tok3, pass3)
+	if tok3 != "" || pass3 != "" {
+		t.Fatalf("expected ('', ''), got (%q, %q)", tok3, pass3)
+	}
+	// PasswordOnly with explicit password configured on the peer
+	tok3Explicit, pass3Explicit := effectiveCredentials("", "explicit-peer-pass", true, cfg, "sha256-pinned-fp")
+	if tok3Explicit != "" || pass3Explicit != "explicit-peer-pass" {
+		t.Fatalf("expected ('', 'explicit-peer-pass'), got (%q, %q)", tok3Explicit, pass3Explicit)
 	}
 
 	// Peer with custom per-peer token does NOT inherit DefaultPassword (prevents secret exfiltration)
@@ -1396,6 +1401,13 @@ func TestEffectiveCredentialsRequiresExplicitFingerprint(t *testing.T) {
 	}
 	if pass4 != "" {
 		t.Fatalf("security violation: custom token peer inherited DefaultPassword: %q", pass4)
+	}
+
+	// Mesh without pairing token does NOT inherit DefaultPassword (prevents unauthenticated rogue server exfiltration)
+	cfgNoTok := meshConfig{PairingToken: "", DefaultPassword: "default-pass"}
+	tok5, pass5 := effectiveCredentials("", "", false, cfgNoTok, "sha256-some-fp")
+	if tok5 != "" || pass5 != "" {
+		t.Fatalf("security violation: peer without mesh pairing token inherited DefaultPassword: %q", pass5)
 	}
 }
 

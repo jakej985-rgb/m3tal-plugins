@@ -833,7 +833,7 @@ func TestTestNodePreservesPasswordOnlyModeForUnchangedSavedAddressWithBlankCrede
 	addr := server.Listener.Addr().String()
 	fp := testServerFingerprint(server)
 
-	// Peer originally saved in PasswordOnly mode with blank token & password (using default password)
+	// Peer originally saved in PasswordOnly mode with password configured on peer
 	savedPeer := MeshNode{
 		ID:           "saved-pw-node-1",
 		Name:         "pw-only-saved-node",
@@ -841,7 +841,7 @@ func TestTestNodePreservesPasswordOnlyModeForUnchangedSavedAddressWithBlankCrede
 		Fingerprint:  fp,
 		PasswordOnly: true,
 		APIToken:     "",
-		Password:     "",
+		Password:     "mesh-default-secret",
 	}
 	if err := persistPeerUpsert(savedPeer, false, false); err != nil {
 		t.Fatal(err)
@@ -862,5 +862,47 @@ func TestTestNodePreservesPasswordOnlyModeForUnchangedSavedAddressWithBlankCrede
 	resMap, ok := resp.Result.(map[string]interface{})
 	if !ok || resMap["success"] != true {
 		t.Fatalf("expected successful test_node response, got: %+v", resp.Result)
+	}
+}
+
+func TestUpdateNodeAddressNormalizationPreservesCredentialsAndPin(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	remoteNodes = []MeshNode{}
+	cfg := meshConfig{PairingToken: "default-mesh-token", ListenPort: 9321}
+	if err := saveMeshConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	initialNode := MeshNode{
+		ID:          "normalized-peer",
+		Name:        "Normalized Peer",
+		IP:          "127.0.0.1:9321",
+		APIToken:    "custom-tok-123",
+		Password:    "custom-pass-456",
+		Fingerprint: "saved-cert-fingerprint-norm",
+	}
+	if err := persistPeerUpsert(initialNode, false, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// Update node from "127.0.0.1:9321" to "127.0.0.1" (same endpoint under default port 9321)
+	updateReq := `{"action":"update_node","args":{"node_id":"normalized-peer","ip":"127.0.0.1"}}`
+	resp := runActionForTest(t, 25, updateReq)
+	if resp.Error != nil {
+		t.Fatalf("update_node failed: %s", resp.Error.Message)
+	}
+
+	persisted := loadPeers()
+	if len(persisted) != 1 {
+		t.Fatalf("expected 1 persisted peer, got %d", len(persisted))
+	}
+	if persisted[0].APIToken != "custom-tok-123" {
+		t.Fatalf("expected APIToken to be preserved on normalized address, got: %s", persisted[0].APIToken)
+	}
+	if persisted[0].Password != "custom-pass-456" {
+		t.Fatalf("expected Password to be preserved on normalized address, got: %s", persisted[0].Password)
+	}
+	if persisted[0].Fingerprint != "saved-cert-fingerprint-norm" {
+		t.Fatalf("expected Fingerprint to be preserved on normalized address, got: %s", persisted[0].Fingerprint)
 	}
 }

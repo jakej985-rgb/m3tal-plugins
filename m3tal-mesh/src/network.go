@@ -453,8 +453,8 @@ func fetchRemoteWithAuth(address, token, password string, port int, expectedFing
 // effectiveCredentials determines the token and password to use when connecting to a node.
 // To prevent exfiltration of mesh-wide secrets to untrusted or unpinned hosts, cfg.DefaultPassword
 // is only used when a pinned certificate fingerprint is present and the peer is authenticated with
-// the mesh's own cfg.PairingToken (or inherits default credentials). Peers configured with a custom
-// per-peer token must configure their password explicitly on the peer itself.
+// the mesh's own cfg.PairingToken. Peers configured with a custom per-peer token or password-only peers
+// must configure their password explicitly on the peer itself.
 // If passwordOnly is true, default token fallback is suppressed.
 func effectiveCredentials(explicitToken, explicitPass string, passwordOnly bool, cfg meshConfig, expectedFingerprint string) (tok, pass string) {
 	pass = explicitPass
@@ -462,8 +462,11 @@ func effectiveCredentials(explicitToken, explicitPass string, passwordOnly bool,
 	if tok == "" && !passwordOnly {
 		tok = cfg.PairingToken
 	}
-	usesCustomToken := explicitToken != "" && explicitToken != cfg.PairingToken
-	if pass == "" && expectedFingerprint != "" && !usesCustomToken {
+	// Only fall back to DefaultPassword for peers authenticated with the mesh's own cfg.PairingToken.
+	// Peers with custom tokens, password-only peers, or unauthenticated peers must configure their password
+	// on the peer itself.
+	authenticatedWithMeshToken := cfg.PairingToken != "" && tok == cfg.PairingToken && (explicitToken == "" || explicitToken == cfg.PairingToken) && !passwordOnly
+	if pass == "" && expectedFingerprint != "" && authenticatedWithMeshToken {
 		pass = cfg.DefaultPassword
 	}
 	return tok, pass
@@ -487,7 +490,7 @@ func connectAndNegotiateNode(address, explicitToken, explicitPass string, cfg me
 		// and strictly pin the retry to the peer certificate fingerprint authenticated by the first exchange.
 		// A peer authenticated only with a custom per-peer token must not receive mesh DefaultPassword.
 		usesCustomToken := explicitToken != "" && explicitToken != cfg.PairingToken
-		if errors.Is(err, ErrPasswordRequired) && explicitPass == "" && cfg.DefaultPassword != "" && !usesCustomToken {
+		if errors.Is(err, ErrPasswordRequired) && explicitPass == "" && cfg.DefaultPassword != "" && !usesCustomToken && cfg.PairingToken != "" {
 			authFP := node.Fingerprint
 			if authFP == "" {
 				authFP = expectedFingerprint
@@ -524,6 +527,9 @@ func pairAndPersistPeer(address, name, role, token, password string) (MeshNode, 
 	}
 	node.APIToken = token
 	node.Password = password
+	if passwordOnly && node.Password == "" && cfg.DefaultPassword != "" {
+		node.Password = cfg.DefaultPassword
+	}
 	node.PasswordOnly = passwordOnly
 
 	if cfg.PairingToken == "" && token != "" {
