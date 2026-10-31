@@ -40,18 +40,20 @@ func TestPairThenForgetActionsPersistFleet(t *testing.T) {
 	if err := saveMeshConfig(meshConfig{PairingToken: "test-secret", ListenPort: 9321}); err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if writeTestChallenge(w, r) {
 			return
 		}
 		nonce := r.Header.Get("X-M3TAL-Nonce")
 		clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
-		if r.Header.Get("X-M3TAL-Proof") != requestProof("test-secret", nonce, clientNonce) {
+		fp := testServerFingerprint(server)
+		if r.Header.Get("X-M3TAL-Proof") != requestProof("test-secret", nonce, clientNonce, fp) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 		body, _ := json.Marshal(remoteResponse{Hostname: "action-test", Telemetry: remoteTelemetry{Hostname: "action-test", Cores: 4}})
-		w.Header().Set("X-M3TAL-Proof", responseProof("test-secret", nonce, clientNonce, body))
+		w.Header().Set("X-M3TAL-Proof", responseProof("test-secret", nonce, clientNonce, body, fp))
 		_, _ = w.Write(body)
 	}))
 	defer server.Close()

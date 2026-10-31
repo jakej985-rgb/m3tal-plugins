@@ -101,3 +101,73 @@ func TestTelemetryEndpointDisabledUntilTokenConfigured(t *testing.T) {
 		t.Fatalf("unconfigured endpoint status = %d, want %d", resp.StatusCode, http.StatusServiceUnavailable)
 	}
 }
+
+func TestTelemetryEndpointRejectsRelayedClientAndMismatchedCertFingerprint(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := saveNodeRuntimeConfig(nodeRuntimeConfig{PairingToken: "secret", ListenPort: 9321, BroadcastMDNS: true}); err != nil {
+		t.Fatalf("save node config: %v", err)
+	}
+
+	// 1. Rejects challenge issued to a different client IP (attacker relay)
+	server := httptest.NewServer(http.HandlerFunc(nodeTelemetryHandler))
+	defer server.Close()
+	nonceRelayed, err := issueNodeChallenge("198.51.100.23") // issued to external IP
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientNonce := strings.Repeat("c", 64)
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/api/v1/telemetry", nil)
+	req.Header.Set("X-M3TAL-Nonce", nonceRelayed)
+	req.Header.Set("X-M3TAL-Client-Nonce", clientNonce)
+	req.Header.Set("X-M3TAL-Proof", nodeRequestProof("secret", nonceRelayed, clientNonce))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("relayed client challenge status = %d, want %d", resp.StatusCode, http.StatusUnauthorized)
+	}
+
+	// 2. Over TLS, rejects proof with wrong certificate fingerprint
+	tlsServer := httptest.NewTLSServer(http.HandlerFunc(nodeTelemetryHandler))
+	defer tlsServer.Close()
+	nodeCertFingerprintMu.Lock()
+	nodeCertFingerprint = "correct-node-fingerprint"
+	nodeCertFingerprintMu.Unlock()
+
+	nonceTLS, err := issueNodeChallenge("127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongProofReq, _ := http.NewRequest(http.MethodGet, tlsServer.URL+"/api/v1/telemetry", nil)
+	wrongProofReq.Header.Set("X-M3TAL-Nonce", nonceTLS)
+	wrongProofReq.Header.Set("X-M3TAL-Client-Nonce", clientNonce)
+	wrongProofReq.Header.Set("X-M3TAL-Proof", nodeRequestProof("secret", nonceTLS, clientNonce, "wrong-attacker-fingerprint"))
+	resp, err = tlsServer.Client().Do(wrongProofReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("mismatched cert fingerprint proof status = %d, want %d", resp.StatusCode, http.StatusUnauthorized)
+	}
+
+	// 3. Accepts matching certificate fingerprint over TLS
+	nonceValid, err := issueNodeChallenge("127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	validReq, _ := http.NewRequest(http.MethodGet, tlsServer.URL+"/api/v1/telemetry", nil)
+	validReq.Header.Set("X-M3TAL-Nonce", nonceValid)
+	validReq.Header.Set("X-M3TAL-Client-Nonce", clientNonce)
+	validReq.Header.Set("X-M3TAL-Proof", nodeRequestProof("secret", nonceValid, clientNonce, "correct-node-fingerprint"))
+	resp, err = tlsServer.Client().Do(validReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("valid cert fingerprint proof status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+}

@@ -194,20 +194,26 @@ func newMeshNonce() (string, error) {
 	return hex.EncodeToString(bytes), nil
 }
 
-func requestProof(token, nonce, clientNonce string) string {
+func requestProof(token, nonce, clientNonce string, certFingerprint ...string) string {
 	mac := hmac.New(sha256.New, []byte(token))
 	_, _ = io.WriteString(mac, "GET\n/api/v1/telemetry\n"+nonce+"\n"+clientNonce)
+	if len(certFingerprint) > 0 && certFingerprint[0] != "" {
+		_, _ = io.WriteString(mac, "\n"+certFingerprint[0])
+	}
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-func responseProof(token, nonce, clientNonce string, body []byte) string {
+func responseProof(token, nonce, clientNonce string, body []byte, certFingerprint ...string) string {
 	sum := sha256.Sum256(body)
 	mac := hmac.New(sha256.New, []byte(token))
-	_, _ = io.WriteString(mac, nonce+"\n"+clientNonce+"\n"+hex.EncodeToString(sum[:]))
+	_, _ = io.WriteString(mac, "200\n/api/v1/telemetry\n"+nonce+"\n"+clientNonce+"\n"+hex.EncodeToString(sum[:]))
+	if len(certFingerprint) > 0 && certFingerprint[0] != "" {
+		_, _ = io.WriteString(mac, "\n"+certFingerprint[0])
+	}
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-func fetchRemote(address, token string, port int) (MeshNode, error) {
+func fetchRemote(address, token string, port int, expectedFingerprint ...string) (MeshNode, error) {
 	if token == "" {
 		return MeshNode{}, fmt.Errorf("set the pairing token in Mesh Settings first")
 	}
@@ -223,6 +229,17 @@ func fetchRemote(address, token string, port int) (MeshNode, error) {
 	challengeResp, err := meshHTTPClient.Do(challengeReq)
 	if err != nil {
 		return MeshNode{}, fmt.Errorf("cannot reach %s: %w", address, err)
+	}
+	var peerFingerprint string
+	if challengeResp.TLS != nil && len(challengeResp.TLS.PeerCertificates) > 0 {
+		sum := sha256.Sum256(challengeResp.TLS.PeerCertificates[0].Raw)
+		peerFingerprint = hex.EncodeToString(sum[:])
+	}
+	if len(expectedFingerprint) > 0 && expectedFingerprint[0] != "" {
+		if peerFingerprint != "" && peerFingerprint != expectedFingerprint[0] {
+			challengeResp.Body.Close()
+			return MeshNode{}, fmt.Errorf("%s certificate fingerprint mismatch: expected %s, got %s", address, expectedFingerprint[0], peerFingerprint)
+		}
 	}
 	if challengeResp.StatusCode != http.StatusOK {
 		challengeResp.Body.Close()
@@ -253,7 +270,7 @@ func fetchRemote(address, token string, port int) (MeshNode, error) {
 	nonce := challenge.Nonce
 	req.Header.Set("X-M3TAL-Nonce", nonce)
 	req.Header.Set("X-M3TAL-Client-Nonce", clientNonce)
-	req.Header.Set("X-M3TAL-Proof", requestProof(token, nonce, clientNonce))
+	req.Header.Set("X-M3TAL-Proof", requestProof(token, nonce, clientNonce, peerFingerprint))
 	resp, err := meshHTTPClient.Do(req)
 	latency := int(time.Since(started).Milliseconds())
 	if err != nil {
@@ -269,11 +286,18 @@ func fetchRemote(address, token string, port int) (MeshNode, error) {
 	if resp.StatusCode != http.StatusOK {
 		return MeshNode{}, fmt.Errorf("%s is not a compatible m3tal-mesh-node (HTTP %d)", address, resp.StatusCode)
 	}
+	if resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
+		sum := sha256.Sum256(resp.TLS.PeerCertificates[0].Raw)
+		telemetryFP := hex.EncodeToString(sum[:])
+		if peerFingerprint != "" && telemetryFP != peerFingerprint {
+			return MeshNode{}, fmt.Errorf("%s certificate fingerprint changed during connection", address)
+		}
+	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return MeshNode{}, fmt.Errorf("could not read telemetry from %s: %w", address, err)
 	}
-	expected := responseProof(token, nonce, clientNonce, body)
+	expected := responseProof(token, nonce, clientNonce, body, peerFingerprint)
 	if !hmac.Equal([]byte(expected), []byte(resp.Header.Get("X-M3TAL-Proof"))) {
 		return MeshNode{}, fmt.Errorf("%s failed mesh node authentication", address)
 	}
@@ -302,6 +326,7 @@ func fetchRemote(address, token string, port int) (MeshNode, error) {
 	}
 	return MeshNode{
 		ID: stableNodeID(endpoint, hostname), Name: name, IP: endpoint, Role: "server", Status: "online",
+		Fingerprint: peerFingerprint,
 		Cores: t.Cores, CPULoad: cpuload, RAMUsedGB: t.RAMUsedGB, RAMTotalGB: t.RAMTotalGB,
 		StorageUsedGB: t.StorageUsedGB, StorageTotalGB: t.StorageTotalGB, StoragePool: "Root Filesystem",
 		PingMs: latency, LastSeen: "just now", IsLocal: false,
@@ -485,7 +510,7 @@ func refreshRemotePeers() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			updated, err := fetchRemote(existing.IP, cfg.PairingToken, cfg.ListenPort)
+			updated, err := fetchRemote(existing.IP, cfg.PairingToken, cfg.ListenPort, existing.Fingerprint)
 			nodeMutex.Lock()
 			defer nodeMutex.Unlock()
 			for i := range remoteNodes {

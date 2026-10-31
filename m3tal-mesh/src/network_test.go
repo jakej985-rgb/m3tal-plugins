@@ -1,8 +1,17 @@
 package main
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/json"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,14 +30,47 @@ func writeTestChallenge(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
+func testServerFingerprint(server *httptest.Server) string {
+	if server != nil && server.TLS != nil && len(server.TLS.Certificates) > 0 && len(server.TLS.Certificates[0].Certificate) > 0 {
+		sum := sha256.Sum256(server.TLS.Certificates[0].Certificate[0])
+		return hex.EncodeToString(sum[:])
+	}
+	return ""
+}
+
+func testTLSCert(t *testing.T, commonName string) tls.Certificate {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	template := x509.Certificate{
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: commonName},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
+}
+
 func TestFetchRemoteVerifiesAndReadsTelemetry(t *testing.T) {
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if writeTestChallenge(w, r) {
 			return
 		}
 		nonce := r.Header.Get("X-M3TAL-Nonce")
 		clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
-		if r.Header.Get("X-M3TAL-Proof") != requestProof("shared-secret", nonce, clientNonce) {
+		fp := testServerFingerprint(server)
+		if r.Header.Get("X-M3TAL-Proof") != requestProof("shared-secret", nonce, clientNonce, fp) {
 			http.Error(w, "invalid pairing token", http.StatusUnauthorized)
 			return
 		}
@@ -37,7 +79,7 @@ func TestFetchRemoteVerifiesAndReadsTelemetry(t *testing.T) {
 			Name: "mesh-server", Hostname: "mesh-server",
 			Telemetry: remoteTelemetry{Hostname: "mesh-server", Cores: 8, Load1m: 2, RAMTotalGB: 32, StorageTotalGB: 1000},
 		})
-		w.Header().Set("X-M3TAL-Proof", responseProof("shared-secret", nonce, clientNonce, body))
+		w.Header().Set("X-M3TAL-Proof", responseProof("shared-secret", nonce, clientNonce, body, fp))
 		_, _ = w.Write(body)
 	}))
 	defer server.Close()
@@ -48,6 +90,9 @@ func TestFetchRemoteVerifiesAndReadsTelemetry(t *testing.T) {
 	}
 	if node.Name != "mesh-server" || node.Cores != 8 || node.Status != "online" {
 		t.Fatalf("unexpected remote node: %+v", node)
+	}
+	if node.Fingerprint != testServerFingerprint(server) {
+		t.Fatalf("expected node fingerprint %s, got %s", testServerFingerprint(server), node.Fingerprint)
 	}
 }
 
@@ -161,25 +206,27 @@ func TestRefreshPreservesMetadataFromConcurrentRepair(t *testing.T) {
 	}
 	started := make(chan struct{})
 	release := make(chan struct{})
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if writeTestChallenge(w, r) {
 			return
 		}
 		nonce := r.Header.Get("X-M3TAL-Nonce")
 		clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
-		if r.Header.Get("X-M3TAL-Proof") != requestProof("refresh-token", nonce, clientNonce) {
+		fp := testServerFingerprint(server)
+		if r.Header.Get("X-M3TAL-Proof") != requestProof("refresh-token", nonce, clientNonce, fp) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 		close(started)
 		<-release
 		body, _ := json.Marshal(remoteResponse{Hostname: "refresh-test", Telemetry: remoteTelemetry{Hostname: "refresh-test", Cores: 2}})
-		w.Header().Set("X-M3TAL-Proof", responseProof("refresh-token", nonce, clientNonce, body))
+		w.Header().Set("X-M3TAL-Proof", responseProof("refresh-token", nonce, clientNonce, body, fp))
 		_, _ = w.Write(body)
 	}))
 	defer server.Close()
 
-	remoteNodes = []MeshNode{{ID: "node-refresh", Name: "Old name", Role: "server", IP: server.Listener.Addr().String()}}
+	remoteNodes = []MeshNode{{ID: "node-refresh", Name: "Old name", Role: "server", IP: server.Listener.Addr().String(), Fingerprint: testServerFingerprint(server)}}
 	done := make(chan struct{})
 	go func() {
 		refreshRemotePeers()
@@ -237,18 +284,20 @@ func TestDiscoveryConcurrentVerification(t *testing.T) {
 		http.Error(w, "too slow", http.StatusRequestTimeout)
 	}))
 	defer slowServer.Close()
-	fastServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var fastServer *httptest.Server
+	fastServer = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if writeTestChallenge(w, r) {
 			return
 		}
 		nonce := r.Header.Get("X-M3TAL-Nonce")
 		clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
-		if r.Header.Get("X-M3TAL-Proof") != requestProof("discovery-token", nonce, clientNonce) {
+		fp := testServerFingerprint(fastServer)
+		if r.Header.Get("X-M3TAL-Proof") != requestProof("discovery-token", nonce, clientNonce, fp) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 		body, _ := json.Marshal(remoteResponse{Hostname: "fast-node", Telemetry: remoteTelemetry{Hostname: "fast-node", Cores: 4}})
-		w.Header().Set("X-M3TAL-Proof", responseProof("discovery-token", nonce, clientNonce, body))
+		w.Header().Set("X-M3TAL-Proof", responseProof("discovery-token", nonce, clientNonce, body, fp))
 		_, _ = w.Write(body)
 	}))
 	defer fastServer.Close()
@@ -262,5 +311,68 @@ func TestDiscoveryConcurrentVerification(t *testing.T) {
 	}
 	if elapsed > 5*time.Second {
 		t.Fatalf("concurrent verification took too long: %v (expected < 5s)", elapsed)
+	}
+}
+
+func TestFetchRemoteRejectsRelayedChallengeToDifferentServer(t *testing.T) {
+	var legitServer *httptest.Server
+	legitServer = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
+		nonce := r.Header.Get("X-M3TAL-Nonce")
+		clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
+		fp := testServerFingerprint(legitServer)
+		if r.Header.Get("X-M3TAL-Proof") != requestProof("shared-secret", nonce, clientNonce, fp) {
+			http.Error(w, "invalid pairing token", http.StatusUnauthorized)
+			return
+		}
+		body, _ := json.Marshal(remoteResponse{Hostname: "legit", Telemetry: remoteTelemetry{Hostname: "legit", Cores: 4}})
+		w.Header().Set("X-M3TAL-Proof", responseProof("shared-secret", nonce, clientNonce, body, fp))
+		_, _ = w.Write(body)
+	}))
+	legitCert := testTLSCert(t, "legit-server")
+	legitServer.TLS = &tls.Config{Certificates: []tls.Certificate{legitCert}}
+	legitServer.StartTLS()
+	defer legitServer.Close()
+
+	attackerServer := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/challenge" {
+			resp, err := legitServer.Client().Post(legitServer.URL+"/api/v1/challenge", "application/json", nil)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			defer resp.Body.Close()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.Copy(w, resp.Body)
+			return
+		}
+		relayedReq, _ := http.NewRequest(http.MethodGet, legitServer.URL+"/api/v1/telemetry", nil)
+		relayedReq.Header.Set("X-M3TAL-Nonce", r.Header.Get("X-M3TAL-Nonce"))
+		relayedReq.Header.Set("X-M3TAL-Client-Nonce", r.Header.Get("X-M3TAL-Client-Nonce"))
+		relayedReq.Header.Set("X-M3TAL-Proof", r.Header.Get("X-M3TAL-Proof"))
+		resp, err := legitServer.Client().Do(relayedReq)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer resp.Body.Close()
+		for k, vv := range resp.Header {
+			for _, v := range vv {
+				w.Header().Add(k, v)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+	}))
+	attackerCert := testTLSCert(t, "attacker-server")
+	attackerServer.TLS = &tls.Config{Certificates: []tls.Certificate{attackerCert}}
+	attackerServer.StartTLS()
+	defer attackerServer.Close()
+
+	_, err := fetchRemote(attackerServer.Listener.Addr().String(), "shared-secret", 9321)
+	if err == nil {
+		t.Fatal("expected relayed challenge to different TLS server to be rejected")
 	}
 }

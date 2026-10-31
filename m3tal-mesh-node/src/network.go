@@ -132,6 +132,11 @@ func startNodeNetworkService() error {
 	return nil
 }
 
+var (
+	nodeCertFingerprintMu sync.RWMutex
+	nodeCertFingerprint   string
+)
+
 func createNodeCertificate() (tls.Certificate, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -159,6 +164,10 @@ func createNodeCertificate() (tls.Certificate, error) {
 	if err != nil {
 		return tls.Certificate{}, err
 	}
+	sum := sha256.Sum256(der)
+	nodeCertFingerprintMu.Lock()
+	nodeCertFingerprint = hex.EncodeToString(sum[:])
+	nodeCertFingerprintMu.Unlock()
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, nil
 }
 
@@ -175,7 +184,25 @@ func nodeTelemetryHandler(w http.ResponseWriter, r *http.Request) {
 	nonce := r.Header.Get("X-M3TAL-Nonce")
 	clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
 	supplied := r.Header.Get("X-M3TAL-Proof")
-	if !validNodeNonce(clientNonce) || !consumeNodeChallenge(nonce) || subtle.ConstantTimeCompare([]byte(supplied), []byte(nodeRequestProof(current.PairingToken, nonce, clientNonce))) != 1 {
+
+	clientIP, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		clientIP = r.RemoteAddr
+	}
+
+	if !validNodeNonce(clientNonce) || !consumeNodeChallenge(nonce, clientIP) {
+		http.Error(w, "invalid pairing challenge", http.StatusUnauthorized)
+		return
+	}
+
+	var fp string
+	if r.TLS != nil {
+		nodeCertFingerprintMu.RLock()
+		fp = nodeCertFingerprint
+		nodeCertFingerprintMu.RUnlock()
+	}
+
+	if subtle.ConstantTimeCompare([]byte(supplied), []byte(nodeRequestProof(current.PairingToken, nonce, clientNonce, fp))) != 1 {
 		http.Error(w, "invalid pairing token", http.StatusUnauthorized)
 		return
 	}
@@ -189,7 +216,7 @@ func nodeTelemetryHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-M3TAL-Proof", nodeResponseProof(current.PairingToken, nonce, clientNonce, body))
+	w.Header().Set("X-M3TAL-Proof", nodeResponseProof(current.PairingToken, nonce, clientNonce, body, fp))
 	_, _ = w.Write(body)
 }
 
@@ -208,7 +235,14 @@ func nodeChallengeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"nonce": nonce})
+	resp := map[string]string{"nonce": nonce}
+	nodeCertFingerprintMu.RLock()
+	fp := nodeCertFingerprint
+	nodeCertFingerprintMu.RUnlock()
+	if fp != "" {
+		resp["fingerprint"] = fp
+	}
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 var (
@@ -272,27 +306,41 @@ func validNodeNonce(value string) bool {
 	return err == nil
 }
 
-func consumeNodeChallenge(nonce string) bool {
+func consumeNodeChallenge(nonce string, client ...string) bool {
 	if !validNodeNonce(nonce) {
 		return false
 	}
 	nodeChallengeMu.Lock()
 	challenge, ok := nodeChallenges[nonce]
-	delete(nodeChallenges, nonce)
+	if ok {
+		delete(nodeChallenges, nonce)
+	}
 	nodeChallengeMu.Unlock()
-	return ok && time.Now().Before(challenge.expires)
+	if !ok || time.Now().After(challenge.expires) {
+		return false
+	}
+	if len(client) > 0 && client[0] != "" && challenge.client != "" && challenge.client != client[0] {
+		return false
+	}
+	return true
 }
 
-func nodeRequestProof(token, nonce, clientNonce string) string {
+func nodeRequestProof(token, nonce, clientNonce string, certFingerprint ...string) string {
 	mac := hmac.New(sha256.New, []byte(token))
 	_, _ = io.WriteString(mac, "GET\n/api/v1/telemetry\n"+nonce+"\n"+clientNonce)
+	if len(certFingerprint) > 0 && certFingerprint[0] != "" {
+		_, _ = io.WriteString(mac, "\n"+certFingerprint[0])
+	}
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-func nodeResponseProof(token, nonce, clientNonce string, body []byte) string {
+func nodeResponseProof(token, nonce, clientNonce string, body []byte, certFingerprint ...string) string {
 	sum := sha256.Sum256(body)
 	mac := hmac.New(sha256.New, []byte(token))
-	_, _ = io.WriteString(mac, nonce+"\n"+clientNonce+"\n"+hex.EncodeToString(sum[:]))
+	_, _ = io.WriteString(mac, "200\n/api/v1/telemetry\n"+nonce+"\n"+clientNonce+"\n"+hex.EncodeToString(sum[:]))
+	if len(certFingerprint) > 0 && certFingerprint[0] != "" {
+		_, _ = io.WriteString(mac, "\n"+certFingerprint[0])
+	}
 	return hex.EncodeToString(mac.Sum(nil))
 }
 

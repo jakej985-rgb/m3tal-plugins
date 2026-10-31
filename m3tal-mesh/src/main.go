@@ -53,6 +53,7 @@ type MeshNode struct {
 	IP             string  `json:"ip"`
 	Role           string  `json:"role"`   // "workstation", "server", "nas", "edge"
 	Status         string  `json:"status"` // "online", "warning", "offline"
+	Fingerprint    string  `json:"fingerprint,omitempty"`
 	Cores          int     `json:"cores"`
 	CPULoad        float64 `json:"cpu_load"`
 	RAMUsedGB      float64 `json:"ram_used_gb"`
@@ -523,7 +524,7 @@ func handleAction(req *RPCRequest) {
 			return
 		}
 		cfg := loadMeshConfig()
-		updated, err := fetchRemote(target.IP, cfg.PairingToken, cfg.ListenPort)
+		updated, err := fetchRemote(target.IP, cfg.PairingToken, cfg.ListenPort, target.Fingerprint)
 		if err != nil {
 			sendError(req.ID, -32004, "Node ping failed", err.Error())
 			return
