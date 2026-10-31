@@ -600,4 +600,44 @@ func TestDiscoveryVerifyCandidatesUsesDefaultPassword(t *testing.T) {
 	}
 }
 
+func TestRePairingExistingIPUpdatesAndReplacesPeer(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	remoteNodes = []MeshNode{}
+
+	// 1. Initial peer
+	p1 := MeshNode{ID: "node-old-id", Name: "Old Hostname", IP: "192.168.1.100:9321", APIToken: "tok-1"}
+	if err := persistPeerUpsert(p1); err != nil {
+		t.Fatalf("persistPeerUpsert failed: %v", err)
+	}
+
+	// 2. Re-pairing same IP with new ID (hostname change) replaces the entry
+	p1Renamed := MeshNode{ID: "node-new-id", Name: "Renamed Hostname", IP: "192.168.1.100:9321", APIToken: "tok-2"}
+	if err := persistPeerUpsert(p1Renamed); err != nil {
+		t.Fatalf("re-pairing with new ID failed: %v", err)
+	}
+	peers := snapshotPeers()
+	if len(peers) != 1 || peers[0].ID != "node-new-id" || peers[0].Name != "Renamed Hostname" || peers[0].APIToken != "tok-2" {
+		t.Fatalf("expected re-pairing to replace existing entry, got: %+v", peers)
+	}
+
+	// 3. Second peer
+	p2 := MeshNode{ID: "node-2", Name: "Second Host", IP: "192.168.1.200:9321"}
+	if err := persistPeerUpsert(p2); err != nil {
+		t.Fatalf("persistPeerUpsert for second peer failed: %v", err)
+	}
+
+	// 4. Updating second peer to use first peer's IP must fail with duplicate IP error
+	p2Conflicting := MeshNode{ID: "node-2", Name: "Second Host", IP: "192.168.1.100:9321"}
+	if err := persistPeerUpsert(p2Conflicting); err == nil {
+		t.Fatal("expected duplicate IP error when existing peer changes IP to another peer's IP")
+	}
+
+	// Verify fleet remains clean with 2 peers
+	finalPeers := snapshotPeers()
+	if len(finalPeers) != 2 || finalPeers[0].ID != "node-new-id" || finalPeers[1].ID != "node-2" {
+		t.Fatalf("fleet corrupted after rejected duplicate IP: %+v", finalPeers)
+	}
+}
+
+
 

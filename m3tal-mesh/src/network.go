@@ -562,30 +562,44 @@ func persistPeerUpsert(node MeshNode) error {
 	peerMutationMu.Lock()
 	defer peerMutationMu.Unlock()
 	peers := snapshotPeers()
-	if node.ID != "" && node.IP != "" {
-		for _, p := range peers {
-			if p.ID != node.ID && strings.EqualFold(p.IP, node.IP) {
-				return fmt.Errorf("IP address %s is already used by node %s (%s)", node.IP, p.Name, p.ID)
-			}
-		}
-	}
-	updated := false
+
+	existingIDIdx := -1
 	for i := range peers {
-		if peers[i].ID == node.ID || (node.ID == "" && strings.EqualFold(peers[i].IP, node.IP)) {
-			if !node.ClearAPIToken && node.APIToken == "" && peers[i].APIToken != "" {
-				node.APIToken = peers[i].APIToken
-			}
-			if !node.ClearPassword && node.Password == "" && peers[i].Password != "" {
-				node.Password = peers[i].Password
-			}
-			node.HasPassword = node.Password != ""
-			node.HasAPIToken = node.APIToken != ""
-			peers[i] = node
-			updated = true
+		if peers[i].ID == node.ID {
+			existingIDIdx = i
 			break
 		}
 	}
-	if !updated {
+
+	targetIdx := existingIDIdx
+	if node.IP != "" {
+		for i := range peers {
+			if strings.EqualFold(peers[i].IP, node.IP) {
+				if existingIDIdx >= 0 && existingIDIdx != i {
+					// An existing peer is being updated to take another peer's IP
+					return fmt.Errorf("IP address %s is already used by node %s (%s)", node.IP, peers[i].Name, peers[i].ID)
+				}
+				if existingIDIdx < 0 {
+					// Re-pairing an existing IP with a new/changed node ID: replace the entry at this IP
+					targetIdx = i
+				}
+				break
+			}
+		}
+	}
+
+	if targetIdx >= 0 {
+		old := peers[targetIdx]
+		if !node.ClearAPIToken && node.APIToken == "" && old.APIToken != "" {
+			node.APIToken = old.APIToken
+		}
+		if !node.ClearPassword && node.Password == "" && old.Password != "" {
+			node.Password = old.Password
+		}
+		node.HasPassword = node.Password != ""
+		node.HasAPIToken = node.APIToken != ""
+		peers[targetIdx] = node
+	} else {
 		node.HasPassword = node.Password != ""
 		node.HasAPIToken = node.APIToken != ""
 		peers = append(peers, node)
