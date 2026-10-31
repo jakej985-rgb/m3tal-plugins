@@ -228,9 +228,6 @@ func nodeTelemetryHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid pairing token", http.StatusUnauthorized)
 			return
 		}
-	} else if authRequired && expectedPass == "" {
-		http.Error(w, "pairing token is not configured on this node", http.StatusServiceUnavailable)
-		return
 	}
 
 	if expectedPass != "" {
