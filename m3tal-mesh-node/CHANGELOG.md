@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.5] - 2026-10-31
+
+### 🚀 Changes & Improvements
+- **fix(mesh): bind challenge-response proofs to TLS certificate fingerprints and client IP** (`8b2152b`)
+- **fix(mesh): restore payload merging in UI readers, restore node smoke tests, and format network.go** (`294ccd2`)
+- **fix(mesh): read flat action responses in UI and assert full response shape in tests** (`3d728e3`)
+- **refactor(mesh): emit flat action responses and read payload cleanly in UI** (`af69661`)
+- **fix(mesh): align action payload responses and ui readers with core passthrough** (`222bf33`)
+- **fix(mesh): use flat action response data** (`746dc13`)
+- **fix(mesh): improve UI error handling and cleanup** (`e6ca0ca`)
+- **fix: handle nested payload data structures in mesh UI API responses** (`47a5a35`)
+
+---
+
 ## [0.1.4] - 2026-10-28
 
 ### Fixed

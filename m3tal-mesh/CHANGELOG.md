@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.5] - 2026-10-31
+
+### 🚀 Changes & Improvements
+- **fix(mesh): bind challenge-response proofs to TLS certificate fingerprints and client IP** (`8b2152b`)
+- **fix(mesh): refresh mesh settings after pairing to update has_pairing_token** (`927c7f6`)
+- **fix(mesh): restore payload merging in UI readers, restore node smoke tests, and format network.go** (`294ccd2`)
+- **fix(mesh): read flat action responses in UI and assert full response shape in tests** (`3d728e3`)
+- **refactor(mesh): emit flat action responses and read payload cleanly in UI** (`af69661`)
+- **style(mesh): restore script indentation and fallback error messages** (`84affb4`)
+- **fix(mesh): align action payload responses and ui readers with core passthrough** (`222bf33`)
+- **fix(mesh): use flat action response data** (`746dc13`)
+- **fix(mesh): improve UI error handling and cleanup** (`e6ca0ca`)
+- **fix: handle nested payload data structures in mesh UI API responses** (`47a5a35`)
+- **fix(mesh): flatten get_settings response and add test coverage** (`458404c`)
+- **fix(mesh): use success:true in get_settings response to match ActionResult decoder** (`cd9e56e`)
+
+---
+
 ## [0.1.4] - 2026-10-28
 ### Fixed
 - Convert LAN discovery to concurrent verification to prevent slow peers from blocking discovery
