@@ -106,7 +106,7 @@ jobs:
           name: "M3TAL Plugins Release"
           prerelease: false
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Ingest & Sign DEB via Central APT Repository (m3tal-apt-key)
         if: steps.bump.outputs.skip != 'true' && hashFiles('dist/packages/*.deb') != ''
@@ -122,7 +122,7 @@ jobs:
 
             curl -X POST \
               -H "Accept: application/vnd.github+json" \
-              -H "Authorization: Bearer ${{ secrets.GH_PAT }}" \
+              -H "Authorization: Bearer ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}" \
               https://api.github.com/repos/jakej985-rgb/m3tal-apt-key/dispatches \
               -d @- << EOF
             {

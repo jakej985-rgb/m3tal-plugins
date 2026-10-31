@@ -84,44 +84,50 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build and Package m3tal-compose DEB
-        id: package
         run: |
+          mkdir -p dist/packages
           ./scripts/build-plugin-deb.sh "m3tal-compose"
-          DEB_FILE=$(ls m3tal-plugin-compose_*.deb | head -n1)
-          SHA_FILE="${DEB_FILE}.sha256"
-          echo "deb_file=$DEB_FILE" >> "$GITHUB_OUTPUT"
-          echo "sha_file=$SHA_FILE" >> "$GITHUB_OUTPUT"
+          mv m3tal-plugin-compose*.deb dist/packages/ 2>/dev/null || true
+          mv m3tal-plugin-compose*.sha256 dist/packages/ 2>/dev/null || true
+          ls -la dist/packages/
 
       - name: Create / Update GitHub Release
+        if: hashFiles('dist/packages/*.deb') != ''
         uses: softprops/action-gh-release@v2
         with:
+          files: dist/packages/*
           tag_name: plugins-latest
           name: "M3TAL Plugins Release"
           draft: false
           prerelease: false
-          files: |
-            ${{ steps.package.outputs.deb_file }}
-            ${{ steps.package.outputs.sha_file }}
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Ingest & Sign DEB via Central APT Repository (m3tal-apt-key)
+        if: hashFiles('dist/packages/*.deb') != ''
         run: |
-          VERSION="${{ steps.bump.outputs.version }}"
-          DEB_FILE="${{ steps.package.outputs.deb_file }}"
-          DEB_URL="https://github.com/jakej985-rgb/m3tal-plugins/releases/download/plugins-latest/${DEB_FILE}"
+          for deb in dist/packages/*.deb; do
+            [ -f "$deb" ] || continue
+            DEB_BASENAME=$(basename "$deb")
+            PKG_ID=$(echo "$DEB_BASENAME" | cut -d_ -f1)
+            PKG_VER=$(echo "$DEB_BASENAME" | cut -d_ -f2)
+            DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/plugins-latest/${DEB_BASENAME}"
 
-          echo "Dispatching deb ingestion event to jakej985-rgb/m3tal-apt-key..."
-          curl -X POST \
-            -H "Accept: application/vnd.github.v3+json" \
-            -H "Authorization: token ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}" \
-            https://api.github.com/repos/jakej985-rgb/m3tal-apt-key/dispatches \
-            -d '{
+            echo "🚀 Dispatching $PKG_ID v$PKG_VER to m3tal-apt-key..."
+
+            curl -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}" \
+              https://api.github.com/repos/jakej985-rgb/m3tal-apt-key/dispatches \
+              -d @- << EOF
+            {
               "event_type": "publish-deb",
               "client_payload": {
-                "package_id": "m3tal-plugin-compose",
-                "version": "'"$VERSION"'",
-                "deb_url": "'"$DEB_URL"'",
+                "package_id": "${PKG_ID}",
+                "version": "${PKG_VER}",
+                "deb_url": "${DOWNLOAD_URL}",
                 "allow_replace": true
               }
-            }'
+            }
+          EOF
+          done

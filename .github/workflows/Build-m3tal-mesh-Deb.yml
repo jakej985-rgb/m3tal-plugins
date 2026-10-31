@@ -1,0 +1,145 @@
+name: Build m3tal-mesh DEB
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'm3tal-mesh/**'
+      - 'm3tal-mesh-node/**'
+  workflow_dispatch:
+    inputs:
+      force_bump:
+        description: "Force version bump type (auto, patch, minor, major)"
+        required: false
+        default: "auto"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Require main branch for publishing
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Publishing can only run from main (selected ref: $GITHUB_REF)."
+            exit 1
+          fi
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Packaging Tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends dpkg-dev apt-utils gnupg curl
+          python3 -m pip install --upgrade pip pyyaml
+
+      - name: Smart Auto-Bump Mesh Plugins
+        id: bump
+        run: |
+          FORCE_BUMP="${{ github.event.inputs.force_bump || 'auto' }}"
+          BASE_REF="${{ github.event.before }}"
+          [ -z "$BASE_REF" ] || [ "$BASE_REF" = "0000000000000000000000000000000000000000" ] && BASE_REF="HEAD~1"
+
+          BUMPED=false
+          for plugin in m3tal-mesh m3tal-mesh-node; do
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+              echo "Manual workflow dispatch for $plugin..."
+              ./scripts/smart-bump.py --plugin "$plugin" --bump-type "$FORCE_BUMP" --apply --force
+              BUMPED=true
+            else
+              echo "Checking if $plugin was modified since $BASE_REF..."
+              TOUCHED=$(./scripts/smart-bump.py --plugin "$plugin" --base "$BASE_REF" --list-touched)
+              if [ -n "$TOUCHED" ]; then
+                ./scripts/smart-bump.py --plugin "$plugin" --base "$BASE_REF" --apply
+                BUMPED=true
+              else
+                echo "ℹ️ $plugin was not modified."
+              fi
+            fi
+          done
+
+          if [ -n "$(git status --porcelain m3tal-mesh/ m3tal-mesh-node/)" ]; then
+            git config user.name "m3tal-bot"
+            git config user.email "bot@m3tal.io"
+            git add m3tal-mesh/ m3tal-mesh-node/
+            git commit -m "chore(release): auto-bump mesh plugins and update CHANGELOG [skip ci]"
+            bash scripts/push-release-commit.sh origin main
+          elif [ "$BUMPED" = "false" ] && [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            echo "ℹ️ Neither m3tal-mesh nor m3tal-mesh-node was modified. Skipping build."
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+      - name: Build and Package Mesh DEBs
+        if: steps.bump.outputs.skip != 'true'
+        run: |
+          mkdir -p dist/packages
+          ./scripts/build-plugin-deb.sh m3tal-mesh
+          ./scripts/build-plugin-deb.sh m3tal-mesh-node
+          ./scripts/build-cluster-deb.sh
+          mv m3tal-plugin-mesh*.deb dist/packages/ 2>/dev/null || true
+          mv m3tal-plugin-mesh*.sha256 dist/packages/ 2>/dev/null || true
+          ls -la dist/packages/
+
+      - name: Create / Update GitHub Release
+        if: steps.bump.outputs.skip != 'true' && hashFiles('dist/packages/*.deb') != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/packages/*
+          tag_name: plugins-latest
+          name: "M3TAL Plugins Release"
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Ingest & Sign DEB via Central APT Repository (m3tal-apt-key)
+        if: steps.bump.outputs.skip != 'true' && hashFiles('dist/packages/*.deb') != ''
+        run: |
+          for deb in dist/packages/*.deb; do
+            [ -f "$deb" ] || continue
+            DEB_BASENAME=$(basename "$deb")
+            PKG_ID=$(echo "$DEB_BASENAME" | cut -d_ -f1)
+            PKG_VER=$(echo "$DEB_BASENAME" | cut -d_ -f2)
+            DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/plugins-latest/${DEB_BASENAME}"
+
+            echo "🚀 Dispatching $PKG_ID v$PKG_VER to m3tal-apt-key..."
+
+            curl -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}" \
+              https://api.github.com/repos/jakej985-rgb/m3tal-apt-key/dispatches \
+              -d @- << EOF
+            {
+              "event_type": "publish-deb",
+              "client_payload": {
+                "package_id": "${PKG_ID}",
+                "version": "${PKG_VER}",
+                "deb_url": "${DOWNLOAD_URL}",
+                "allow_replace": true
+              }
+            }
+          EOF
+          done
