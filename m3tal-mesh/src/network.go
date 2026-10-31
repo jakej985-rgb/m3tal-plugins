@@ -518,24 +518,13 @@ func pairAndPersistPeer(address, name, role, token, password string) (MeshNode, 
 	node.Password = password
 	node.PasswordOnly = passwordOnly
 
-	// Detect conflict: if an existing peer already uses this ID at a different IP address
-	// (e.g. if a peer previously at this address was moved to another IP via update_node),
-	// reject the pairing rather than overwriting the moved peer and its credentials.
-	normNodeIP, _ := normalizeNodeAddress(node.IP, cfg.ListenPort)
-	for _, p := range snapshotPeers() {
-		normPeerIP, _ := normalizeNodeAddress(p.IP, cfg.ListenPort)
-		if p.ID == node.ID && !strings.EqualFold(normPeerIP, normNodeIP) {
-			return MeshNode{}, fmt.Errorf("node ID %s conflicts with existing peer %s (%s)", node.ID, p.Name, p.IP)
-		}
-	}
-
 	if cfg.PairingToken == "" && token != "" {
 		cfg.PairingToken = token
 		if err := saveMeshConfig(cfg); err != nil {
 			return MeshNode{}, fmt.Errorf("could not save pairing token: %w", err)
 		}
 	}
-	if err := persistPeerUpsert(node, true, true); err != nil {
+	if err := persistPeerUpsert(node, true, true, true); err != nil {
 		return MeshNode{}, fmt.Errorf("could not save paired node: %w", err)
 	}
 	return node, nil
@@ -653,10 +642,12 @@ func verifyCandidates(candidates []string, candidateHosts map[string]string, tok
 	return discovered
 }
 
-func persistPeerUpsert(node MeshNode, clearToken, clearPassword bool) error {
+func persistPeerUpsert(node MeshNode, clearToken, clearPassword bool, isPairing ...bool) error {
 	peerMutationMu.Lock()
 	defer peerMutationMu.Unlock()
 	peers := snapshotPeers()
+
+	pairingMode := len(isPairing) > 0 && isPairing[0]
 
 	existingIDIdx := -1
 	for i := range peers {
@@ -664,6 +655,12 @@ func persistPeerUpsert(node MeshNode, clearToken, clearPassword bool) error {
 			existingIDIdx = i
 			break
 		}
+	}
+
+	// In pairing path, detect conflict if an existing peer already uses this ID at a different IP address
+	// (e.g. if a peer previously at this address was moved to another IP via update_node)
+	if pairingMode && existingIDIdx >= 0 && node.IP != "" && !strings.EqualFold(peers[existingIDIdx].IP, node.IP) {
+		return fmt.Errorf("node ID %s conflicts with existing peer %s (%s)", node.ID, peers[existingIDIdx].Name, peers[existingIDIdx].IP)
 	}
 
 	targetIdx := existingIDIdx
