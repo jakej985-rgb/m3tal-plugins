@@ -368,7 +368,10 @@
         const body = await res.json();
         if (!res.ok || body.status !== 'success')
           throw new Error(body.error?.message || 'Could not load Mesh settings');
-        const actionData = body.data ?? {};
+        const actionData = {
+          ...(body.data?.payload ?? {}),
+          ...(body.data ?? {})
+        };
         meshConfig = {
           ...meshConfig,
           has_pairing_token: !!actionData.has_pairing_token,
@@ -398,7 +401,10 @@
 
         const body = await res.json();
 
-        const actionData = body.data ?? {};
+        const actionData = {
+          ...(body.data?.payload ?? {}),
+          ...(body.data ?? {})
+        };
         if (
           !res.ok ||
           body.status !== 'success' ||
@@ -604,7 +610,10 @@
         const res = await fetch(`/api/v2/plugins/mesh/action?token=${encodeURIComponent(token)}`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'get_fleet',args:{}})});
         const data = await res.json();
         if (!res.ok) throw new Error(data.error?.message || 'Fleet refresh failed');
-        const actionData = data.data ?? {};
+        const actionData = {
+          ...(data.data?.payload ?? {}),
+          ...(data.data ?? {})
+        };
         const nodes = actionData.nodes || [];
         if (Array.isArray(nodes)) { fleetNodes = nodes; renderFleet(); }
       } catch (err) {
@@ -645,7 +654,10 @@
 
         const body = await res.json();
 
-        const actionData = body.data ?? {};
+        const actionData = {
+          ...(body.data?.payload ?? {}),
+          ...(body.data ?? {})
+        };
         if (!res.ok) {
           throw new Error(
             body.error?.message ||
@@ -690,7 +702,10 @@
         });
 
         const body = await res.json();
-        const actionData = body.data ?? {};
+        const actionData = {
+          ...(body.data?.payload ?? {}),
+          ...(body.data ?? {})
+        };
         if (
           !res.ok ||
           body.status !== 'success' ||
@@ -734,7 +749,10 @@
         });
 
         const body = await res.json();
-        const actionData = body.data ?? {};
+        const actionData = {
+          ...(body.data?.payload ?? {}),
+          ...(body.data ?? {})
+        };
         if (
           !res.ok ||
           body.status !== 'success' ||
@@ -777,7 +795,10 @@
         });
 
         const body = await res.json();
-        const actionData = body.data ?? {};
+        const actionData = {
+          ...(body.data?.payload ?? {}),
+          ...(body.data ?? {})
+        };
         if (
           !res.ok ||
           body.status !== 'success' ||

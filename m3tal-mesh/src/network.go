@@ -476,8 +476,6 @@ func snapshotPeers() []MeshNode {
 	return append([]MeshNode(nil), remoteNodes...)
 }
 
-
-
 func refreshRemotePeers() {
 	cfg := loadMeshConfig()
 	peers := snapshotPeers()
