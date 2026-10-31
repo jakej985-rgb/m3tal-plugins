@@ -485,7 +485,9 @@ func connectAndNegotiateNode(address, explicitToken, explicitPass string, cfg me
 	if err != nil {
 		// Only send default password to unpinned address after an authenticated password_required response,
 		// and strictly pin the retry to the peer certificate fingerprint authenticated by the first exchange.
-		if errors.Is(err, ErrPasswordRequired) && explicitPass == "" && cfg.DefaultPassword != "" {
+		// A peer authenticated only with a custom per-peer token must not receive mesh DefaultPassword.
+		usesCustomToken := explicitToken != "" && explicitToken != cfg.PairingToken
+		if errors.Is(err, ErrPasswordRequired) && explicitPass == "" && cfg.DefaultPassword != "" && !usesCustomToken {
 			authFP := node.Fingerprint
 			if authFP == "" {
 				authFP = expectedFingerprint

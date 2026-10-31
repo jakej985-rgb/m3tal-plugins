@@ -1398,3 +1398,42 @@ func TestEffectiveCredentialsRequiresExplicitFingerprint(t *testing.T) {
 		t.Fatalf("security violation: custom token peer inherited DefaultPassword: %q", pass4)
 	}
 }
+
+func TestDefaultPasswordNotSentOnRetryWhenCustomTokenSupplied(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := meshConfig{PairingToken: "default-mesh-token", DefaultPassword: "mesh-default-secret", ListenPort: 9321}
+
+	var receivedPassword string
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
+		if r.URL.Path == "/api/v1/telemetry" {
+			nonce := r.Header.Get("X-M3TAL-Nonce")
+			clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
+			fp := testServerFingerprint(server)
+			receivedPassword = r.Header.Get("X-M3TAL-Password")
+			// Server only knows attacker-custom-token, signs password_required response
+			if r.Header.Get("X-M3TAL-Proof") == requestProof("attacker-custom-token", nonce, clientNonce, fp) {
+				w.Header().Set("X-M3TAL-Auth-Status", "password_required")
+				w.Header().Set("X-M3TAL-Proof", responseProof("attacker-custom-token", nonce, clientNonce, []byte("password required\n"), fp))
+				http.Error(w, "password required", http.StatusUnauthorized)
+				return
+			}
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	// Calling connectAndNegotiateNode with attacker-custom-token and blank password
+	_, _, err := connectAndNegotiateNode(server.Listener.Addr().String(), "attacker-custom-token", "", cfg, "", false)
+	if err == nil {
+		t.Fatal("expected connection to fail without password")
+	}
+	if receivedPassword != "" {
+		t.Fatalf("security violation: DefaultPassword was sent on retry to custom-token peer: %q", receivedPassword)
+	}
+}
