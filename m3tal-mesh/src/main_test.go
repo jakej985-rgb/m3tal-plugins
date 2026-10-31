@@ -687,3 +687,71 @@ func TestUpdateNodePreservesPasswordOnlyWhenProbeFails(t *testing.T) {
 		t.Fatalf("expected password to be updated, got: %s", persisted[0].Password)
 	}
 }
+
+func TestTestNodeReusesSavedCredentialsWhenChangingAddress(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	remoteNodes = []MeshNode{}
+
+	// Global default token is DIFFERENT from the peer's custom per-node token
+	cfg := meshConfig{PairingToken: "default-mesh-token", ListenPort: 9321}
+	if err := saveMeshConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Initial saved peer with per-peer custom token
+	initialNode := MeshNode{
+		ID:       "saved-peer-1",
+		Name:     "Saved Custom Peer",
+		IP:       "127.0.0.1:8888",
+		APIToken: "custom-peer-token",
+		Password: "custom-peer-pass",
+	}
+	if err := persistPeerUpsert(initialNode, false, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. Server at new address accepts custom-peer-token and custom-peer-pass
+	var newServer *httptest.Server
+	newServer = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
+		if r.URL.Path == "/api/v1/telemetry" {
+			nonce := r.Header.Get("X-M3TAL-Nonce")
+			clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
+			fp := testServerFingerprint(newServer)
+			// Must match the custom-peer-token, not the default-mesh-token!
+			if r.Header.Get("X-M3TAL-Proof") != requestProof("custom-peer-token", nonce, clientNonce, fp) {
+				http.Error(w, "invalid custom token", http.StatusUnauthorized)
+				return
+			}
+			if r.Header.Get("X-M3TAL-Password") != "custom-peer-pass" {
+				http.Error(w, "invalid custom pass", http.StatusUnauthorized)
+				return
+			}
+			body, _ := json.Marshal(remoteResponse{
+				Name: "moved-peer", Hostname: "moved-peer",
+				Telemetry: remoteTelemetry{Hostname: "moved-peer", Cores: 4, RAMTotalGB: 16, StorageTotalGB: 500},
+			})
+			w.Header().Set("X-M3TAL-Proof", responseProof("custom-peer-token", nonce, clientNonce, body, fp))
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(body)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer newServer.Close()
+
+	newAddr := newServer.Listener.Addr().String()
+
+	// 3. test_node with new IP and node_id="saved-peer-1", leaving token and password empty
+	testReq := fmt.Sprintf(`{"action":"test_node","args":{"node_id":"saved-peer-1","ip":%q}}`, newAddr)
+	resp := runActionForTest(t, 22, testReq)
+	if resp.Error != nil {
+		t.Fatalf("test_node failed to reuse saved credentials for moved peer: %s", resp.Error.Message)
+	}
+	resMap, _ := resp.Result.(map[string]interface{})
+	if resMap["hostname"] != "moved-peer" {
+		t.Fatalf("unexpected hostname from test_node: %v", resMap["hostname"])
+	}
+}

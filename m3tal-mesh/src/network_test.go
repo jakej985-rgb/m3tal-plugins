@@ -1127,3 +1127,60 @@ func TestTokenRejectedSentinelWrapping(t *testing.T) {
 		t.Fatalf("expected error to wrap ErrTokenRejected, got: %v", err)
 	}
 }
+
+func TestUnsignedResponseWrapsTokenRejected(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
+		if r.URL.Path == "/api/v1/telemetry" {
+			body, _ := json.Marshal(remoteResponse{
+				Name: "unauthenticated-node", Hostname: "unauthenticated-node",
+				Telemetry: remoteTelemetry{Hostname: "unauthenticated-node", Cores: 2, RAMTotalGB: 4, StorageTotalGB: 100},
+			})
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(body)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	_, err := fetchRemoteWithAuth(server.Listener.Addr().String(), "some-token", "", 9321)
+	if err == nil {
+		t.Fatal("expected unsigned response error")
+	}
+	if !errors.Is(err, ErrTokenRejected) {
+		t.Fatalf("expected unsigned response to wrap ErrTokenRejected, got: %v", err)
+	}
+}
+
+func TestMismatchedProofDoesNotWrapTokenRejected(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
+		if r.URL.Path == "/api/v1/telemetry" {
+			w.Header().Set("X-M3TAL-Proof", "forged-or-mismatched-proof")
+			body, _ := json.Marshal(remoteResponse{
+				Name: "forged-node", Hostname: "forged-node",
+				Telemetry: remoteTelemetry{Hostname: "forged-node", Cores: 2, RAMTotalGB: 4, StorageTotalGB: 100},
+			})
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(body)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	_, err := fetchRemoteWithAuth(server.Listener.Addr().String(), "some-token", "", 9321)
+	if err == nil {
+		t.Fatal("expected mismatched proof error")
+	}
+	if errors.Is(err, ErrTokenRejected) {
+		t.Fatalf("expected mismatched proof to NOT wrap ErrTokenRejected, got: %v", err)
+	}
+}

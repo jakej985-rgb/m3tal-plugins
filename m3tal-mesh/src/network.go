@@ -407,8 +407,12 @@ func fetchRemoteWithAuth(address, token, password string, port int, expectedFing
 		return MeshNode{}, fmt.Errorf("could not read telemetry from %s: %w", address, err)
 	}
 	if token != "" && nonce != "" && clientNonce != "" {
+		proof := resp.Header.Get("X-M3TAL-Proof")
+		if proof == "" {
+			return MeshNode{}, fmt.Errorf("%s returned unsigned response: %w", address, ErrTokenRejected)
+		}
 		expected := responseProof(token, nonce, clientNonce, body, peerFingerprint)
-		if !hmac.Equal([]byte(expected), []byte(resp.Header.Get("X-M3TAL-Proof"))) {
+		if !hmac.Equal([]byte(expected), []byte(proof)) {
 			return MeshNode{}, fmt.Errorf("%s failed mesh node authentication", address)
 		}
 	}
