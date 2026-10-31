@@ -839,7 +839,7 @@ func TestTestNodeDoesNotLeakSavedCredentialsToDifferentAddress(t *testing.T) {
 	}
 }
 
-func TestUpdateNodeClearsCredentialsOnAddressChange(t *testing.T) {
+func TestUpdateNodePreservesCredentialsOnAddressChange(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	remoteNodes = []MeshNode{}
 
@@ -848,8 +848,8 @@ func TestUpdateNodeClearsCredentialsOnAddressChange(t *testing.T) {
 		ID:          "peer-to-move",
 		Name:        "Moveable Peer",
 		IP:          "127.0.0.1:8888",
-		APIToken:    "secret-token-to-clear",
-		Password:    "secret-password-to-clear",
+		APIToken:    "secret-token-to-keep",
+		Password:    "secret-password-to-keep",
 		Fingerprint: "saved-cert-fingerprint-9999",
 	}
 	if err := persistPeerUpsert(initialNode, false, false); err != nil {
@@ -863,19 +863,19 @@ func TestUpdateNodeClearsCredentialsOnAddressChange(t *testing.T) {
 		t.Fatalf("update_node failed: %s", resp.Error.Message)
 	}
 
-	// 3. Verify credentials and fingerprint were cleared on address change
+	// 3. Verify credentials are preserved while fingerprint is unpinned on address change
 	persisted := loadPeers()
 	if len(persisted) != 1 {
 		t.Fatalf("expected 1 persisted peer, got %d", len(persisted))
 	}
-	if persisted[0].APIToken != "" {
-		t.Fatalf("expected APIToken to be cleared on address change, got: %s", persisted[0].APIToken)
+	if persisted[0].APIToken != "secret-token-to-keep" {
+		t.Fatalf("expected APIToken to be preserved on address change, got: %s", persisted[0].APIToken)
 	}
-	if persisted[0].Password != "" {
-		t.Fatalf("expected Password to be cleared on address change, got: %s", persisted[0].Password)
+	if persisted[0].Password != "secret-password-to-keep" {
+		t.Fatalf("expected Password to be preserved on address change, got: %s", persisted[0].Password)
 	}
 	if persisted[0].Fingerprint != "" {
-		t.Fatalf("expected Fingerprint to be cleared on address change, got: %s", persisted[0].Fingerprint)
+		t.Fatalf("expected Fingerprint to be unpinned on address change, got: %s", persisted[0].Fingerprint)
 	}
 }
 

@@ -26,6 +26,11 @@
       "type": "boolean",
       "default": true,
       "description": "Enforce pairing token requirement. If false, token is optional (⚠️ SAFETY WARNING: Not recommended or safe on untrusted networks)."
+    },
+    "password": {
+      "type": "string",
+      "default": "",
+      "description": "Optional secondary password required for telemetry access."
     }
   },
   "additionalProperties": false

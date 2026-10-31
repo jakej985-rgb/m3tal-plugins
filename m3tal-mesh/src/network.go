@@ -28,6 +28,7 @@ import (
 var (
 	ErrPasswordRequired = errors.New("password required")
 	ErrTokenRejected    = errors.New("pairing token was rejected")
+	ErrInvalidPassword  = errors.New("invalid password")
 )
 
 const meshServiceType = "_m3tal-mesh-node._tcp"
@@ -380,14 +381,17 @@ func fetchRemoteWithAuth(address, token, password string, port int, expectedFing
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusUnauthorized {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		if resp.Header.Get("X-M3TAL-Auth-Status") == "password_required" {
-			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 			if token != "" && nonce != "" && clientNonce != "" {
 				expectedProof := responseProof(token, nonce, clientNonce, respBody, peerFingerprint)
 				if resp.Header.Get("X-M3TAL-Proof") == expectedProof {
 					return MeshNode{Fingerprint: peerFingerprint}, ErrPasswordRequired
 				}
 			}
+		}
+		if strings.Contains(strings.ToLower(string(respBody)), "invalid password") {
+			return MeshNode{}, fmt.Errorf("%w for %s", ErrInvalidPassword, address)
 		}
 		return MeshNode{}, fmt.Errorf("%w by %s", ErrTokenRejected, address)
 	}

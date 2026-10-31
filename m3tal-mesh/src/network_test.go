@@ -1185,6 +1185,32 @@ func TestMismatchedProofDoesNotWrapTokenRejected(t *testing.T) {
 	}
 }
 
+func TestFetchRemoteReturnsErrInvalidPassword(t *testing.T) {
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
+		if r.URL.Path == "/api/v1/telemetry" {
+			http.Error(w, "invalid password", http.StatusUnauthorized)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	_, err := fetchRemoteWithAuth(server.Listener.Addr().String(), "some-token", "wrong-pass", 9321)
+	if err == nil {
+		t.Fatal("expected error for invalid password")
+	}
+	if !errors.Is(err, ErrInvalidPassword) {
+		t.Fatalf("expected error to wrap ErrInvalidPassword, got: %v", err)
+	}
+	if errors.Is(err, ErrTokenRejected) {
+		t.Fatalf("expected invalid password to NOT wrap ErrTokenRejected, got: %v", err)
+	}
+}
+
 func TestDefaultPasswordWithheldFromUnpinnedHostUntilAuthenticated(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	cfg := meshConfig{PairingToken: "mesh-shared-token", DefaultPassword: "mesh-default-secret", ListenPort: 9321}

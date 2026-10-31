@@ -625,14 +625,6 @@ func handleAction(req *RPCRequest) {
 		}
 		clearTok, _ := raw.Args["clear_api_token"].(bool)
 		clearPass, _ := raw.Args["clear_password"].(bool)
-		if addressChanged {
-			if effectiveToken == "" {
-				clearTok = true
-			}
-			if password == "" {
-				clearPass = true
-			}
-		}
 		credsChanged := false
 		if effectiveToken != "" {
 			foundNode.APIToken = effectiveToken
@@ -753,12 +745,12 @@ func handleAction(req *RPCRequest) {
 			})
 			return
 		}
-		if cfg.IsPairingTokenRequired() && cfg.PairingToken == "" && cfg.DefaultPassword == "" {
+		if cfg.IsPairingTokenRequired() && cfg.PairingToken == "" {
 			sendResponse(req.ID, map[string]interface{}{
 				"success":    true,
 				"discovered": 0,
 				"nodes":      []MeshNode{},
-				"message":    "Set the shared pairing token or default password in Mesh Settings to verify discovered nodes.",
+				"message":    "Set the shared pairing token in Mesh Settings to verify discovered nodes.",
 			})
 			return
 		}
