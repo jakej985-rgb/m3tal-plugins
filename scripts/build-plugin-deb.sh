@@ -120,6 +120,46 @@ EOF
 
 chmod 644 "$STAGE_DIR/DEBIAN/control"
 
+# Generate DEBIAN/postinst
+cat << 'EOF' > "$STAGE_DIR/DEBIAN/postinst"
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure|triggered)
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl try-restart m3tal.service >/dev/null 2>&1 || true
+            systemctl try-restart m3tal-api.service >/dev/null 2>&1 || true
+        fi
+        ;;
+    *)
+        ;;
+esac
+
+exit 0
+EOF
+chmod 755 "$STAGE_DIR/DEBIAN/postinst"
+
+# Generate DEBIAN/postrm
+cat << 'EOF' > "$STAGE_DIR/DEBIAN/postrm"
+#!/bin/sh
+set -e
+
+case "$1" in
+    remove|purge)
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl try-restart m3tal.service >/dev/null 2>&1 || true
+            systemctl try-restart m3tal-api.service >/dev/null 2>&1 || true
+        fi
+        ;;
+    *)
+        ;;
+esac
+
+exit 0
+EOF
+chmod 755 "$STAGE_DIR/DEBIAN/postrm"
+
 # Build debian package
 dpkg-deb --build --root-owner-group "$STAGE_DIR" "$DEB_NAME"
 sha256sum "$DEB_NAME" > "${DEB_NAME}.sha256"
