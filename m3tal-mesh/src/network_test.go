@@ -1652,3 +1652,68 @@ func TestPairingWithDefaultPasswordLeavesStoredPasswordEmptyToTrackSettingsChang
 		t.Fatalf("expected rotated password to be sent, got: %q", receivedPassword)
 	}
 }
+
+func TestPairingDetectsConflictWhenIDBelongsToMovedPeerAtDifferentIP(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	remoteNodes = []MeshNode{}
+	cfg := meshConfig{PairingToken: "mesh-shared-token", ListenPort: 9321}
+	if err := saveMeshConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	var serverA *httptest.Server
+	serverA = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
+		if r.URL.Path == "/api/v1/telemetry" {
+			nonce := r.Header.Get("X-M3TAL-Nonce")
+			clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
+			fp := testServerFingerprint(serverA)
+			body, _ := json.Marshal(remoteResponse{
+				Name: "shared-host", Hostname: "shared-host",
+				Telemetry: remoteTelemetry{Hostname: "shared-host", Cores: 4, RAMTotalGB: 16, StorageTotalGB: 500},
+			})
+			w.Header().Set("X-M3TAL-Proof", responseProof("mesh-shared-token", nonce, clientNonce, body, fp))
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(body)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer serverA.Close()
+
+	addrA := serverA.Listener.Addr().String()
+	normA, _ := normalizeNodeAddress(addrA, 9321)
+	expectedID := stableNodeID(normA, "shared-host")
+
+	// Machine B is currently saved in fleet with expectedID, but its IP was moved to 192.168.1.50
+	movedPeer := MeshNode{
+		ID:          expectedID,
+		Name:        "Moved Machine B",
+		IP:          "192.168.1.50:9321",
+		Role:        "server",
+		Status:      "online",
+		APIToken:    "saved-token-b",
+		Password:    "saved-pass-b",
+		Fingerprint: "fingerprint-b",
+	}
+	if err := persistPeerUpsert(movedPeer, false, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// Now try pairing machine A which generates the same ID (expectedID) but is at addrA
+	_, err := pairAndPersistPeer(addrA, "Machine A", "server", "", "")
+	if err == nil {
+		t.Fatalf("expected pairing to detect ID conflict with moved peer, but succeeded")
+	}
+	if !strings.Contains(err.Error(), "conflicts with existing peer") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+
+	// Verify moved peer B at 192.168.1.50:9321 was NOT overwritten or corrupted
+	peers := loadPeers()
+	if len(peers) != 1 || peers[0].IP != "192.168.1.50:9321" || peers[0].APIToken != "saved-token-b" {
+		t.Fatalf("moved peer was corrupted or overwritten: %+v", peers)
+	}
+}

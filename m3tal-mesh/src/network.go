@@ -518,6 +518,17 @@ func pairAndPersistPeer(address, name, role, token, password string) (MeshNode, 
 	node.Password = password
 	node.PasswordOnly = passwordOnly
 
+	// Detect conflict: if an existing peer already uses this ID at a different IP address
+	// (e.g. if a peer previously at this address was moved to another IP via update_node),
+	// reject the pairing rather than overwriting the moved peer and its credentials.
+	normNodeIP, _ := normalizeNodeAddress(node.IP, cfg.ListenPort)
+	for _, p := range snapshotPeers() {
+		normPeerIP, _ := normalizeNodeAddress(p.IP, cfg.ListenPort)
+		if p.ID == node.ID && !strings.EqualFold(normPeerIP, normNodeIP) {
+			return MeshNode{}, fmt.Errorf("node ID %s conflicts with existing peer %s (%s)", node.ID, p.Name, p.IP)
+		}
+	}
+
 	if cfg.PairingToken == "" && token != "" {
 		cfg.PairingToken = token
 		if err := saveMeshConfig(cfg); err != nil {
