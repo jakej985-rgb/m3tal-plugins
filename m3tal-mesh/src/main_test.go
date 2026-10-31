@@ -549,6 +549,18 @@ func TestActionsTestNodeUpdateNodeAndGetPeers(t *testing.T) {
 	if persistedAfterIPChange[0].Fingerprint != "" {
 		t.Fatalf("expected fingerprint to be cleared after IP change, got: %s", persistedAfterIPChange[0].Fingerprint)
 	}
+
+	// 9. update_node with an IP already belonging to another peer is rejected
+	_ = persistPeerUpsert(MeshNode{ID: "second-peer-id", Name: "Second Node", IP: "127.0.0.3:9999"})
+	dupIPResp := runActionForTest(t, 9, fmt.Sprintf(`{"action":"update_node","args":{"node_id":"second-peer-id","ip":%q}}`, "127.0.0.2:9999"))
+	if dupIPResp.Error == nil {
+		t.Fatal("expected update_node with duplicate IP to fail")
+	}
+	// Verify first peer is not overwritten
+	allPeers := snapshotPeers()
+	if len(allPeers) != 2 || allPeers[0].ID != nodeID || allPeers[1].ID != "second-peer-id" {
+		t.Fatalf("unexpected peers list after duplicate update rejection: %+v", allPeers)
+	}
 }
 
 

@@ -583,6 +583,12 @@ func handleAction(req *RPCRequest) {
 			foundNode.Role = role
 		}
 		if ip != "" {
+			for _, peer := range snapshotPeers() {
+				if peer.ID != nodeID && strings.EqualFold(peer.IP, ip) {
+					sendError(req.ID, -32602, "Duplicate IP", fmt.Sprintf("IP address %s is already used by node %s", ip, peer.Name))
+					return
+				}
+			}
 			if ip != foundNode.IP {
 				foundNode.Fingerprint = ""
 			}

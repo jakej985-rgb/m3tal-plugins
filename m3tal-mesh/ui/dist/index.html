@@ -866,7 +866,11 @@
       document.getElementById('modal-title').textContent = '🔗 Connect Remote M3TAL Node';
       document.getElementById('btn-submit-pair').textContent = 'Connect & Pair Node';
       document.getElementById('test-connection-status').textContent = 'Ready to test';
-      document.getElementById('test-connection-status').style.color = 'var(--text-muted)';
+      const discResults = document.getElementById('discovery-results');
+      if (discResults) {
+        discResults.innerHTML = '';
+        discResults.style.display = 'none';
+      }
 
       document.getElementById('input-name').value = '';
       document.getElementById('input-ip').value = '';
@@ -908,6 +912,12 @@
       document.getElementById('btn-submit-pair').textContent = 'Save Changes';
       document.getElementById('test-connection-status').textContent = 'Ready to test';
       document.getElementById('test-connection-status').style.color = 'var(--text-muted)';
+
+      const discResults = document.getElementById('discovery-results');
+      if (discResults) {
+        discResults.innerHTML = '';
+        discResults.style.display = 'none';
+      }
 
       document.getElementById('input-name').value = name || '';
       document.getElementById('input-ip').value = ip || '';
@@ -997,6 +1007,12 @@
     }
 
     function closePairModal() {
+      document.getElementById('edit-node-id').value = '';
+      const discResults = document.getElementById('discovery-results');
+      if (discResults) {
+        discResults.innerHTML = '';
+        discResults.style.display = 'none';
+      }
       document.getElementById('pair-modal').style.display = 'none';
     }
 
@@ -1242,6 +1258,7 @@
     }
 
     async function pairDiscoveredNode(ip, name) {
+      document.getElementById('edit-node-id').value = '';
       document.getElementById('input-ip').value = ip;
       document.getElementById('input-name').value = name;
       await submitPairNode();

@@ -562,9 +562,16 @@ func persistPeerUpsert(node MeshNode) error {
 	peerMutationMu.Lock()
 	defer peerMutationMu.Unlock()
 	peers := snapshotPeers()
+	if node.ID != "" && node.IP != "" {
+		for _, p := range peers {
+			if p.ID != node.ID && strings.EqualFold(p.IP, node.IP) {
+				return fmt.Errorf("IP address %s is already used by node %s (%s)", node.IP, p.Name, p.ID)
+			}
+		}
+	}
 	updated := false
 	for i := range peers {
-		if peers[i].ID == node.ID || strings.EqualFold(peers[i].IP, node.IP) {
+		if peers[i].ID == node.ID || (node.ID == "" && strings.EqualFold(peers[i].IP, node.IP)) {
 			if !node.ClearAPIToken && node.APIToken == "" && peers[i].APIToken != "" {
 				node.APIToken = peers[i].APIToken
 			}
