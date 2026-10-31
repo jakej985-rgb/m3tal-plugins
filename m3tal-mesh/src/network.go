@@ -518,14 +518,15 @@ func pairAndPersistPeer(address, name, role, token, password string) (MeshNode, 
 	node.Password = password
 	node.PasswordOnly = passwordOnly
 
+	if err := persistPairedPeer(node); err != nil {
+		return MeshNode{}, fmt.Errorf("could not save paired node: %w", err)
+	}
+
 	if cfg.PairingToken == "" && token != "" {
 		cfg.PairingToken = token
 		if err := saveMeshConfig(cfg); err != nil {
 			return MeshNode{}, fmt.Errorf("could not save pairing token: %w", err)
 		}
-	}
-	if err := persistPeerUpsert(node, true, true, true); err != nil {
-		return MeshNode{}, fmt.Errorf("could not save paired node: %w", err)
 	}
 	return node, nil
 }
@@ -642,12 +643,20 @@ func verifyCandidates(candidates []string, candidateHosts map[string]string, tok
 	return discovered
 }
 
-func persistPeerUpsert(node MeshNode, clearToken, clearPassword bool, isPairing ...bool) error {
+func persistPairedPeer(node MeshNode) error {
+	return persistPeerUpsertInternal(node, true, true, true)
+}
+
+func persistPeerUpsert(node MeshNode, clearToken, clearPassword bool) error {
+	return persistPeerUpsertInternal(node, clearToken, clearPassword, false)
+}
+
+func persistPeerUpsertInternal(node MeshNode, clearToken, clearPassword, isPairing bool) error {
 	peerMutationMu.Lock()
 	defer peerMutationMu.Unlock()
 	peers := snapshotPeers()
 
-	pairingMode := len(isPairing) > 0 && isPairing[0]
+	pairingMode := isPairing
 
 	existingIDIdx := -1
 	for i := range peers {

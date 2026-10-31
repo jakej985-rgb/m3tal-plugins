@@ -1656,7 +1656,7 @@ func TestPairingWithDefaultPasswordLeavesStoredPasswordEmptyToTrackSettingsChang
 func TestPairingDetectsConflictWhenIDBelongsToMovedPeerAtDifferentIP(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	remoteNodes = []MeshNode{}
-	cfg := meshConfig{PairingToken: "mesh-shared-token", ListenPort: 9321}
+	cfg := meshConfig{PairingToken: "", ListenPort: 9321}
 	if err := saveMeshConfig(cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -1703,12 +1703,18 @@ func TestPairingDetectsConflictWhenIDBelongsToMovedPeerAtDifferentIP(t *testing.
 	}
 
 	// Now try pairing machine A which generates the same ID (expectedID) but is at addrA
-	_, err := pairAndPersistPeer(addrA, "Machine A", "server", "", "")
+	_, err := pairAndPersistPeer(addrA, "Machine A", "server", "mesh-shared-token", "")
 	if err == nil {
 		t.Fatalf("expected pairing to detect ID conflict with moved peer, but succeeded")
 	}
 	if !strings.Contains(err.Error(), "conflicts with existing peer") {
 		t.Fatalf("unexpected error message: %v", err)
+	}
+
+	// Verify global pairing token was NOT updated when pairing was rejected
+	currentCfg := loadMeshConfig()
+	if currentCfg.PairingToken != "" {
+		t.Fatalf("expected global pairing token to remain empty on rejected pairing, got %q", currentCfg.PairingToken)
 	}
 
 	// Verify moved peer B at 192.168.1.50:9321 was NOT overwritten or corrupted
