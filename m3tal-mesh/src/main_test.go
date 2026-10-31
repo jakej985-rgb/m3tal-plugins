@@ -477,7 +477,11 @@ func TestActionsTestNodeUpdateNodeAndGetPeers(t *testing.T) {
 		t.Fatalf("pair_node failed: %s", pairResp.Error.Message)
 	}
 	var pairRes struct {
-		Node MeshNode `json:"node"`
+		Node struct {
+			MeshNode
+			HasPassword bool `json:"has_password"`
+			HasAPIToken bool `json:"has_api_token"`
+		} `json:"node"`
 	}
 	enc, _ := json.Marshal(pairResp.Result)
 	_ = json.Unmarshal(enc, &pairRes)
@@ -529,7 +533,7 @@ func TestActionsTestNodeUpdateNodeAndGetPeers(t *testing.T) {
 		t.Fatalf("update_node clear_password failed: %s", clearResp.Error.Message)
 	}
 	persistedAfterClear := loadPeers()
-	if len(persistedAfterClear) != 1 || persistedAfterClear[0].Password != "" || persistedAfterClear[0].HasPassword {
+	if len(persistedAfterClear) != 1 || persistedAfterClear[0].Password != "" {
 		t.Fatalf("expected password to be cleared, got: %+v", persistedAfterClear[0])
 	}
 	// APIToken was omitted, so it should still be preserved
@@ -551,7 +555,7 @@ func TestActionsTestNodeUpdateNodeAndGetPeers(t *testing.T) {
 	}
 
 	// 9. update_node with an IP already belonging to another peer is rejected
-	_ = persistPeerUpsert(MeshNode{ID: "second-peer-id", Name: "Second Node", IP: "127.0.0.3:9999"})
+	_ = persistPeerUpsert(MeshNode{ID: "second-peer-id", Name: "Second Node", IP: "127.0.0.3:9999"}, false, false)
 	dupIPResp := runActionForTest(t, 9, fmt.Sprintf(`{"action":"update_node","args":{"node_id":"second-peer-id","ip":%q}}`, "127.0.0.2:9999"))
 	if dupIPResp.Error == nil {
 		t.Fatal("expected update_node with duplicate IP to fail")

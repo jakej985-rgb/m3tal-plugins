@@ -207,7 +207,7 @@ func TestPeerMemoryChangesOnlyAfterPersistence(t *testing.T) {
 	if err := os.Mkdir(path, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := persistPeerUpsert(MeshNode{ID: "new", IP: "192.0.2.2:9321"}); err == nil {
+	if err := persistPeerUpsert(MeshNode{ID: "new", IP: "192.0.2.2:9321"}, false, false); err == nil {
 		t.Fatal("expected peer persistence to fail")
 	}
 	if got := snapshotPeers(); len(got) != 1 || got[0].ID != "existing" {
@@ -261,7 +261,7 @@ func TestRefreshPreservesMetadataFromConcurrentRepair(t *testing.T) {
 	}
 	repaired := snapshotPeers()[0]
 	repaired.Name, repaired.Role = "Updated name", "workstation"
-	if err := persistPeerUpsert(repaired); err != nil {
+	if err := persistPeerUpsert(repaired, false, false); err != nil {
 		t.Fatal(err)
 	}
 	close(release)
@@ -438,7 +438,7 @@ func TestFetchRemoteRESTTokenAndOptionalPassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetchRemoteWithAuth failed: %v", err)
 	}
-	if node.Name != "auth-server" || node.Cores != 16 || !node.HasPassword || !node.HasAPIToken {
+	if node.Name != "auth-server" || node.Cores != 16 || node.Password == "" || node.APIToken == "" {
 		t.Fatalf("unexpected node payload: %+v", node)
 	}
 	// Verify JSON marshaling does NOT expose token or password
@@ -494,7 +494,7 @@ func TestFetchRemoteRESTTokenAndOptionalPassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetchRemoteWithAuth on password-only server failed: %v", err)
 	}
-	if passNode.Name != "pass-only-server" || !passNode.HasPassword || passNode.HasAPIToken {
+	if passNode.Name != "pass-only-server" || passNode.Password == "" || passNode.APIToken != "" {
 		t.Fatalf("unexpected password-only node: %+v", passNode)
 	}
 
@@ -503,7 +503,7 @@ func TestFetchRemoteRESTTokenAndOptionalPassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pairAndPersistPeer failed: %v", err)
 	}
-	if paired.Name != "Auth Box" || paired.Role != "nas" || !paired.HasPassword {
+	if paired.Name != "Auth Box" || paired.Role != "nas" || paired.Password == "" {
 		t.Fatalf("unexpected paired node: %+v", paired)
 	}
 
@@ -555,7 +555,7 @@ func TestPairingWithBlankCredentialsInheritsDefaultsAndFollowsRotatedToken(t *te
 	if err != nil {
 		t.Fatalf("pairAndPersistPeer failed: %v", err)
 	}
-	if paired.APIToken != "" || paired.Password != "" || paired.HasAPIToken || paired.HasPassword {
+	if paired.APIToken != "" || paired.Password != "" {
 		t.Fatalf("expected empty credential overrides on peer, got: %+v", paired)
 	}
 
@@ -573,7 +573,7 @@ func TestPairingWithBlankCredentialsInheritsDefaultsAndFollowsRotatedToken(t *te
 	}
 }
 
-func TestDiscoveryVerifyCandidatesUsesDefaultPassword(t *testing.T) {
+func TestDiscoveryVerifyCandidatesUsesPairingTokenAndNeverSendsPassword(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	remoteNodes = []MeshNode{}
 
@@ -583,15 +583,24 @@ func TestDiscoveryVerifyCandidatesUsesDefaultPassword(t *testing.T) {
 			return
 		}
 		if r.URL.Path == "/api/v1/telemetry" {
-			if r.Header.Get("X-M3TAL-Password") != "discovery-secret-pwd" {
+			if r.Header.Get("X-M3TAL-Password") != "" {
+				http.Error(w, "password must not be sent during discovery", http.StatusBadRequest)
+				return
+			}
+			nonce := r.Header.Get("X-M3TAL-Nonce")
+			clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
+			fp := testServerFingerprint(server)
+			if r.Header.Get("X-M3TAL-Proof") != requestProof("discovery-secret-tok", nonce, clientNonce, fp) {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(remoteResponse{
+			body, _ := json.Marshal(remoteResponse{
 				Name: "discovered-box", Hostname: "discovered-box",
 				Telemetry: remoteTelemetry{Hostname: "discovered-box", Cores: 8, RAMTotalGB: 32, StorageTotalGB: 1000},
 			})
+			w.Header().Set("X-M3TAL-Proof", responseProof("discovery-secret-tok", nonce, clientNonce, body, fp))
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(body)
 			return
 		}
 		http.NotFound(w, r)
@@ -599,9 +608,9 @@ func TestDiscoveryVerifyCandidatesUsesDefaultPassword(t *testing.T) {
 	defer server.Close()
 
 	addr := server.Listener.Addr().String()
-	discovered := verifyCandidates([]string{addr}, "", "discovery-secret-pwd", 9321)
+	discovered := verifyCandidates([]string{addr}, "discovery-secret-tok", "", 9321)
 	if len(discovered) != 1 || discovered[0].Name != "discovered-box" {
-		t.Fatalf("expected candidate to be verified using default password, got: %+v", discovered)
+		t.Fatalf("expected candidate to be verified using pairing token HMAC proof, got: %+v", discovered)
 	}
 }
 
@@ -611,13 +620,13 @@ func TestRePairingExistingIPUpdatesAndReplacesPeer(t *testing.T) {
 
 	// 1. Initial peer
 	p1 := MeshNode{ID: "node-old-id", Name: "Old Hostname", IP: "192.168.1.100:9321", APIToken: "tok-1"}
-	if err := persistPeerUpsert(p1); err != nil {
+	if err := persistPeerUpsert(p1, false, false); err != nil {
 		t.Fatalf("persistPeerUpsert failed: %v", err)
 	}
 
 	// 2. Re-pairing same IP with new ID (hostname change) replaces the entry
 	p1Renamed := MeshNode{ID: "node-new-id", Name: "Renamed Hostname", IP: "192.168.1.100:9321", APIToken: "tok-2"}
-	if err := persistPeerUpsert(p1Renamed); err != nil {
+	if err := persistPeerUpsert(p1Renamed, false, false); err != nil {
 		t.Fatalf("re-pairing with new ID failed: %v", err)
 	}
 	peers := snapshotPeers()
@@ -627,13 +636,13 @@ func TestRePairingExistingIPUpdatesAndReplacesPeer(t *testing.T) {
 
 	// 3. Second peer
 	p2 := MeshNode{ID: "node-2", Name: "Second Host", IP: "192.168.1.200:9321"}
-	if err := persistPeerUpsert(p2); err != nil {
+	if err := persistPeerUpsert(p2, false, false); err != nil {
 		t.Fatalf("persistPeerUpsert for second peer failed: %v", err)
 	}
 
 	// 4. Updating second peer to use first peer's IP must fail with duplicate IP error
 	p2Conflicting := MeshNode{ID: "node-2", Name: "Second Host", IP: "192.168.1.100:9321"}
-	if err := persistPeerUpsert(p2Conflicting); err == nil {
+	if err := persistPeerUpsert(p2Conflicting, false, false); err == nil {
 		t.Fatal("expected duplicate IP error when existing peer changes IP to another peer's IP")
 	}
 
@@ -697,13 +706,12 @@ func TestRePairingExistingIPClearsCredentialOverridesWhenEmpty(t *testing.T) {
 
 	// 1. Initial peer has explicit override token
 	p1 := MeshNode{
-		ID:          "node-repaired-id",
-		Name:        "Initial Name",
-		IP:          addr,
-		APIToken:    "old-override-token",
-		HasAPIToken: true,
+		ID:       "node-repaired-id",
+		Name:     "Initial Name",
+		IP:       addr,
+		APIToken: "old-override-token",
 	}
-	if err := persistPeerUpsert(p1); err != nil {
+	if err := persistPeerUpsert(p1, false, false); err != nil {
 		t.Fatalf("persistPeerUpsert failed: %v", err)
 	}
 
@@ -718,7 +726,7 @@ func TestRePairingExistingIPClearsCredentialOverridesWhenEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pairAndPersistPeer failed: %v", err)
 	}
-	if paired.APIToken != "" || paired.HasAPIToken {
+	if paired.APIToken != "" {
 		t.Fatalf("expected paired node to have cleared override token, got: %+v", paired)
 	}
 
@@ -726,8 +734,163 @@ func TestRePairingExistingIPClearsCredentialOverridesWhenEmpty(t *testing.T) {
 	if len(peers) != 1 {
 		t.Fatalf("expected 1 peer, got: %+v", peers)
 	}
-	if peers[0].APIToken != "" || peers[0].HasAPIToken {
+	if peers[0].APIToken != "" {
 		t.Fatalf("expected persisted peer to have cleared override token, got: %+v", peers[0])
+	}
+}
+
+func TestPairingWithDifferentTokenSucceedsWhenDefaultTokenConfigured(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	remoteNodes = []MeshNode{}
+
+	// Configure default pairing token
+	cfg := meshConfig{PairingToken: "default-shared-token", ListenPort: 9321}
+	if err := saveMeshConfig(cfg); err != nil {
+		t.Fatalf("saveMeshConfig failed: %v", err)
+	}
+
+	// Server expects a different, per-node token
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
+		if r.URL.Path == "/api/v1/telemetry" {
+			nonce := r.Header.Get("X-M3TAL-Nonce")
+			clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
+			fp := testServerFingerprint(server)
+			if r.Header.Get("X-M3TAL-Proof") != requestProof("per-node-custom-token", nonce, clientNonce, fp) {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			body, _ := json.Marshal(remoteResponse{
+				Name: "per-node-box", Hostname: "per-node-box",
+				Telemetry: remoteTelemetry{Hostname: "per-node-box", Cores: 8, RAMTotalGB: 32, StorageTotalGB: 1000},
+			})
+			w.Header().Set("X-M3TAL-Proof", responseProof("per-node-custom-token", nonce, clientNonce, body, fp))
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(body)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	addr := server.Listener.Addr().String()
+	paired, err := pairAndPersistPeer(addr, "Custom Token Node", "server", "per-node-custom-token", "")
+	if err != nil {
+		t.Fatalf("pairAndPersistPeer failed with per-node token when default token configured: %v", err)
+	}
+	if paired.APIToken != "per-node-custom-token" {
+		t.Fatalf("expected paired node to have per-node token, got: %s", paired.APIToken)
+	}
+	// Verify global default token was NOT overwritten
+	cfgAfter := loadMeshConfig()
+	if cfgAfter.PairingToken != "default-shared-token" {
+		t.Fatalf("expected default pairing token to remain unchanged, got: %s", cfgAfter.PairingToken)
+	}
+}
+
+func TestPasswordOnlyPeerSuppressesTokenInheritance(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	remoteNodes = []MeshNode{}
+
+	// Server A is password-only (never accepts token proof or returns proof)
+	var serverA *httptest.Server
+	serverA = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
+		if r.URL.Path == "/api/v1/telemetry" {
+			if r.Header.Get("X-M3TAL-Proof") != "" {
+				http.Error(w, "password-only server received unexpected token proof", http.StatusBadRequest)
+				return
+			}
+			if r.Header.Get("X-M3TAL-Password") != "pass-only-secret" {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			body, _ := json.Marshal(remoteResponse{
+				Name: "pass-only-box", Hostname: "pass-only-box",
+				Telemetry: remoteTelemetry{Hostname: "pass-only-box", Cores: 4, RAMTotalGB: 16, StorageTotalGB: 500},
+			})
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(body)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer serverA.Close()
+
+	// Server B uses token auth
+	var serverB *httptest.Server
+	serverB = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
+		if r.URL.Path == "/api/v1/telemetry" {
+			nonce := r.Header.Get("X-M3TAL-Nonce")
+			clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
+			fp := testServerFingerprint(serverB)
+			if r.Header.Get("X-M3TAL-Proof") != requestProof("token-b-secret", nonce, clientNonce, fp) {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			body, _ := json.Marshal(remoteResponse{
+				Name: "token-box", Hostname: "token-box",
+				Telemetry: remoteTelemetry{Hostname: "token-box", Cores: 8, RAMTotalGB: 32, StorageTotalGB: 1000},
+			})
+			w.Header().Set("X-M3TAL-Proof", responseProof("token-b-secret", nonce, clientNonce, body, fp))
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(body)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer serverB.Close()
+
+	// 1. Pair Server A with password only
+	pairedA, err := pairAndPersistPeer(serverA.Listener.Addr().String(), "Pass Only Peer", "server", "", "pass-only-secret")
+	if err != nil {
+		t.Fatalf("pair Server A failed: %v", err)
+	}
+	if !pairedA.PasswordOnly {
+		t.Fatal("expected Server A to have PasswordOnly=true")
+	}
+
+	// 2. Pair Server B with token, which sets cfg.PairingToken as default
+	pairedB, err := pairAndPersistPeer(serverB.Listener.Addr().String(), "Token Peer", "server", "token-b-secret", "")
+	if err != nil {
+		t.Fatalf("pair Server B failed: %v", err)
+	}
+	if pairedB.PasswordOnly {
+		t.Fatal("expected Server B to have PasswordOnly=false")
+	}
+
+	cfg := loadMeshConfig()
+	if cfg.PairingToken != "token-b-secret" {
+		t.Fatalf("expected global PairingToken to be set to token-b-secret, got: %s", cfg.PairingToken)
+	}
+
+	// 3. Refresh remote peers: Server A must NOT inherit cfg.PairingToken and must stay online
+	refreshRemotePeers()
+	peers := snapshotPeers()
+	if len(peers) != 2 {
+		t.Fatalf("expected 2 peers after refresh, got: %+v", peers)
+	}
+	var nodeA, nodeB MeshNode
+	for _, p := range peers {
+		if p.ID == pairedA.ID {
+			nodeA = p
+		} else if p.ID == pairedB.ID {
+			nodeB = p
+		}
+	}
+	if nodeA.Status != "online" {
+		t.Fatalf("expected password-only peer A to remain online after refresh, got status=%s last_seen=%s", nodeA.Status, nodeA.LastSeen)
+	}
+	if nodeB.Status != "online" {
+		t.Fatalf("expected token peer B to remain online after refresh, got status=%s last_seen=%s", nodeB.Status, nodeB.LastSeen)
 	}
 }
 

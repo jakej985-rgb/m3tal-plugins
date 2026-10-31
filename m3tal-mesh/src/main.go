@@ -56,10 +56,7 @@ type MeshNode struct {
 	Fingerprint    string  `json:"fingerprint,omitempty"`
 	APIToken       string  `json:"-"`
 	Password       string  `json:"-"`
-	ClearAPIToken  bool    `json:"-"`
-	ClearPassword  bool    `json:"-"`
-	HasPassword    bool    `json:"has_password"`
-	HasAPIToken    bool    `json:"has_api_token"`
+	PasswordOnly   bool    `json:"password_only,omitempty"`
 	Cores          int     `json:"cores"`
 	CPULoad        float64 `json:"cpu_load"`
 	RAMUsedGB      float64 `json:"ram_used_gb"`
@@ -74,6 +71,20 @@ type MeshNode struct {
 	PingMs         int     `json:"ping_ms"`
 	LastSeen       string  `json:"last_seen"`
 	IsLocal        bool    `json:"is_local"`
+}
+
+// MarshalJSON derives has_password and has_api_token dynamically at marshal time.
+func (n MeshNode) MarshalJSON() ([]byte, error) {
+	type Alias MeshNode
+	return json.Marshal(&struct {
+		Alias
+		HasPassword bool `json:"has_password"`
+		HasAPIToken bool `json:"has_api_token"`
+	}{
+		Alias:       Alias(n),
+		HasPassword: n.Password != "",
+		HasAPIToken: n.APIToken != "",
+	})
 }
 
 var (
@@ -530,7 +541,8 @@ func handleAction(req *RPCRequest) {
 		if tok == "" && samePeerIP {
 			tok = savedPeer.APIToken
 		}
-		if tok == "" {
+		suppressToken := (effectiveToken == "" && password != "") || (samePeerIP && (savedPeer.PasswordOnly || (savedPeer.Password != "" && savedPeer.APIToken == "")))
+		if tok == "" && !suppressToken {
 			tok = cfg.PairingToken
 		}
 		pass := password
@@ -589,25 +601,23 @@ func handleAction(req *RPCRequest) {
 			}
 			foundNode.IP = ip
 		}
+		clearTok, _ := raw.Args["clear_api_token"].(bool)
+		clearPass, _ := raw.Args["clear_password"].(bool)
 		if effectiveToken != "" {
 			foundNode.APIToken = effectiveToken
-			foundNode.HasAPIToken = true
-			foundNode.ClearAPIToken = false
-		} else if clearTok, ok := raw.Args["clear_api_token"].(bool); ok && clearTok {
+			foundNode.PasswordOnly = false
+		} else if clearTok {
 			foundNode.APIToken = ""
-			foundNode.HasAPIToken = false
-			foundNode.ClearAPIToken = true
 		}
 		if password != "" {
 			foundNode.Password = password
-			foundNode.HasPassword = true
-			foundNode.ClearPassword = false
-		} else if clearPass, ok := raw.Args["clear_password"].(bool); ok && clearPass {
+		} else if clearPass {
 			foundNode.Password = ""
-			foundNode.HasPassword = false
-			foundNode.ClearPassword = true
 		}
-		if err := persistPeerUpsert(*foundNode); err != nil {
+		if foundNode.Password != "" && foundNode.APIToken == "" {
+			foundNode.PasswordOnly = true
+		}
+		if err := persistPeerUpsert(*foundNode, clearTok, clearPass); err != nil {
 			sendError(req.ID, -32003, "Could not save updated node", err.Error())
 			return
 		}
@@ -667,7 +677,7 @@ func handleAction(req *RPCRequest) {
 		}
 		cfg := loadMeshConfig()
 		tok := target.APIToken
-		if tok == "" {
+		if tok == "" && !target.PasswordOnly && !(target.Password != "" && target.APIToken == "") {
 			tok = cfg.PairingToken
 		}
 		pass := target.Password
@@ -682,9 +692,8 @@ func handleAction(req *RPCRequest) {
 		updated.ID, updated.Name, updated.Role = target.ID, target.Name, target.Role
 		updated.APIToken = target.APIToken
 		updated.Password = target.Password
-		updated.HasPassword = target.Password != ""
-		updated.HasAPIToken = target.APIToken != ""
-		if err := persistPeerUpsert(updated); err != nil {
+		updated.PasswordOnly = target.PasswordOnly
+		if err := persistPeerUpsert(updated, false, false); err != nil {
 			sendError(req.ID, -32005, "Could not save node status", err.Error())
 			return
 		}
@@ -778,8 +787,8 @@ func handleAction(req *RPCRequest) {
 				"status":           p.Status,
 				"ping_ms":          p.PingMs,
 				"last_seen":        p.LastSeen,
-				"has_password":     p.Password != "" || p.HasPassword,
-				"has_api_token":    p.APIToken != "" || p.HasAPIToken,
+				"has_password":     p.Password != "",
+				"has_api_token":    p.APIToken != "",
 				"cores":            p.Cores,
 				"ram_total_gb":     p.RAMTotalGB,
 				"storage_total_gb": p.StorageTotalGB,

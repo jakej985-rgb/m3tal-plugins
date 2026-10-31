@@ -299,6 +299,15 @@
         </div>
       </div>
 
+      <div class="form-group" style="margin-top:16px">
+        <label class="form-label" for="mesh-default-password">Default Node Password</label>
+        <input id="mesh-default-password" class="form-input" type="password" autocomplete="new-password" placeholder="Enter default password for nodes">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
+          <span style="font-size:0.75rem;color:var(--text-muted)">Default fallback password for nodes authenticating via password</span>
+          <button type="button" id="mesh-clear-password-btn" style="background:transparent;border:none;color:var(--rose);cursor:pointer;font-size:0.75rem;padding:0;display:none" onclick="clearMeshPassword()">Clear saved password</button>
+        </div>
+      </div>
+
       <div class="form-group" style="display:flex;flex-direction:column;gap:8px;background:rgba(255,255,255,0.02);padding:14px;border-radius:8px;border:1px solid var(--border)">
         <div style="display:flex;align-items:center;justify-content:space-between">
           <div>
@@ -465,6 +474,18 @@
       status.style.color = 'var(--text-muted)';
     }
 
+    let clearMeshPasswordRequested = false;
+    function clearMeshPassword() {
+      clearMeshPasswordRequested = true;
+      const input = document.getElementById('mesh-default-password');
+      input.value = '';
+      input.placeholder = 'Password will be cleared upon saving';
+      document.getElementById('mesh-clear-password-btn').style.display = 'none';
+      const status = document.getElementById('mesh-settings-status');
+      status.textContent = 'Password marked for removal. Click Save Mesh Settings to apply.';
+      status.style.color = 'var(--text-muted)';
+    }
+
     async function loadMeshSettings() {
       const status = document.getElementById('mesh-settings-status');
       try {
@@ -485,10 +506,16 @@
           listen_port: Number(actionData.listen_port || meshConfig.listen_port || 9321)
         };
         clearMeshTokenRequested = false;
+        clearMeshPasswordRequested = false;
 
         document.getElementById('mesh-pairing-token').value = '';
         document.getElementById('mesh-pairing-token').placeholder = meshConfig.has_pairing_token ? 'Configured — leave blank to keep current' : 'Create a shared pairing token';
         document.getElementById('mesh-clear-token-btn').style.display = meshConfig.has_pairing_token ? 'inline' : 'none';
+
+        document.getElementById('mesh-default-password').value = '';
+        document.getElementById('mesh-default-password').placeholder = meshConfig.has_password ? 'Configured — leave blank to keep current' : 'Enter default password for nodes';
+        document.getElementById('mesh-clear-password-btn').style.display = meshConfig.has_password ? 'inline' : 'none';
+
         document.getElementById('mesh-require-token').checked = meshConfig.require_pairing_token;
         document.getElementById('mesh-discovery-enabled').checked = meshConfig.discovery_enabled;
         document.getElementById('mesh-safety-warning').style.display = meshConfig.require_pairing_token ? 'none' : 'block';
@@ -496,6 +523,12 @@
         document.getElementById('mesh-pairing-token').oninput = function() {
           if (this.value.trim() !== '') {
             clearMeshTokenRequested = false;
+            if (status.textContent.includes('marked for removal')) status.textContent = '';
+          }
+        };
+        document.getElementById('mesh-default-password').oninput = function() {
+          if (this.value.trim() !== '') {
+            clearMeshPasswordRequested = false;
             if (status.textContent.includes('marked for removal')) status.textContent = '';
           }
         };
@@ -508,6 +541,7 @@
       const isReq = document.getElementById('mesh-require-token').checked;
       const isDisc = document.getElementById('mesh-discovery-enabled').checked;
       const rawToken = document.getElementById('mesh-pairing-token').value.trim();
+      const rawPass = document.getElementById('mesh-default-password').value.trim();
       const cfg = {
         require_pairing_token: isReq,
         discovery_enabled: isDisc,
@@ -518,6 +552,12 @@
         clearMeshTokenRequested = false;
       } else if (clearMeshTokenRequested) {
         cfg.clear_pairing_token = true;
+      }
+      if (rawPass) {
+        cfg.default_password = rawPass;
+        clearMeshPasswordRequested = false;
+      } else if (clearMeshPasswordRequested) {
+        cfg.clear_password = true;
       }
 
       try {
@@ -547,11 +587,13 @@
 
         meshConfig = {
           has_pairing_token: actionData.has_pairing_token !== undefined ? !!actionData.has_pairing_token : (clearMeshTokenRequested ? false : (!!cfg.pairing_token || meshConfig.has_pairing_token)),
+          has_password: actionData.has_password !== undefined ? !!actionData.has_password : (clearMeshPasswordRequested ? false : (!!cfg.default_password || meshConfig.has_password)),
           require_pairing_token: cfg.require_pairing_token,
           discovery_enabled: cfg.discovery_enabled,
           listen_port: cfg.listen_port
         };
         clearMeshTokenRequested = false;
+        clearMeshPasswordRequested = false;
 
         document.getElementById('mesh-pairing-token').value = '';
         document.getElementById('mesh-pairing-token').placeholder =
@@ -559,11 +601,19 @@
             ? 'Configured — leave blank to keep current'
             : 'Create a shared pairing token';
         document.getElementById('mesh-clear-token-btn').style.display = meshConfig.has_pairing_token ? 'inline' : 'none';
+
+        document.getElementById('mesh-default-password').value = '';
+        document.getElementById('mesh-default-password').placeholder =
+          meshConfig.has_password
+            ? 'Configured — leave blank to keep current'
+            : 'Enter default password for nodes';
+        document.getElementById('mesh-clear-password-btn').style.display = meshConfig.has_password ? 'inline' : 'none';
+
         document.getElementById('mesh-require-token').checked = meshConfig.require_pairing_token;
         document.getElementById('mesh-discovery-enabled').checked = meshConfig.discovery_enabled;
         document.getElementById('mesh-safety-warning').style.display = meshConfig.require_pairing_token ? 'none' : 'block';
 
-        status.textContent = 'Saved. Use the same token in Mesh Node Settings on each sender.';
+        status.textContent = 'Saved. Use the same credentials in Mesh Node Settings on each sender.';
         status.style.color = 'var(--emerald)';
 
       } catch (err) {

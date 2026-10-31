@@ -161,6 +161,19 @@ type peerDiskRecord struct {
 	Password string `json:"password,omitempty"`
 }
 
+func (r peerDiskRecord) MarshalJSON() ([]byte, error) {
+	type NodeAlias MeshNode
+	return json.Marshal(&struct {
+		NodeAlias
+		APIToken string `json:"api_token,omitempty"`
+		Password string `json:"password,omitempty"`
+	}{
+		NodeAlias: NodeAlias(r.MeshNode),
+		APIToken:  r.APIToken,
+		Password:  r.Password,
+	})
+}
+
 func loadPeers() []MeshNode {
 	path := peersPath()
 	if path == "" {
@@ -179,8 +192,6 @@ func loadPeers() []MeshNode {
 		peers[i] = r.MeshNode
 		peers[i].APIToken = r.APIToken
 		peers[i].Password = r.Password
-		peers[i].HasPassword = peers[i].Password != ""
-		peers[i].HasAPIToken = peers[i].APIToken != ""
 	}
 	return peers
 }
@@ -409,8 +420,6 @@ func fetchRemoteWithAuth(address, token, password string, port int, expectedFing
 		Fingerprint: peerFingerprint,
 		APIToken:    token,
 		Password:    password,
-		HasPassword: password != "",
-		HasAPIToken: token != "",
 		Cores: t.Cores, CPULoad: cpuload, RAMUsedGB: t.RAMUsedGB, RAMTotalGB: t.RAMTotalGB,
 		StorageUsedGB: t.StorageUsedGB, StorageTotalGB: t.StorageTotalGB, StoragePool: "Root Filesystem",
 		PingMs: latency, LastSeen: "just now", IsLocal: false,
@@ -433,9 +442,6 @@ func pairAndPersistPeer(address, name, role, token, password string) (MeshNode, 
 	if cfg.IsPairingTokenRequired() && connectToken == "" && connectPass == "" {
 		return MeshNode{}, fmt.Errorf("pairing token is required to authenticate remote mesh nodes; configure a shared secret in Mesh Settings or enter a pairing token")
 	}
-	if cfg.PairingToken != "" && connectToken != "" && connectToken != cfg.PairingToken && connectPass == "" {
-		return MeshNode{}, fmt.Errorf("this mesh uses one shared pairing token; configure the same token in Mesh Settings before pairing")
-	}
 	node, err := fetchRemoteWithAuth(address, connectToken, connectPass, cfg.ListenPort)
 	if err != nil {
 		return MeshNode{}, err
@@ -448,10 +454,9 @@ func pairAndPersistPeer(address, name, role, token, password string) (MeshNode, 
 	}
 	node.APIToken = explicitToken
 	node.Password = explicitPass
-	node.HasPassword = explicitPass != ""
-	node.HasAPIToken = explicitToken != ""
-	node.ClearAPIToken = true
-	node.ClearPassword = true
+	if explicitPass != "" && explicitToken == "" {
+		node.PasswordOnly = true
+	}
 
 	if cfg.PairingToken == "" && explicitToken != "" {
 		cfg.PairingToken = explicitToken
@@ -459,7 +464,7 @@ func pairAndPersistPeer(address, name, role, token, password string) (MeshNode, 
 			return MeshNode{}, fmt.Errorf("could not save pairing token: %w", err)
 		}
 	}
-	if err := persistPeerUpsert(node); err != nil {
+	if err := persistPeerUpsert(node, true, true); err != nil {
 		return MeshNode{}, fmt.Errorf("could not save paired node: %w", err)
 	}
 	return node, nil
@@ -470,7 +475,7 @@ func discoverAndVerifyPeers() ([]MeshNode, error) {
 	if !cfg.IsDiscoveryEnabled() {
 		return []MeshNode{}, nil
 	}
-	if cfg.IsPairingTokenRequired() && cfg.PairingToken == "" && cfg.DefaultPassword == "" {
+	if cfg.IsPairingTokenRequired() && cfg.PairingToken == "" {
 		return []MeshNode{}, nil
 	}
 	resolver, err := zeroconf.NewResolver(zeroconf.SelectIPTraffic(zeroconf.IPv4))
@@ -525,7 +530,7 @@ func discoverAndVerifyPeers() ([]MeshNode, error) {
 				candidates = append(candidates, address)
 			}
 		case <-ctx.Done():
-			return verifyCandidates(candidates, cfg.PairingToken, cfg.DefaultPassword, cfg.ListenPort), nil
+			return verifyCandidates(candidates, cfg.PairingToken, "", cfg.ListenPort), nil
 		}
 	}
 }
@@ -551,7 +556,7 @@ func verifyCandidates(candidates []string, token, password string, port int) []M
 	return discovered
 }
 
-func persistPeerUpsert(node MeshNode) error {
+func persistPeerUpsert(node MeshNode, clearToken, clearPassword bool) error {
 	peerMutationMu.Lock()
 	defer peerMutationMu.Unlock()
 	peers := snapshotPeers()
@@ -584,19 +589,18 @@ func persistPeerUpsert(node MeshNode) error {
 	if targetIdx >= 0 {
 		old := peers[targetIdx]
 		if existingIDIdx >= 0 {
-			if !node.ClearAPIToken && node.APIToken == "" && old.APIToken != "" {
+			if !clearToken && node.APIToken == "" && old.APIToken != "" {
 				node.APIToken = old.APIToken
 			}
-			if !node.ClearPassword && node.Password == "" && old.Password != "" {
+			if !clearPassword && node.Password == "" && old.Password != "" {
 				node.Password = old.Password
 			}
+			if !clearToken && !clearPassword && !node.PasswordOnly && old.PasswordOnly {
+				node.PasswordOnly = old.PasswordOnly
+			}
 		}
-		node.HasPassword = node.Password != ""
-		node.HasAPIToken = node.APIToken != ""
 		peers[targetIdx] = node
 	} else {
-		node.HasPassword = node.Password != ""
-		node.HasAPIToken = node.APIToken != ""
 		peers = append(peers, node)
 	}
 	if err := savePeers(peers); err != nil {
@@ -651,7 +655,7 @@ func refreshRemotePeers() {
 		go func() {
 			defer wg.Done()
 			tok := existing.APIToken
-			if tok == "" {
+			if tok == "" && !existing.PasswordOnly && !(existing.Password != "" && existing.APIToken == "") {
 				tok = defaultToken
 			}
 			pass := existing.Password
@@ -687,8 +691,7 @@ func refreshRemotePeers() {
 						updated.IP = current.IP
 						updated.APIToken = current.APIToken
 						updated.Password = current.Password
-						updated.HasPassword = current.HasPassword
-						updated.HasAPIToken = current.HasAPIToken
+						updated.PasswordOnly = current.PasswordOnly
 						remoteNodes[i] = updated
 					} else {
 						remoteNodes[i].Status = "offline"
