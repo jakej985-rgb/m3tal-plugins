@@ -1723,3 +1723,57 @@ func TestPairingDetectsConflictWhenIDBelongsToMovedPeerAtDifferentIP(t *testing.
 		t.Fatalf("moved peer was corrupted or overwritten: %+v", peers)
 	}
 }
+
+func TestPairAndPersistPeerRollsBackPeerOnConfigSaveFailure(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("HOME", tempDir)
+	remoteNodes = []MeshNode{}
+
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeTestChallenge(w, r) {
+			return
+		}
+		if r.URL.Path == "/api/v1/telemetry" {
+			nonce := r.Header.Get("X-M3TAL-Nonce")
+			clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
+			fp := testServerFingerprint(server)
+			body, _ := json.Marshal(remoteResponse{
+				Name: "test-rollback-host", Hostname: "test-rollback-host",
+				Telemetry: remoteTelemetry{Hostname: "test-rollback-host", Cores: 4, RAMTotalGB: 16, StorageTotalGB: 500},
+			})
+			w.Header().Set("X-M3TAL-Proof", responseProof("new-pair-token", nonce, clientNonce, body, fp))
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(body)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	// Initial configuration has empty pairing token
+	cfgDir := filepath.Join(tempDir, ".config", "m3tal", "plugins", "mesh")
+	if err := os.MkdirAll(cfgDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Make config.json.tmp a directory to ensure saveMeshConfig fails when trying to write tmp file
+	if err := os.Mkdir(filepath.Join(cfgDir, "config.json.tmp"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	addr := server.Listener.Addr().String()
+	_, err := pairAndPersistPeer(addr, "Rollback Peer", "server", "new-pair-token", "")
+	if err == nil {
+		t.Fatal("expected pairAndPersistPeer to fail on config save failure")
+	}
+
+	// Verify rollback occurred: peer must not exist in memory or on disk
+	persisted := loadPeers()
+	if len(persisted) != 0 {
+		t.Fatalf("expected 0 persisted peers after rollback, got %d", len(persisted))
+	}
+	inMemory := snapshotPeers()
+	if len(inMemory) != 0 {
+		t.Fatalf("expected 0 in-memory peers after rollback, got %d", len(inMemory))
+	}
+}

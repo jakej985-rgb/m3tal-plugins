@@ -518,6 +518,7 @@ func pairAndPersistPeer(address, name, role, token, password string) (MeshNode, 
 	node.Password = password
 	node.PasswordOnly = passwordOnly
 
+	prevPeers := snapshotPeers()
 	if err := persistPairedPeer(node); err != nil {
 		return MeshNode{}, fmt.Errorf("could not save paired node: %w", err)
 	}
@@ -525,6 +526,7 @@ func pairAndPersistPeer(address, name, role, token, password string) (MeshNode, 
 	if cfg.PairingToken == "" && token != "" {
 		cfg.PairingToken = token
 		if err := saveMeshConfig(cfg); err != nil {
+			rollbackPeers(prevPeers)
 			return MeshNode{}, fmt.Errorf("could not save pairing token: %w", err)
 		}
 	}
@@ -641,6 +643,15 @@ func verifyCandidates(candidates []string, candidateHosts map[string]string, tok
 	}
 	wg.Wait()
 	return discovered
+}
+
+func rollbackPeers(prev []MeshNode) {
+	peerMutationMu.Lock()
+	defer peerMutationMu.Unlock()
+	_ = savePeers(prev)
+	nodeMutex.Lock()
+	remoteNodes = prev
+	nodeMutex.Unlock()
 }
 
 func persistPairedPeer(node MeshNode) error {
