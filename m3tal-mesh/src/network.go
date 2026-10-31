@@ -267,12 +267,6 @@ func fetchRemote(address, token string, port int, expectedFingerprint ...string)
 			sum := sha256.Sum256(challengeResp.TLS.PeerCertificates[0].Raw)
 			peerFingerprint = hex.EncodeToString(sum[:])
 		}
-		if len(expectedFingerprint) > 0 && expectedFingerprint[0] != "" {
-			if peerFingerprint != "" && peerFingerprint != expectedFingerprint[0] {
-				challengeResp.Body.Close()
-				return MeshNode{}, fmt.Errorf("%s certificate fingerprint mismatch: expected %s, got %s", address, expectedFingerprint[0], peerFingerprint)
-			}
-		}
 		if challengeResp.StatusCode != http.StatusOK {
 			challengeResp.Body.Close()
 			if challengeResp.StatusCode == http.StatusServiceUnavailable {
@@ -583,11 +577,7 @@ func refreshRemotePeers() {
 						remoteNodes[i] = updated
 					} else {
 						remoteNodes[i].Status = "offline"
-						if cfg.IsPairingTokenRequired() && cfg.PairingToken == "" {
-							remoteNodes[i].LastSeen = "authentication required"
-						} else {
-							remoteNodes[i].LastSeen = "unreachable"
-						}
+						remoteNodes[i].LastSeen = "unreachable"
 					}
 					break
 				}
