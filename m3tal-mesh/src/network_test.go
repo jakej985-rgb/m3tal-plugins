@@ -1284,10 +1284,11 @@ func TestDefaultPasswordNotSentToUnauthenticatedRogueHost(t *testing.T) {
 	}
 }
 
-func TestDefaultPasswordSentDirectlyToPinnedHost(t *testing.T) {
+func TestDefaultPasswordNegotiatedWithPinnedHostOnChallenge(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	cfg := meshConfig{PairingToken: "mesh-shared-token", DefaultPassword: "mesh-default-secret", ListenPort: 9321}
 
+	var reqCount int
 	var receivedPassword string
 	var server *httptest.Server
 	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1295,10 +1296,25 @@ func TestDefaultPasswordSentDirectlyToPinnedHost(t *testing.T) {
 			return
 		}
 		if r.URL.Path == "/api/v1/telemetry" {
+			reqCount++
 			receivedPassword = r.Header.Get("X-M3TAL-Password")
 			nonce := r.Header.Get("X-M3TAL-Nonce")
 			clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
 			fp := testServerFingerprint(server)
+			if reqCount == 1 {
+				// Verify DefaultPassword was NOT sent upfront in plaintext
+				if receivedPassword != "" {
+					t.Errorf("security violation: DefaultPassword sent upfront: %q", receivedPassword)
+				}
+				w.Header().Set("X-M3TAL-Auth-Status", "password_required")
+				w.Header().Set("X-M3TAL-Proof", responseProof("mesh-shared-token", nonce, clientNonce, []byte("password required\n"), fp))
+				http.Error(w, "password required", http.StatusUnauthorized)
+				return
+			}
+			if receivedPassword != "mesh-default-secret" {
+				http.Error(w, "invalid password", http.StatusUnauthorized)
+				return
+			}
 			body, _ := json.Marshal(remoteResponse{
 				Name: "pinned-box", Hostname: "pinned-box",
 				Telemetry: remoteTelemetry{Hostname: "pinned-box", Cores: 4, RAMTotalGB: 16, StorageTotalGB: 500},
@@ -1313,16 +1329,15 @@ func TestDefaultPasswordSentDirectlyToPinnedHost(t *testing.T) {
 	defer server.Close()
 
 	fp := testServerFingerprint(server)
-	// Pinned host: pass expectedFingerprint
 	node, _, err := connectAndNegotiateNode(server.Listener.Addr().String(), "", "", cfg, fp, false)
 	if err != nil {
-		t.Fatalf("expected pinned connection to succeed: %v", err)
+		t.Fatalf("expected pinned connection to succeed on authenticated retry: %v", err)
 	}
 	if node.Name != "pinned-box" {
 		t.Fatalf("unexpected node name: %s", node.Name)
 	}
 	if receivedPassword != "mesh-default-secret" {
-		t.Fatalf("expected DefaultPassword to be sent directly to pinned host, got: %q", receivedPassword)
+		t.Fatalf("expected DefaultPassword on retry, got: %q", receivedPassword)
 	}
 }
 
@@ -1365,22 +1380,22 @@ func TestRefreshRemotePeersWithholdsDefaultPasswordFromUnpinnedPeer(t *testing.T
 	}
 }
 
-func TestEffectiveCredentialsRequiresExplicitFingerprint(t *testing.T) {
+func TestEffectiveCredentialsRequiresPasswordConfiguredOnPeer(t *testing.T) {
 	cfg := meshConfig{PairingToken: "default-tok", DefaultPassword: "default-pass"}
 
-	// Unpinned (empty fingerprint) does not inherit DefaultPassword
-	tok, pass := effectiveCredentials("", "", false, cfg, "")
+	// When peer password is empty, effectiveCredentials does not leak DefaultPassword even with pinned fingerprint
+	tok, pass := effectiveCredentials("", "", false, cfg, "sha256-pinned-fp")
 	if tok != "default-tok" {
 		t.Fatalf("expected inherited token 'default-tok', got %q", tok)
 	}
 	if pass != "" {
-		t.Fatalf("security violation: unpinned effectiveCredentials inherited DefaultPassword: %q", pass)
+		t.Fatalf("security violation: effectiveCredentials returned DefaultPassword: %q", pass)
 	}
 
-	// Pinned fingerprint inherits DefaultPassword
-	tok2, pass2 := effectiveCredentials("", "", false, cfg, "sha256-pinned-fp")
-	if tok2 != "default-tok" || pass2 != "default-pass" {
-		t.Fatalf("expected ('default-tok', 'default-pass'), got (%q, %q)", tok2, pass2)
+	// Password configured explicitly on peer is returned
+	tok2, pass2 := effectiveCredentials("", "peer-configured-pass", false, cfg, "sha256-pinned-fp")
+	if tok2 != "default-tok" || pass2 != "peer-configured-pass" {
+		t.Fatalf("expected ('default-tok', 'peer-configured-pass'), got (%q, %q)", tok2, pass2)
 	}
 
 	// PasswordOnly mode suppresses token and requires password to be configured on the peer itself
@@ -1394,7 +1409,7 @@ func TestEffectiveCredentialsRequiresExplicitFingerprint(t *testing.T) {
 		t.Fatalf("expected ('', 'explicit-peer-pass'), got (%q, %q)", tok3Explicit, pass3Explicit)
 	}
 
-	// Peer with custom per-peer token does NOT inherit DefaultPassword (prevents secret exfiltration)
+	// Peer with custom per-peer token does NOT inherit DefaultPassword
 	tok4, pass4 := effectiveCredentials("attacker-custom-token", "", false, cfg, "sha256-attacker-fp")
 	if tok4 != "attacker-custom-token" {
 		t.Fatalf("expected custom token 'attacker-custom-token', got %q", tok4)
@@ -1403,7 +1418,7 @@ func TestEffectiveCredentialsRequiresExplicitFingerprint(t *testing.T) {
 		t.Fatalf("security violation: custom token peer inherited DefaultPassword: %q", pass4)
 	}
 
-	// Mesh without pairing token does NOT inherit DefaultPassword (prevents unauthenticated rogue server exfiltration)
+	// Mesh without pairing token does NOT inherit DefaultPassword
 	cfgNoTok := meshConfig{PairingToken: "", DefaultPassword: "default-pass"}
 	tok5, pass5 := effectiveCredentials("", "", false, cfgNoTok, "sha256-some-fp")
 	if tok5 != "" || pass5 != "" {
