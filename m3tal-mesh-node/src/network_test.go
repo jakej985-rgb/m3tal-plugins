@@ -201,3 +201,177 @@ func TestTelemetryEndpointUnauthenticatedWhenRequirementDisabled(t *testing.T) {
 		t.Fatalf("missing node telemetry payload: %v", payload)
 	}
 }
+
+func TestTelemetryEndpointRejectsPlaintextTokenWithoutHMAC(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	defaultTrue := true
+	cfg := nodeRuntimeConfig{
+		PairingToken:        "my-secret-token",
+		Password:            "my-secret-pass",
+		RequirePairingToken: &defaultTrue,
+		ListenPort:          9321,
+	}
+	if err := saveNodeRuntimeConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(nodeTelemetryHandler))
+	defer server.Close()
+
+	// 1. Missing credentials -> 401
+	resp, err := http.Get(server.URL + "/api/v1/telemetry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for missing token, got %d", resp.StatusCode)
+	}
+
+	// 2. Plaintext Bearer token with password -> 401 (HMAC proof required)
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/api/v1/telemetry", nil)
+	req.Header.Set("Authorization", "Bearer my-secret-token")
+	req.Header.Set("X-M3TAL-Password", "my-secret-pass")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for plaintext Bearer token without HMAC proof, got %d", resp.StatusCode)
+	}
+
+	// 3. Basic auth plaintext -> 401
+	req, _ = http.NewRequest(http.MethodGet, server.URL+"/api/v1/telemetry", nil)
+	req.SetBasicAuth("my-secret-token", "my-secret-pass")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for plaintext BasicAuth without HMAC proof, got %d", resp.StatusCode)
+	}
+}
+
+func TestTelemetryEndpointHMACBranchWithPasswordAndRejectEmptyToken(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	defaultTrue := true
+
+	// Scenario A: Token + Password configured.
+	// HMAC proof alone without password must be rejected!
+	cfg := nodeRuntimeConfig{
+		PairingToken:        "hmac-secret-token",
+		Password:            "node-secret-pass",
+		RequirePairingToken: &defaultTrue,
+		ListenPort:          9321,
+	}
+	if err := saveNodeRuntimeConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/challenge" {
+			nodeChallengeHandler(w, r)
+			return
+		}
+		nodeTelemetryHandler(w, r)
+	}))
+	defer server.Close()
+
+	// Get challenge nonce
+	chResp, err := http.Post(server.URL+"/api/v1/challenge", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ch struct {
+		Nonce string `json:"nonce"`
+	}
+	_ = json.NewDecoder(chResp.Body).Decode(&ch)
+	chResp.Body.Close()
+
+	cnonce := strings.Repeat("b", 64)
+	proof := nodeRequestProof("hmac-secret-token", ch.Nonce, cnonce, "")
+
+	// 1. HMAC proof with NO password -> 401
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/api/v1/telemetry", nil)
+	req.Header.Set("X-M3TAL-Nonce", ch.Nonce)
+	req.Header.Set("X-M3TAL-Client-Nonce", cnonce)
+	req.Header.Set("X-M3TAL-Proof", proof)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for HMAC proof without password, got %d", resp.StatusCode)
+	}
+
+	// Re-issue challenge for next attempt
+	chResp, err = http.Post(server.URL+"/api/v1/challenge", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = json.NewDecoder(chResp.Body).Decode(&ch)
+	chResp.Body.Close()
+	proof = nodeRequestProof("hmac-secret-token", ch.Nonce, cnonce, "")
+
+	// 2. HMAC proof with correct password -> 200 OK
+	req, _ = http.NewRequest(http.MethodGet, server.URL+"/api/v1/telemetry", nil)
+	req.Header.Set("X-M3TAL-Nonce", ch.Nonce)
+	req.Header.Set("X-M3TAL-Client-Nonce", cnonce)
+	req.Header.Set("X-M3TAL-Proof", proof)
+	req.Header.Set("X-M3TAL-Password", "node-secret-pass")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for HMAC proof with valid password, got %d", resp.StatusCode)
+	}
+
+	// Scenario B: Password-ONLY configured (empty token).
+	// An HMAC proof with empty token MUST be rejected!
+	cfgPassOnly := nodeRuntimeConfig{
+		PairingToken:        "",
+		Password:            "node-secret-pass",
+		RequirePairingToken: &defaultTrue,
+		ListenPort:          9321,
+	}
+	if err := saveNodeRuntimeConfig(cfgPassOnly); err != nil {
+		t.Fatal(err)
+	}
+
+	chResp, err = http.Post(server.URL+"/api/v1/challenge", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = json.NewDecoder(chResp.Body).Decode(&ch)
+	chResp.Body.Close()
+	emptyProof := nodeRequestProof("", ch.Nonce, cnonce, "")
+
+	req, _ = http.NewRequest(http.MethodGet, server.URL+"/api/v1/telemetry", nil)
+	req.Header.Set("X-M3TAL-Nonce", ch.Nonce)
+	req.Header.Set("X-M3TAL-Client-Nonce", cnonce)
+	req.Header.Set("X-M3TAL-Proof", emptyProof)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 when attempting HMAC proof against password-only node, got %d", resp.StatusCode)
+	}
+
+	// But REST path with correct password on password-only node succeeds
+	req, _ = http.NewRequest(http.MethodGet, server.URL+"/api/v1/telemetry", nil)
+	req.Header.Set("X-M3TAL-Password", "node-secret-pass")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for REST password on password-only node, got %d", resp.StatusCode)
+	}
+}

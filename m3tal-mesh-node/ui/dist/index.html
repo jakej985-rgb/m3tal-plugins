@@ -12,22 +12,30 @@
   <div class="wrap"><div class="card">
     <div class="eyebrow">M3TAL Mesh · Sender</div>
     <h1>Mesh Node Settings</h1>
-    <p>Set the shared pairing secret used by Mesh Fleet on the computer that will connect to this node. Enter the same secret in that computer’s Mesh Fleet settings.</p>
+    <p>Set the API token and optional secondary password required by Mesh Fleet to connect to this node.</p>
     <form id="settings-form">
       <div class="field">
-        <label for="pairing-token">Pairing Token</label>
-        <input id="pairing-token" type="password" autocomplete="new-password" placeholder="Enter a shared secret">
+        <label for="pairing-token">API Token / Secret</label>
+        <input id="pairing-token" type="password" autocomplete="new-password" placeholder="Enter an API token or shared secret">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
           <small id="token-desc">Telemetry requests are rejected until a token is configured.</small>
           <button type="button" id="clear-token-btn" style="background:transparent;border:none;color:#fb7185;cursor:pointer;font-size:12px;padding:0;display:none" onclick="clearToken()">Clear saved token</button>
         </div>
       </div>
+      <div class="field">
+        <label for="node-password">Node Password (Optional)</label>
+        <input id="node-password" type="password" autocomplete="new-password" placeholder="Optional secondary password">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
+          <small id="password-desc">Require clients to send a secondary passphrase in addition to the API token.</small>
+          <button type="button" id="clear-password-btn" style="background:transparent;border:none;color:#fb7185;cursor:pointer;font-size:12px;padding:0;display:none" onclick="clearPassword()">Clear saved password</button>
+        </div>
+      </div>
       <div class="field row" style="align-items:flex-start">
         <div>
-          <label for="require-pairing-token" style="cursor:pointer">Require Pairing Token / Secret</label>
-          <small>Enforce shared secret verification before responding to telemetry requests.</small>
+          <label for="require-pairing-token" style="cursor:pointer">Require Authentication</label>
+          <small>Enforce API token and password verification before responding to telemetry requests.</small>
           <div id="safety-warning" style="display:none;margin-top:8px;padding:8px 10px;background:rgba(244,63,94,0.15);border:1px solid rgba(244,63,94,0.3);border-radius:6px;font-size:12px;color:#fda4af;line-height:1.4">
-            ⚠️ <strong>Safety Warning:</strong> Making the pairing token optional exposes this node’s hardware telemetry to any machine on the local network. <em>This is NOT safe or advised on untrusted networks!</em>
+            ⚠️ <strong>Safety Warning:</strong> Making authentication optional exposes this node’s hardware telemetry to any machine on the local network. <em>This is NOT safe or advised on untrusted networks!</em>
           </div>
         </div>
         <input id="require-pairing-token" type="checkbox" checked style="width:20px;height:20px;margin-top:4px;cursor:pointer">
@@ -48,7 +56,9 @@
       warningEl.style.display = requireCheckbox.checked ? 'none' : 'block';
     });
     let hasPairingToken = false;
+    let hasPassword = false;
     let clearRequested = false;
+    let clearPasswordRequested = false;
     function clearToken() {
       clearRequested = true;
       const tokenInput = document.getElementById('pairing-token');
@@ -56,6 +66,15 @@
       tokenInput.placeholder = 'Token will be cleared upon saving';
       document.getElementById('clear-token-btn').style.display = 'none';
       statusEl.textContent = 'Token marked for removal. Click Save Settings to apply.';
+      statusEl.className = 'status';
+    }
+    function clearPassword() {
+      clearPasswordRequested = true;
+      const passInput = document.getElementById('node-password');
+      passInput.value = '';
+      passInput.placeholder = 'Password will be cleared upon saving';
+      document.getElementById('clear-password-btn').style.display = 'none';
+      statusEl.textContent = 'Password marked for removal. Click Save Settings to apply.';
       statusEl.className = 'status';
     }
     async function load() {
@@ -71,15 +90,30 @@
         hasPairingToken = !!cfg.has_pairing_token;
         clearRequested = false;
         tokenInput.value = '';
-        tokenInput.placeholder = hasPairingToken ? 'Configured — leave blank to keep current' : 'Enter a shared secret';
+        tokenInput.placeholder = hasPairingToken ? 'Configured — leave blank to keep current' : 'Enter an API token or shared secret';
         document.getElementById('clear-token-btn').style.display = hasPairingToken ? 'inline' : 'none';
+
+        const passInput = document.getElementById('node-password');
+        hasPassword = !!cfg.has_password;
+        clearPasswordRequested = false;
+        passInput.value = '';
+        passInput.placeholder = hasPassword ? 'Configured — leave blank to keep current' : 'Optional secondary password';
+        document.getElementById('clear-password-btn').style.display = hasPassword ? 'inline' : 'none';
+
         requireCheckbox.checked = cfg.require_pairing_token !== false;
         warningEl.style.display = requireCheckbox.checked ? 'none' : 'block';
         document.getElementById('listen-port').value = cfg.listen_port || 9321;
         document.getElementById('broadcast-mdns').checked = cfg.broadcast_mdns !== false;
+
         tokenInput.oninput = function() {
           if (this.value.trim() !== '') {
             clearRequested = false;
+            if (statusEl.textContent.includes('marked for removal')) statusEl.textContent = '';
+          }
+        };
+        passInput.oninput = function() {
+          if (this.value.trim() !== '') {
+            clearPasswordRequested = false;
             if (statusEl.textContent.includes('marked for removal')) statusEl.textContent = '';
           }
         };
@@ -90,6 +124,7 @@
       const button = document.getElementById('save'); button.disabled = true;
       statusEl.textContent = 'Saving…'; statusEl.className = 'status';
       const rawToken = document.getElementById('pairing-token').value.trim();
+      const rawPass = document.getElementById('node-password').value.trim();
       const config = {
         require_pairing_token: requireCheckbox.checked,
         listen_port: Number(document.getElementById('listen-port').value) || 9321,
@@ -101,6 +136,13 @@
       } else if (clearRequested) {
         config.clear_pairing_token = true;
       }
+      if (rawPass) {
+        config.password = rawPass;
+        clearPasswordRequested = false;
+      } else if (clearPasswordRequested) {
+        config.clear_password = true;
+      }
+
       try {
         const res = await fetch(endpoint, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'set_settings',args:config})});
         const body = await res.json();
@@ -119,7 +161,7 @@
             'Could not save sender settings'
           );
         }
-        statusEl.textContent = 'Saved. The pairing token takes effect immediately; restart Mesh Node after changing the port or LAN discovery setting.';
+        statusEl.textContent = 'Saved. Credentials take effect immediately; restart Mesh Node after changing the port or LAN discovery setting.';
         if (actionData.has_pairing_token !== undefined) {
           hasPairingToken = !!actionData.has_pairing_token;
         } else {
@@ -127,8 +169,19 @@
         }
         clearRequested = false;
         document.getElementById('pairing-token').value = '';
-        document.getElementById('pairing-token').placeholder = hasPairingToken ? 'Configured — leave blank to keep current' : 'Enter a shared secret';
+        document.getElementById('pairing-token').placeholder = hasPairingToken ? 'Configured — leave blank to keep current' : 'Enter an API token or shared secret';
         document.getElementById('clear-token-btn').style.display = hasPairingToken ? 'inline' : 'none';
+
+        if (actionData.has_password !== undefined) {
+          hasPassword = !!actionData.has_password;
+        } else {
+          hasPassword = clearPasswordRequested ? false : (hasPassword || !!config.password);
+        }
+        clearPasswordRequested = false;
+        document.getElementById('node-password').value = '';
+        document.getElementById('node-password').placeholder = hasPassword ? 'Configured — leave blank to keep current' : 'Optional secondary password';
+        document.getElementById('clear-password-btn').style.display = hasPassword ? 'inline' : 'none';
+
         statusEl.className = 'status success';
       } catch (err) { statusEl.textContent = err.message; statusEl.className = 'status error'; }
       finally { button.disabled = false; }

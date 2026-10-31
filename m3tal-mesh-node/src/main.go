@@ -304,9 +304,17 @@ func handleAction(req *RPCRequest) {
 		} else if clear, ok := params.Args["clear_pairing_token"].(bool); ok && clear {
 			cfg.PairingToken = ""
 		}
+
+		if value, ok := params.Args["password"].(string); ok && strings.TrimSpace(value) != "" {
+			cfg.Password = strings.TrimSpace(value)
+		} else if clear, ok := params.Args["clear_password"].(bool); ok && clear {
+			cfg.Password = ""
+		}
+
 		if value, ok := params.Args["require_pairing_token"].(bool); ok {
 			cfg.RequirePairingToken = &value
 		}
+
 		if value, ok := params.Args["listen_port"].(float64); ok {
 			cfg.ListenPort = int(value)
 		}
@@ -320,6 +328,7 @@ func handleAction(req *RPCRequest) {
 		sendResponse(req.ID, map[string]interface{}{
 			"success":               true,
 			"message":               "Settings saved. Restart the plugin if you changed its port or LAN discovery setting.",
+			"has_password":          cfg.Password != "",
 			"has_pairing_token":     cfg.PairingToken != "",
 			"require_pairing_token": cfg.IsPairingTokenRequired(),
 			"listen_port":           cfg.ListenPort,
@@ -329,6 +338,7 @@ func handleAction(req *RPCRequest) {
 		cfg := loadNodeRuntimeConfig()
 		sendResponse(req.ID, map[string]interface{}{
 			"success":               true,
+			"has_password":          cfg.Password != "",
 			"has_pairing_token":     cfg.PairingToken != "",
 			"require_pairing_token": cfg.IsPairingTokenRequired(),
 			"listen_port":           cfg.ListenPort,

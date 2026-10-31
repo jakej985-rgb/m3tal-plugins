@@ -30,7 +30,8 @@ import (
 const meshServiceType = "_m3tal-mesh-node._tcp"
 
 type nodeRuntimeConfig struct {
-	PairingToken        string `json:"pairing_token"`
+	PairingToken        string `json:"pairing_token,omitempty"`
+	Password            string `json:"password,omitempty"`
 	RequirePairingToken *bool  `json:"require_pairing_token,omitempty"`
 	ListenPort          int    `json:"listen_port"`
 	BroadcastMDNS       bool   `json:"broadcast_mdns"`
@@ -188,15 +189,30 @@ func nodeTelemetryHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	current := loadNodeRuntimeConfig()
-	if current.IsPairingTokenRequired() && current.PairingToken == "" {
-		http.Error(w, "pairing token is not configured on this node", http.StatusServiceUnavailable)
+	expectedToken := current.PairingToken
+	expectedPass := current.Password
+	authRequired := current.IsPairingTokenRequired()
+
+	if authRequired && expectedToken == "" && expectedPass == "" {
+		http.Error(w, "authentication is required but neither API token nor password is configured on this node", http.StatusServiceUnavailable)
 		return
 	}
-	var nonce, clientNonce, fp string
-	if current.PairingToken != "" {
-		nonce = r.Header.Get("X-M3TAL-Nonce")
-		clientNonce = r.Header.Get("X-M3TAL-Client-Nonce")
-		supplied := r.Header.Get("X-M3TAL-Proof")
+
+	suppliedProof := r.Header.Get("X-M3TAL-Proof")
+	nonce := r.Header.Get("X-M3TAL-Nonce")
+	clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
+	var fp string
+	if r.TLS != nil {
+		nodeCertFingerprintMu.RLock()
+		fp = nodeCertFingerprint
+		nodeCertFingerprintMu.RUnlock()
+	}
+
+	if expectedToken != "" {
+		if suppliedProof == "" || nonce == "" || clientNonce == "" {
+			http.Error(w, "pairing token required", http.StatusUnauthorized)
+			return
+		}
 
 		clientIP, _, err := net.SplitHostPort(r.RemoteAddr)
 		if err != nil {
@@ -208,14 +224,24 @@ func nodeTelemetryHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if r.TLS != nil {
-			nodeCertFingerprintMu.RLock()
-			fp = nodeCertFingerprint
-			nodeCertFingerprintMu.RUnlock()
-		}
-
-		if subtle.ConstantTimeCompare([]byte(supplied), []byte(nodeRequestProof(current.PairingToken, nonce, clientNonce, fp))) != 1 {
+		if subtle.ConstantTimeCompare([]byte(suppliedProof), []byte(nodeRequestProof(expectedToken, nonce, clientNonce, fp))) != 1 {
 			http.Error(w, "invalid pairing token", http.StatusUnauthorized)
+			return
+		}
+	}
+
+	if expectedPass != "" {
+		suppliedPass := r.Header.Get("X-M3TAL-Password")
+		if suppliedPass == "" {
+			w.Header().Set("X-M3TAL-Auth-Status", "password_required")
+			if suppliedProof != "" && expectedToken != "" {
+				w.Header().Set("X-M3TAL-Proof", nodeResponseProof(expectedToken, nonce, clientNonce, []byte("password required\n"), fp))
+			}
+			http.Error(w, "password required", http.StatusUnauthorized)
+			return
+		}
+		if subtle.ConstantTimeCompare([]byte(suppliedPass), []byte(expectedPass)) != 1 {
+			http.Error(w, "invalid password", http.StatusUnauthorized)
 			return
 		}
 	}
@@ -230,8 +256,8 @@ func nodeTelemetryHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	if current.PairingToken != "" {
-		w.Header().Set("X-M3TAL-Proof", nodeResponseProof(current.PairingToken, nonce, clientNonce, body, fp))
+	if suppliedProof != "" && expectedToken != "" {
+		w.Header().Set("X-M3TAL-Proof", nodeResponseProof(expectedToken, nonce, clientNonce, body, fp))
 	}
 	_, _ = w.Write(body)
 }

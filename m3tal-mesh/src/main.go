@@ -48,26 +48,44 @@ type RPCError struct {
 
 // MeshNode represents a machine connected to the personal cluster.
 type MeshNode struct {
-	ID             string  `json:"id"`
-	Name           string  `json:"name"`
-	IP             string  `json:"ip"`
-	Role           string  `json:"role"`   // "workstation", "server", "nas", "edge"
-	Status         string  `json:"status"` // "online", "warning", "offline"
-	Fingerprint    string  `json:"fingerprint,omitempty"`
-	Cores          int     `json:"cores"`
-	CPULoad        float64 `json:"cpu_load"`
-	RAMUsedGB      float64 `json:"ram_used_gb"`
-	RAMTotalGB     float64 `json:"ram_total_gb"`
-	StorageUsedGB  float64 `json:"storage_used_gb"`
-	StorageTotalGB float64 `json:"storage_total_gb"`
-	StoragePool    string  `json:"storage_pool,omitempty"`
-	GPUName        string  `json:"gpu_name,omitempty"`
-	GPUVRAMUsedGB  float64 `json:"gpu_vram_used_gb,omitempty"`
-	GPUVRAMTotalGB float64 `json:"gpu_vram_total_gb,omitempty"`
-	GPUTempC       int     `json:"gpu_temp_c,omitempty"`
-	PingMs         int     `json:"ping_ms"`
-	LastSeen       string  `json:"last_seen"`
-	IsLocal        bool    `json:"is_local"`
+	ID               string  `json:"id"`
+	Name             string  `json:"name"`
+	IP               string  `json:"ip"`
+	Role             string  `json:"role"`   // "workstation", "server", "nas", "edge"
+	Status           string  `json:"status"` // "online", "warning", "offline", "unverified"
+	PasswordRequired bool    `json:"password_required,omitempty"`
+	PasswordOnly     bool    `json:"-"`
+	Fingerprint      string  `json:"fingerprint,omitempty"`
+	APIToken         string  `json:"-"`
+	Password         string  `json:"-"`
+	Cores            int     `json:"cores"`
+	CPULoad          float64 `json:"cpu_load"`
+	RAMUsedGB        float64 `json:"ram_used_gb"`
+	RAMTotalGB       float64 `json:"ram_total_gb"`
+	StorageUsedGB    float64 `json:"storage_used_gb"`
+	StorageTotalGB   float64 `json:"storage_total_gb"`
+	StoragePool      string  `json:"storage_pool,omitempty"`
+	GPUName          string  `json:"gpu_name,omitempty"`
+	GPUVRAMUsedGB    float64 `json:"gpu_vram_used_gb,omitempty"`
+	GPUVRAMTotalGB   float64 `json:"gpu_vram_total_gb,omitempty"`
+	GPUTempC         int     `json:"gpu_temp_c,omitempty"`
+	PingMs           int     `json:"ping_ms"`
+	LastSeen         string  `json:"last_seen"`
+	IsLocal          bool    `json:"is_local"`
+}
+
+// MarshalJSON derives has_password and has_api_token dynamically at marshal time.
+func (n MeshNode) MarshalJSON() ([]byte, error) {
+	type Alias MeshNode
+	return json.Marshal(&struct {
+		Alias
+		HasPassword bool `json:"has_password"`
+		HasAPIToken bool `json:"has_api_token"`
+	}{
+		Alias:       Alias(n),
+		HasPassword: n.Password != "",
+		HasAPIToken: n.APIToken != "",
+	})
 }
 
 var (
@@ -306,6 +324,9 @@ func handleInit(req *RPCRequest) {
 			{"id": "get_settings", "label": "Get Mesh Settings", "description": "Read local Mesh pairing configuration", "confirm": false},
 			{"id": "set_settings", "label": "Save Mesh Settings", "description": "Save local Mesh pairing configuration", "confirm": false},
 			{"id": "get_fleet", "label": "Refresh Mesh Fleet", "description": "Fetch current local and remote node telemetry for Mesh Fleet", "confirm": false},
+			{"id": "test_node", "label": "Test Node Connection", "description": "Test connectivity and credentials for a remote node", "confirm": false},
+			{"id": "update_node", "label": "Update Node", "description": "Update credentials or metadata for a connected node", "confirm": false},
+			{"id": "get_peers", "label": "Get Saved Peers", "description": "Fetch persisted peer connection entries", "confirm": false},
 		},
 	}
 	sendResponse(req.ID, result)
@@ -418,8 +439,11 @@ func handleAction(req *RPCRequest) {
 		NodeID   string                 `json:"node_id"`
 		Name     string                 `json:"name"`
 		IP       string                 `json:"ip"`
+		Address  string                 `json:"address"`
 		Role     string                 `json:"role"`
 		Token    string                 `json:"token"`
+		APIToken string                 `json:"api_token"`
+		Password string                 `json:"password"`
 	}
 
 	if req.Params != nil {
@@ -433,15 +457,23 @@ func handleAction(req *RPCRequest) {
 
 	name := raw.Name
 	ip := raw.IP
+	if ip == "" {
+		ip = raw.Address
+	}
 	role := raw.Role
 	nodeID := raw.NodeID
 	pairToken := raw.Token
+	apiToken := raw.APIToken
+	password := raw.Password
 
 	if raw.Args != nil {
 		if v, ok := raw.Args["name"].(string); ok && name == "" {
 			name = v
 		}
 		if v, ok := raw.Args["ip"].(string); ok && ip == "" {
+			ip = v
+		}
+		if v, ok := raw.Args["address"].(string); ok && ip == "" {
 			ip = v
 		}
 		if v, ok := raw.Args["role"].(string); ok && role == "" {
@@ -453,9 +485,20 @@ func handleAction(req *RPCRequest) {
 		if v, ok := raw.Args["token"].(string); ok && pairToken == "" {
 			pairToken = v
 		}
+		if v, ok := raw.Args["api_token"].(string); ok && apiToken == "" {
+			apiToken = v
+		}
+		if v, ok := raw.Args["password"].(string); ok && password == "" {
+			password = v
+		}
 	}
 	if raw.Target != "" && nodeID == "" {
 		nodeID = raw.Target
+	}
+
+	effectiveToken := apiToken
+	if effectiveToken == "" {
+		effectiveToken = pairToken
 	}
 
 	switch action {
@@ -464,7 +507,13 @@ func handleAction(req *RPCRequest) {
 			sendError(req.ID, -32602, "Invalid params", "Node IP address is required")
 			return
 		}
-		newNode, err := pairAndPersistPeer(ip, name, role, pairToken)
+		cfg := loadMeshConfig()
+		normIP, err := normalizeNodeAddress(ip, cfg.ListenPort)
+		if err != nil {
+			sendError(req.ID, -32602, "Invalid params", err.Error())
+			return
+		}
+		newNode, err := pairAndPersistPeer(normIP, name, role, effectiveToken, password)
 		if err != nil {
 			sendError(req.ID, -32002, "Node pairing failed", err.Error())
 			return
@@ -473,6 +522,144 @@ func handleAction(req *RPCRequest) {
 			"success": true,
 			"message": fmt.Sprintf("Paired and verified %s (%s)", newNode.Name, newNode.IP),
 			"node":    newNode,
+		})
+
+	case "test_node":
+		var savedPeer *MeshNode
+		if nodeID != "" {
+			for _, peer := range snapshotPeers() {
+				if peer.ID == nodeID {
+					copy := peer
+					savedPeer = &copy
+					break
+				}
+			}
+		}
+		if ip == "" && savedPeer != nil {
+			ip = savedPeer.IP
+		}
+		if ip == "" {
+			sendError(req.ID, -32602, "Invalid params", "Node IP address is required")
+			return
+		}
+		cfg := loadMeshConfig()
+		normIP, normErr := normalizeNodeAddress(ip, cfg.ListenPort)
+		if normErr == nil {
+			ip = normIP
+		}
+		samePeerIP := false
+		if savedPeer != nil {
+			normSaved, _ := normalizeNodeAddress(savedPeer.IP, cfg.ListenPort)
+			samePeerIP = strings.EqualFold(ip, normSaved)
+		}
+		credsChanged := effectiveToken != "" || password != ""
+		explicitTok := effectiveToken
+		if explicitTok == "" && samePeerIP {
+			explicitTok = savedPeer.APIToken
+		}
+		explicitPass := password
+		if explicitPass == "" && samePeerIP {
+			explicitPass = savedPeer.Password
+		}
+		var expectedFP string
+		savedPasswordOnly := false
+		if samePeerIP {
+			expectedFP = savedPeer.Fingerprint
+			if !credsChanged {
+				savedPasswordOnly = savedPeer.PasswordOnly
+			}
+		}
+		testedNode, _, err := connectAndNegotiateNode(ip, explicitTok, explicitPass, cfg, expectedFP, savedPasswordOnly)
+		if err != nil {
+			sendError(req.ID, -32002, "Connection test failed", err.Error())
+			return
+		}
+		sendResponse(req.ID, map[string]interface{}{
+			"success":          true,
+			"message":          fmt.Sprintf("Connection successful: %s responded in %dms", testedNode.Name, testedNode.PingMs),
+			"hostname":         testedNode.Name,
+			"ping_ms":          testedNode.PingMs,
+			"cores":            testedNode.Cores,
+			"ram_total_gb":     testedNode.RAMTotalGB,
+			"storage_total_gb": testedNode.StorageTotalGB,
+		})
+
+	case "update_node":
+		if nodeID == "" {
+			sendError(req.ID, -32602, "Invalid params", "node_id is required")
+			return
+		}
+		peers := snapshotPeers()
+		var foundNode *MeshNode
+		for i := range peers {
+			if peers[i].ID == nodeID {
+				copyNode := peers[i]
+				foundNode = &copyNode
+				break
+			}
+		}
+		if foundNode == nil {
+			sendError(req.ID, -32602, "Not found", fmt.Sprintf("Node %s not found", nodeID))
+			return
+		}
+		if name != "" {
+			foundNode.Name = name
+		}
+		if role != "" {
+			foundNode.Role = role
+		}
+		cfg := loadMeshConfig()
+		addressChanged := false
+		if ip != "" {
+			normUpdateIP, err := normalizeNodeAddress(ip, cfg.ListenPort)
+			if err != nil {
+				sendError(req.ID, -32602, "Invalid params", err.Error())
+				return
+			}
+			normCurrent, _ := normalizeNodeAddress(foundNode.IP, cfg.ListenPort)
+			if !strings.EqualFold(normUpdateIP, normCurrent) {
+				foundNode.Fingerprint = ""
+				addressChanged = true
+			}
+			foundNode.IP = normUpdateIP
+		}
+		clearTok, _ := raw.Args["clear_api_token"].(bool)
+		clearPass, _ := raw.Args["clear_password"].(bool)
+		credsChanged := false
+		if effectiveToken != "" {
+			foundNode.APIToken = effectiveToken
+			credsChanged = true
+		} else if clearTok {
+			foundNode.APIToken = ""
+			credsChanged = true
+		}
+		if password != "" {
+			foundNode.Password = password
+			credsChanged = true
+		} else if clearPass {
+			foundNode.Password = ""
+			credsChanged = true
+		}
+		if addressChanged || credsChanged {
+			testedNode, pwOnly, err := connectAndNegotiateNode(foundNode.IP, foundNode.APIToken, foundNode.Password, cfg, foundNode.Fingerprint, false)
+			if err == nil {
+				foundNode.PasswordOnly = pwOnly
+				if testedNode.Fingerprint != "" {
+					foundNode.Fingerprint = testedNode.Fingerprint
+				}
+				foundNode.Status = "online"
+			} else if foundNode.APIToken != "" {
+				foundNode.PasswordOnly = false
+			}
+		}
+		if err := persistPeerUpsert(*foundNode, clearTok, clearPass); err != nil {
+			sendError(req.ID, -32003, "Could not save updated node", err.Error())
+			return
+		}
+		sendResponse(req.ID, map[string]interface{}{
+			"success": true,
+			"message": fmt.Sprintf("Updated node %s", foundNode.Name),
+			"node":    *foundNode,
 		})
 
 	case "forget_node":
@@ -524,13 +711,19 @@ func handleAction(req *RPCRequest) {
 			return
 		}
 		cfg := loadMeshConfig()
-		updated, err := fetchRemote(target.IP, cfg.PairingToken, cfg.ListenPort, target.Fingerprint)
+		updated, pwOnly, err := connectAndNegotiateNode(target.IP, target.APIToken, target.Password, cfg, target.Fingerprint, target.PasswordOnly)
 		if err != nil {
 			sendError(req.ID, -32004, "Node ping failed", err.Error())
 			return
 		}
 		updated.ID, updated.Name, updated.Role = target.ID, target.Name, target.Role
-		if err := persistPeerUpsert(updated); err != nil {
+		updated.APIToken = target.APIToken
+		updated.Password = target.Password
+		updated.PasswordOnly = pwOnly
+		if updated.Fingerprint == "" && target.Fingerprint != "" {
+			updated.Fingerprint = target.Fingerprint
+		}
+		if err := persistPeerUpsert(updated, false, false); err != nil {
 			sendError(req.ID, -32005, "Could not save node status", err.Error())
 			return
 		}
@@ -578,6 +771,13 @@ func handleAction(req *RPCRequest) {
 		} else if clear, ok := raw.Args["clear_pairing_token"].(bool); ok && clear {
 			cfg.PairingToken = ""
 		}
+
+		if value, ok := raw.Args["default_password"].(string); ok && strings.TrimSpace(value) != "" {
+			cfg.DefaultPassword = strings.TrimSpace(value)
+		} else if clear, ok := raw.Args["clear_password"].(bool); ok && clear {
+			cfg.DefaultPassword = ""
+		}
+
 		if value, ok := raw.Args["require_pairing_token"].(bool); ok {
 			cfg.RequirePairingToken = &value
 		}
@@ -594,6 +794,7 @@ func handleAction(req *RPCRequest) {
 		sendResponse(req.ID, map[string]interface{}{
 			"success":               true,
 			"message":               "Mesh settings saved",
+			"has_password":          cfg.DefaultPassword != "",
 			"has_pairing_token":     cfg.PairingToken != "",
 			"require_pairing_token": cfg.IsPairingTokenRequired(),
 			"discovery_enabled":     cfg.IsDiscoveryEnabled(),
@@ -604,10 +805,34 @@ func handleAction(req *RPCRequest) {
 			"success": true,
 			"nodes":   getAllNodes(),
 		})
+	case "get_peers":
+		peers := snapshotPeers()
+		sanitized := make([]map[string]interface{}, 0, len(peers))
+		for _, p := range peers {
+			sanitized = append(sanitized, map[string]interface{}{
+				"id":               p.ID,
+				"name":             p.Name,
+				"ip":               p.IP,
+				"role":             p.Role,
+				"status":           p.Status,
+				"ping_ms":          p.PingMs,
+				"last_seen":        p.LastSeen,
+				"has_password":     p.Password != "",
+				"has_api_token":    p.APIToken != "",
+				"cores":            p.Cores,
+				"ram_total_gb":     p.RAMTotalGB,
+				"storage_total_gb": p.StorageTotalGB,
+			})
+		}
+		sendResponse(req.ID, map[string]interface{}{
+			"success": true,
+			"peers":   sanitized,
+		})
 	case "get_settings":
 		cfg := loadMeshConfig()
 		sendResponse(req.ID, map[string]interface{}{
 			"success":               true,
+			"has_password":          cfg.DefaultPassword != "",
 			"has_pairing_token":     cfg.PairingToken != "",
 			"require_pairing_token": cfg.IsPairingTokenRequired(),
 			"discovery_enabled":     cfg.IsDiscoveryEnabled(),
