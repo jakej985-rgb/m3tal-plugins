@@ -370,6 +370,11 @@ func fetchRemoteWithAuth(address, token, password string, port int, expectedFing
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusUnauthorized {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		msg := strings.TrimSpace(string(respBody))
+		if strings.Contains(strings.ToLower(msg), "password required") {
+			return MeshNode{}, fmt.Errorf("password required by %s", address)
+		}
 		return MeshNode{}, fmt.Errorf("pairing token was rejected by %s", address)
 	}
 	if resp.StatusCode == http.StatusServiceUnavailable {
@@ -426,19 +431,28 @@ func fetchRemoteWithAuth(address, token, password string, port int, expectedFing
 	}, nil
 }
 
+// effectiveCredentials determines the token and password to use when connecting to a node.
+// A node with an explicit password and no explicit token is password-only and suppresses
+// default token fallback across pair, test, ping, and refresh paths.
+func effectiveCredentials(explicitToken, explicitPass string, cfg meshConfig) (tok, pass string) {
+	pass = explicitPass
+	if pass == "" {
+		pass = cfg.DefaultPassword
+	}
+	tok = explicitToken
+	// If explicit password was provided without an explicit token, suppress default token fallback.
+	if tok == "" && explicitPass == "" {
+		tok = cfg.PairingToken
+	}
+	return tok, pass
+}
+
 func pairAndPersistPeer(address, name, role, token, password string) (MeshNode, error) {
 	cfg := loadMeshConfig()
 	explicitToken := token
 	explicitPass := password
 
-	connectToken := explicitToken
-	if connectToken == "" {
-		connectToken = cfg.PairingToken
-	}
-	connectPass := explicitPass
-	if connectPass == "" && cfg.DefaultPassword != "" {
-		connectPass = cfg.DefaultPassword
-	}
+	connectToken, connectPass := effectiveCredentials(explicitToken, explicitPass, cfg)
 	if cfg.IsPairingTokenRequired() && connectToken == "" && connectPass == "" {
 		return MeshNode{}, fmt.Errorf("pairing token is required to authenticate remote mesh nodes; configure a shared secret in Mesh Settings or enter a pairing token")
 	}
@@ -454,9 +468,6 @@ func pairAndPersistPeer(address, name, role, token, password string) (MeshNode, 
 	}
 	node.APIToken = explicitToken
 	node.Password = explicitPass
-	if explicitPass != "" && explicitToken == "" {
-		node.PasswordOnly = true
-	}
 
 	if cfg.PairingToken == "" && explicitToken != "" {
 		cfg.PairingToken = explicitToken
@@ -502,6 +513,7 @@ func discoverAndVerifyPeers() ([]MeshNode, error) {
 		}
 	}
 	candidates := make([]string, 0)
+	candidateHosts := make(map[string]string)
 	for {
 		select {
 		case entry := <-entries:
@@ -518,6 +530,10 @@ func discoverAndVerifyPeers() ([]MeshNode, error) {
 					}
 				}
 			}
+			host := entry.Instance
+			if host == "" {
+				host = strings.TrimSuffix(entry.HostName, ".")
+			}
 			for _, ip := range ips {
 				if localIPs[ip.String()] || entry.Port < 1 || entry.Port > 65535 {
 					continue
@@ -528,14 +544,21 @@ func discoverAndVerifyPeers() ([]MeshNode, error) {
 				}
 				addresses[address] = true
 				candidates = append(candidates, address)
+				if host != "" {
+					candidateHosts[address] = host
+				}
 			}
 		case <-ctx.Done():
-			return verifyCandidates(candidates, cfg.PairingToken, "", cfg.ListenPort), nil
+			return verifyCandidatesWithHosts(candidates, candidateHosts, cfg.PairingToken, "", cfg.ListenPort), nil
 		}
 	}
 }
 
 func verifyCandidates(candidates []string, token, password string, port int) []MeshNode {
+	return verifyCandidatesWithHosts(candidates, nil, token, password, port)
+}
+
+func verifyCandidatesWithHosts(candidates []string, candidateHosts map[string]string, token, password string, port int) []MeshNode {
 	var wg sync.WaitGroup
 	mu := sync.Mutex{}
 	discovered := make([]MeshNode, 0)
@@ -548,6 +571,24 @@ func verifyCandidates(candidates []string, token, password string, port int) []M
 			if err == nil {
 				mu.Lock()
 				discovered = append(discovered, node)
+				mu.Unlock()
+			} else if strings.Contains(strings.ToLower(err.Error()), "password required") {
+				hostname := ""
+				if candidateHosts != nil {
+					hostname = candidateHosts[address]
+				}
+				if hostname == "" {
+					hostname = address
+				}
+				mu.Lock()
+				discovered = append(discovered, MeshNode{
+					ID:       stableNodeID(address, hostname),
+					Name:     hostname,
+					IP:       address,
+					Role:     "server",
+					Status:   "online",
+					LastSeen: "password required",
+				})
 				mu.Unlock()
 			}
 		}()
@@ -594,9 +635,6 @@ func persistPeerUpsert(node MeshNode, clearToken, clearPassword bool) error {
 			}
 			if !clearPassword && node.Password == "" && old.Password != "" {
 				node.Password = old.Password
-			}
-			if !clearToken && !clearPassword && !node.PasswordOnly && old.PasswordOnly {
-				node.PasswordOnly = old.PasswordOnly
 			}
 		}
 		peers[targetIdx] = node
@@ -646,7 +684,6 @@ func snapshotPeers() []MeshNode {
 func refreshRemotePeers() {
 	cfg := loadMeshConfig()
 	peers := snapshotPeers()
-	defaultToken := cfg.PairingToken
 
 	var wg sync.WaitGroup
 	for _, existing := range peers {
@@ -654,14 +691,7 @@ func refreshRemotePeers() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			tok := existing.APIToken
-			if tok == "" && !existing.PasswordOnly && !(existing.Password != "" && existing.APIToken == "") {
-				tok = defaultToken
-			}
-			pass := existing.Password
-			if pass == "" {
-				pass = cfg.DefaultPassword
-			}
+			tok, pass := effectiveCredentials(existing.APIToken, existing.Password, cfg)
 			if cfg.IsPairingTokenRequired() && tok == "" && pass == "" {
 				nodeMutex.Lock()
 				for i := range remoteNodes {
@@ -691,7 +721,6 @@ func refreshRemotePeers() {
 						updated.IP = current.IP
 						updated.APIToken = current.APIToken
 						updated.Password = current.Password
-						updated.PasswordOnly = current.PasswordOnly
 						remoteNodes[i] = updated
 					} else {
 						remoteNodes[i].Status = "offline"

@@ -56,7 +56,6 @@ type MeshNode struct {
 	Fingerprint    string  `json:"fingerprint,omitempty"`
 	APIToken       string  `json:"-"`
 	Password       string  `json:"-"`
-	PasswordOnly   bool    `json:"password_only,omitempty"`
 	Cores          int     `json:"cores"`
 	CPULoad        float64 `json:"cpu_load"`
 	RAMUsedGB      float64 `json:"ram_used_gb"`
@@ -537,21 +536,15 @@ func handleAction(req *RPCRequest) {
 		}
 		cfg := loadMeshConfig()
 		samePeerIP := savedPeer != nil && strings.EqualFold(ip, savedPeer.IP)
-		tok := effectiveToken
-		if tok == "" && samePeerIP {
-			tok = savedPeer.APIToken
+		explicitTok := effectiveToken
+		if explicitTok == "" && samePeerIP {
+			explicitTok = savedPeer.APIToken
 		}
-		suppressToken := (effectiveToken == "" && password != "") || (samePeerIP && (savedPeer.PasswordOnly || (savedPeer.Password != "" && savedPeer.APIToken == "")))
-		if tok == "" && !suppressToken {
-			tok = cfg.PairingToken
+		explicitPass := password
+		if explicitPass == "" && samePeerIP {
+			explicitPass = savedPeer.Password
 		}
-		pass := password
-		if pass == "" && samePeerIP {
-			pass = savedPeer.Password
-		}
-		if pass == "" {
-			pass = cfg.DefaultPassword
-		}
+		tok, pass := effectiveCredentials(explicitTok, explicitPass, cfg)
 		var expectedFP string
 		if samePeerIP {
 			expectedFP = savedPeer.Fingerprint
@@ -605,7 +598,6 @@ func handleAction(req *RPCRequest) {
 		clearPass, _ := raw.Args["clear_password"].(bool)
 		if effectiveToken != "" {
 			foundNode.APIToken = effectiveToken
-			foundNode.PasswordOnly = false
 		} else if clearTok {
 			foundNode.APIToken = ""
 		}
@@ -613,9 +605,6 @@ func handleAction(req *RPCRequest) {
 			foundNode.Password = password
 		} else if clearPass {
 			foundNode.Password = ""
-		}
-		if foundNode.Password != "" && foundNode.APIToken == "" {
-			foundNode.PasswordOnly = true
 		}
 		if err := persistPeerUpsert(*foundNode, clearTok, clearPass); err != nil {
 			sendError(req.ID, -32003, "Could not save updated node", err.Error())
@@ -676,14 +665,7 @@ func handleAction(req *RPCRequest) {
 			return
 		}
 		cfg := loadMeshConfig()
-		tok := target.APIToken
-		if tok == "" && !target.PasswordOnly && !(target.Password != "" && target.APIToken == "") {
-			tok = cfg.PairingToken
-		}
-		pass := target.Password
-		if pass == "" {
-			pass = cfg.DefaultPassword
-		}
+		tok, pass := effectiveCredentials(target.APIToken, target.Password, cfg)
 		updated, err := fetchRemoteWithAuth(target.IP, tok, pass, cfg.ListenPort, target.Fingerprint)
 		if err != nil {
 			sendError(req.ID, -32004, "Node ping failed", err.Error())
@@ -692,7 +674,6 @@ func handleAction(req *RPCRequest) {
 		updated.ID, updated.Name, updated.Role = target.ID, target.Name, target.Role
 		updated.APIToken = target.APIToken
 		updated.Password = target.Password
-		updated.PasswordOnly = target.PasswordOnly
 		if err := persistPeerUpsert(updated, false, false); err != nil {
 			sendError(req.ID, -32005, "Could not save node status", err.Error())
 			return
