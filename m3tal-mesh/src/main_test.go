@@ -332,6 +332,22 @@ func TestSetSettingsClearPairingToken(t *testing.T) {
 	}
 }
 
+func TestSetSettingsReplacementPrioritizedOverClear(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := saveMeshConfig(meshConfig{PairingToken: "old-secret", ListenPort: 9321}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := runActionForTest(t, 1, `{"action":"set_settings","args":{"pairing_token":"new-secret","clear_pairing_token":true}}`)
+	if resp.Error != nil {
+		t.Fatalf("set_settings failed: %s", resp.Error.Message)
+	}
+	cfg := loadMeshConfig()
+	if cfg.PairingToken != "new-secret" {
+		t.Fatalf("expected replacement token 'new-secret' to be saved, got %q", cfg.PairingToken)
+	}
+}
+
 func TestDiscoveryEnabledSetting(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 

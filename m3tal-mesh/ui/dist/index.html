@@ -449,6 +449,12 @@
         document.getElementById('mesh-discovery-enabled').checked = meshConfig.discovery_enabled;
         document.getElementById('mesh-safety-warning').style.display = meshConfig.require_pairing_token ? 'none' : 'block';
         document.getElementById('mesh-node-port').value = meshConfig.listen_port;
+        document.getElementById('mesh-pairing-token').oninput = function() {
+          if (this.value.trim() !== '') {
+            clearMeshTokenRequested = false;
+            if (status.textContent.includes('marked for removal')) status.textContent = '';
+          }
+        };
         status.textContent = '';
       } catch (err) { status.textContent = err.message; }
     }
@@ -463,10 +469,11 @@
         discovery_enabled: isDisc,
         listen_port: Number(document.getElementById('mesh-node-port').value) || 9321,
       };
-      if (clearMeshTokenRequested) {
-        cfg.clear_pairing_token = true;
-      } else if (rawToken) {
+      if (rawToken) {
         cfg.pairing_token = rawToken;
+        clearMeshTokenRequested = false;
+      } else if (clearMeshTokenRequested) {
+        cfg.clear_pairing_token = true;
       }
 
       try {

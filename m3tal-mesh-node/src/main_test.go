@@ -204,3 +204,19 @@ func TestNodeSetSettingsClearPairingToken(t *testing.T) {
 		t.Fatalf("expected PairingToken to be empty, got %q", cfg.PairingToken)
 	}
 }
+
+func TestNodeSetSettingsReplacementPrioritizedOverClear(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := saveNodeRuntimeConfig(nodeRuntimeConfig{PairingToken: "existing-node-secret", ListenPort: 9321, BroadcastMDNS: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := runNodeActionForTest(t, 1, `{"action_id":"set_settings","args":{"pairing_token":"new-replacement","clear_pairing_token":true}}`)
+	if resp.Error != nil {
+		t.Fatalf("set_settings failed: %s", resp.Error.Message)
+	}
+	cfg := loadNodeRuntimeConfig()
+	if cfg.PairingToken != "new-replacement" {
+		t.Fatalf("expected replacement token 'new-replacement', got %q", cfg.PairingToken)
+	}
+}

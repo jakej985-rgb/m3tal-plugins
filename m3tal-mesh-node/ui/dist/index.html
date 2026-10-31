@@ -77,6 +77,12 @@
         warningEl.style.display = requireCheckbox.checked ? 'none' : 'block';
         document.getElementById('listen-port').value = cfg.listen_port || 9321;
         document.getElementById('broadcast-mdns').checked = cfg.broadcast_mdns !== false;
+        tokenInput.oninput = function() {
+          if (this.value.trim() !== '') {
+            clearRequested = false;
+            if (statusEl.textContent.includes('marked for removal')) statusEl.textContent = '';
+          }
+        };
       } catch (err) { statusEl.textContent = err.message; statusEl.className = 'status error'; }
     }
     document.getElementById('settings-form').addEventListener('submit', async (event) => {
@@ -89,10 +95,11 @@
         listen_port: Number(document.getElementById('listen-port').value) || 9321,
         broadcast_mdns: document.getElementById('broadcast-mdns').checked,
       };
-      if (clearRequested) {
-        config.clear_pairing_token = true;
-      } else if (rawToken) {
+      if (rawToken) {
         config.pairing_token = rawToken;
+        clearRequested = false;
+      } else if (clearRequested) {
+        config.clear_pairing_token = true;
       }
       try {
         const res = await fetch(endpoint, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'set_settings',args:config})});

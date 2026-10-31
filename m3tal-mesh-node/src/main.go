@@ -299,12 +299,10 @@ func handleAction(req *RPCRequest) {
 		})
 	case "set_settings":
 		cfg := loadNodeRuntimeConfig()
-		if clear, ok := params.Args["clear_pairing_token"].(bool); ok && clear {
+		if value, ok := params.Args["pairing_token"].(string); ok && strings.TrimSpace(value) != "" {
+			cfg.PairingToken = strings.TrimSpace(value)
+		} else if clear, ok := params.Args["clear_pairing_token"].(bool); ok && clear {
 			cfg.PairingToken = ""
-		} else if value, ok := params.Args["pairing_token"].(string); ok {
-			if trimmed := strings.TrimSpace(value); trimmed != "" {
-				cfg.PairingToken = trimmed
-			}
 		}
 		if value, ok := params.Args["require_pairing_token"].(bool); ok {
 			cfg.RequirePairingToken = &value

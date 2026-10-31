@@ -573,12 +573,10 @@ func handleAction(req *RPCRequest) {
 		})
 	case "set_settings":
 		cfg := loadMeshConfig()
-		if clear, ok := raw.Args["clear_pairing_token"].(bool); ok && clear {
+		if value, ok := raw.Args["pairing_token"].(string); ok && strings.TrimSpace(value) != "" {
+			cfg.PairingToken = strings.TrimSpace(value)
+		} else if clear, ok := raw.Args["clear_pairing_token"].(bool); ok && clear {
 			cfg.PairingToken = ""
-		} else if value, ok := raw.Args["pairing_token"].(string); ok {
-			if trimmed := strings.TrimSpace(value); trimmed != "" {
-				cfg.PairingToken = trimmed
-			}
 		}
 		if value, ok := raw.Args["require_pairing_token"].(bool); ok {
 			cfg.RequirePairingToken = &value
