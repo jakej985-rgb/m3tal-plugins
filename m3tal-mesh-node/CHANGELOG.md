@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.0] - 2026-10-31
+
+### 🚀 Changes & Improvements
+- **fix(mesh): resolve review-orchestrator findings for catalog, schemas, auth, and credentials** (`0dfa5cb`)
+- **fix(mesh): authenticate password-required discovery candidates with HMAC proof and support secondary password inheritance** (`a957e88`)
+- **fix(mesh-node): remove unreachable nothing-configured branch in nodeTelemetryHandler** (`938f5e9`)
+- **fix(mesh): remove clear_token alias, restore IsPairingTokenRequired helper, and enforce HMAC auth** (`a07070e`)
+- **fix(mesh): remove alias sprawl and standardize on pairing_token and require_pairing_token** (`f549567`)
+- **fix(mesh): resolve security review findings for credentials, challenge auth, and UI elements** (`a247eff`)
+- **feat(mesh): support REST API auth with optional password and add remote connections card** (`c5d0664`)
+
+---
+
 ## [0.2.0] - 2026-10-31
 
 ### 🚀 Changes & Improvements

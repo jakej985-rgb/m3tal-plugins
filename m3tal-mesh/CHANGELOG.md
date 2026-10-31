@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.0] - 2026-10-31
+
+### 🚀 Changes & Improvements
+- **fix(mesh): resolve review-orchestrator findings for catalog, schemas, auth, and credentials** (`0dfa5cb`)
+- **fix(mesh): rollback peer persistence if saving pairing token fails** (`39d1a5e`)
+- **fix(mesh): drop unneeded clear_token/clear_password parsing in test_node** (`94bdf93`)
+- **fix(mesh): renegotiate test_node probe mode when test credentials change** (`93fa26a`)
+- **fix(mesh): drop redundant prevPasswordOnly save/restore in update_node** (`c9eae7e`)
+- **fix(mesh): renegotiate probe mode on credential changes and use isPairing directly** (`936854d`)
+- **fix(mesh): persist paired peer before updating pairing token and introduce persistPairedPeer** (`d7d3935`)
+- **fix(mesh): check pairing ID conflicts atomically under peerMutationMu in persistPeerUpsert** (`ef28e43`)
+- **fix(mesh): detect node ID conflicts in pairing path to prevent overwriting moved peers** (`8ca09cd`)
+- **fix(mesh): honor clear_password in update_node, keep DefaultPassword dynamic on peers, and clean up effectiveCredentials** (`77722dc`)
+- **fix(mesh): require passwords configured on peers and remove DefaultPassword from effectiveCredentials** (`c12442c`)
+- **fix(mesh): persist peer fingerprint safely and restrict DefaultPassword fallback** (`6623206`)
+- **fix(mesh): negotiate and retain pin during refresh and ping** (`4388952`)
+- **fix(mesh): clear discovery credentials on switch, drop redundant cfg reload, and clean up test coverage** (`557a7a5`)
+- **fix(mesh): normalize node addresses on update/test and restrict DefaultPassword to mesh token peers** (`aa2c3fe`)
+- **fix(mesh): block DefaultPassword retry for custom token peers and preserve PasswordOnly mode on probe failure** (`c767d89`)
+- **fix(mesh): restrict DefaultPassword fallback to mesh token peers and make passwordOnly non-variadic** (`cf8445f`)
+- **fix(mesh): pin authenticated fingerprint on retry and enforce non-variadic fingerprint** (`30111d8`)
+- **fix(mesh): withhold DefaultPassword across all paths unless fingerprint is pinned and add complete test coverage** (`b2eabe4`)
+- **fix(mesh): protect default password from exfiltration, clear stored credentials on address change, and harden test assertions** (`edbf88d`)
+- **fix(mesh): restrict saved credentials fallback in test_node strictly to matching IP** (`65a8ef0`)
+- **fix(mesh): reuse saved credentials in test_node on address change and wrap ErrTokenRejected on unsigned response** (`5b238eb`)
+- **fix(mesh): preserve PasswordOnly on probe failure, remove persistPeerUpsert override, and do not wrap ErrTokenRejected on proof failure** (`f6fb1c8`)
+- **fix(mesh): wrap ErrTokenRejected sentinel, negotiate mode on credential change, and fix PasswordOnly preservation** (`34be222`)
+- **fix(mesh): unify connection negotiation helper, infer PasswordOnly, and serialize to disk** (`605553d`)
+- **fix(mesh): authenticate password-required discovery candidates with HMAC proof and support secondary password inheritance** (`a957e88`)
+- **fix(mesh): handle password-required candidates using typed sentinel error for explicit pairing** (`b29bc36`)
+- **fix(mesh): restrict discovery strictly to token-authenticated candidates** (`276f1e1`)
+- **fix(mesh): unify credential selection helper, remove PasswordOnly field, and present password-required candidates** (`feba96b`)
+- **fix(mesh): resolve password-only inheritance, discovery password leak, per-node tokens, and MeshNode state duplication** (`9c5aeac`)
+- **fix(mesh): restore discovery results container display in scanNetwork** (`47fdddc`)
+- **fix(mesh): remove clear_token alias, restore IsPairingTokenRequired helper, and enforce HMAC auth** (`a07070e`)
+- **fix(mesh): remove alias sprawl and standardize on pairing_token and require_pairing_token** (`f549567`)
+- **fix(mesh): verify TLS certificate during handshake before sending credentials** (`3d534a0`)
+- **fix(mesh): restrict saved credentials to matching IP in test_node, pin fingerprint with password, and avoid stale credentials on IP reuse** (`d959231`)
+- **fix(mesh): support peer re-pairing and refactor discovery result clearing** (`7317a30`)
+- **fix(mesh): reject duplicate peer IP on update and clear discovery results in edit mode** (`799ce8f`)
+- **fix(mesh): pass default password in discovery and preserve inherited credentials on pair** (`9a32366`)
+- **fix(mesh): unpin fingerprint on address change and clean up pairing API** (`bbba39d`)
+- **fix(mesh): resolve security review findings for credentials, challenge auth, and UI elements** (`a247eff`)
+- **feat(mesh): support REST API auth with optional password and add remote connections card** (`c5d0664`)
+
+---
+
 ## [0.2.0] - 2026-10-31
 
 ### 🚀 Changes & Improvements
