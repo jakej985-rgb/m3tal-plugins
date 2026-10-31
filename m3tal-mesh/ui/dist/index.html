@@ -1292,6 +1292,7 @@
                 document.getElementById('edit-node-id').value = '';
                 document.getElementById('input-ip').value = node.ip;
                 document.getElementById('input-name').value = node.name || '';
+                document.getElementById('input-token').value = '';
                 document.getElementById('input-password').value = '';
                 document.getElementById('input-password').focus();
               });
@@ -1324,6 +1325,8 @@
       document.getElementById('edit-node-id').value = '';
       document.getElementById('input-ip').value = ip;
       document.getElementById('input-name').value = name;
+      document.getElementById('input-token').value = '';
+      document.getElementById('input-password').value = '';
       await submitPairNode();
     }
 

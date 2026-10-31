@@ -646,7 +646,6 @@ func handleAction(req *RPCRequest) {
 			credsChanged = true
 		}
 		if addressChanged || credsChanged {
-			cfg := loadMeshConfig()
 			probePasswordOnly := foundNode.PasswordOnly
 			if addressChanged {
 				probePasswordOnly = false

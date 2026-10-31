@@ -800,7 +800,7 @@ func TestUpdateNodeClearsCredentialsOnAddressChange(t *testing.T) {
 	}
 }
 
-func TestTestNodePreservesPasswordOnlyModeForUnchangedSavedAddressWithBlankCredentials(t *testing.T) {
+func TestTestNodePreservesPasswordOnlyModeForUnchangedSavedAddress(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	remoteNodes = []MeshNode{}
 
@@ -853,7 +853,7 @@ func TestTestNodePreservesPasswordOnlyModeForUnchangedSavedAddressWithBlankCrede
 		t.Fatal(err)
 	}
 
-	// test_node for the unchanged saved address with blank credentials
+	// test_node for the unchanged saved address inherits saved password and mode
 	testReq := fmt.Sprintf(`{"action":"test_node","args":{"node_id":"saved-pw-node-1","ip":%q}}`, addr)
 	resp := runActionForTest(t, 24, testReq)
 	if resp.Error != nil {
@@ -862,6 +862,25 @@ func TestTestNodePreservesPasswordOnlyModeForUnchangedSavedAddressWithBlankCrede
 	resMap, ok := resp.Result.(map[string]interface{})
 	if !ok || resMap["success"] != true {
 		t.Fatalf("expected successful test_node response, got: %+v", resp.Result)
+	}
+
+	// A password-only peer with blank password cannot inherit DefaultPassword and fails test_node
+	blankPwPeer := MeshNode{
+		ID:           "saved-blank-pw-node",
+		Name:         "pw-blank-node",
+		IP:           addr,
+		Fingerprint:  fp,
+		PasswordOnly: true,
+		APIToken:     "",
+		Password:     "",
+	}
+	if err := persistPeerUpsert(blankPwPeer, false, false); err != nil {
+		t.Fatal(err)
+	}
+	blankTestReq := fmt.Sprintf(`{"action":"test_node","args":{"node_id":"saved-blank-pw-node","ip":%q}}`, addr)
+	blankResp := runActionForTest(t, 25, blankTestReq)
+	if blankResp.Error == nil {
+		t.Fatal("expected test_node to fail for password-only peer with blank password")
 	}
 }
 

@@ -527,9 +527,6 @@ func pairAndPersistPeer(address, name, role, token, password string) (MeshNode, 
 	}
 	node.APIToken = token
 	node.Password = password
-	if passwordOnly && node.Password == "" && cfg.DefaultPassword != "" {
-		node.Password = cfg.DefaultPassword
-	}
 	node.PasswordOnly = passwordOnly
 
 	if cfg.PairingToken == "" && token != "" {
