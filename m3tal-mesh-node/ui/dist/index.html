@@ -87,7 +87,7 @@
           ...(body.data ?? {})
         };
         const tokenInput = document.getElementById('pairing-token');
-        hasPairingToken = !!(cfg.has_api_token || cfg.has_pairing_token);
+        hasPairingToken = !!cfg.has_pairing_token;
         clearRequested = false;
         tokenInput.value = '';
         tokenInput.placeholder = hasPairingToken ? 'Configured — leave blank to keep current' : 'Enter an API token or shared secret';
@@ -100,7 +100,7 @@
         passInput.placeholder = hasPassword ? 'Configured — leave blank to keep current' : 'Optional secondary password';
         document.getElementById('clear-password-btn').style.display = hasPassword ? 'inline' : 'none';
 
-        requireCheckbox.checked = cfg.require_auth !== undefined ? cfg.require_auth : (cfg.require_pairing_token !== false);
+        requireCheckbox.checked = cfg.require_pairing_token !== false;
         warningEl.style.display = requireCheckbox.checked ? 'none' : 'block';
         document.getElementById('listen-port').value = cfg.listen_port || 9321;
         document.getElementById('broadcast-mdns').checked = cfg.broadcast_mdns !== false;
@@ -126,17 +126,14 @@
       const rawToken = document.getElementById('pairing-token').value.trim();
       const rawPass = document.getElementById('node-password').value.trim();
       const config = {
-        require_auth: requireCheckbox.checked,
         require_pairing_token: requireCheckbox.checked,
         listen_port: Number(document.getElementById('listen-port').value) || 9321,
         broadcast_mdns: document.getElementById('broadcast-mdns').checked,
       };
       if (rawToken) {
-        config.api_token = rawToken;
         config.pairing_token = rawToken;
         clearRequested = false;
       } else if (clearRequested) {
-        config.clear_api_token = true;
         config.clear_pairing_token = true;
       }
       if (rawPass) {
@@ -165,10 +162,10 @@
           );
         }
         statusEl.textContent = 'Saved. Credentials take effect immediately; restart Mesh Node after changing the port or LAN discovery setting.';
-        if (actionData.has_api_token !== undefined || actionData.has_pairing_token !== undefined) {
-          hasPairingToken = !!(actionData.has_api_token || actionData.has_pairing_token);
+        if (actionData.has_pairing_token !== undefined) {
+          hasPairingToken = !!actionData.has_pairing_token;
         } else {
-          hasPairingToken = clearRequested ? false : (hasPairingToken || !!config.api_token || !!config.pairing_token);
+          hasPairingToken = clearRequested ? false : (hasPairingToken || !!config.pairing_token);
         }
         clearRequested = false;
         document.getElementById('pairing-token').value = '';

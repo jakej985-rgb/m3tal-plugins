@@ -301,11 +301,7 @@ func handleAction(req *RPCRequest) {
 		cfg := loadNodeRuntimeConfig()
 		if value, ok := params.Args["pairing_token"].(string); ok && strings.TrimSpace(value) != "" {
 			cfg.PairingToken = strings.TrimSpace(value)
-		} else if value, ok := params.Args["api_token"].(string); ok && strings.TrimSpace(value) != "" {
-			cfg.PairingToken = strings.TrimSpace(value)
 		} else if clear, ok := params.Args["clear_pairing_token"].(bool); ok && clear {
-			cfg.PairingToken = ""
-		} else if clear, ok := params.Args["clear_api_token"].(bool); ok && clear {
 			cfg.PairingToken = ""
 		}
 
@@ -316,8 +312,6 @@ func handleAction(req *RPCRequest) {
 		}
 
 		if value, ok := params.Args["require_pairing_token"].(bool); ok {
-			cfg.RequirePairingToken = &value
-		} else if value, ok := params.Args["require_auth"].(bool); ok {
 			cfg.RequirePairingToken = &value
 		}
 
@@ -334,11 +328,9 @@ func handleAction(req *RPCRequest) {
 		sendResponse(req.ID, map[string]interface{}{
 			"success":               true,
 			"message":               "Settings saved. Restart the plugin if you changed its port or LAN discovery setting.",
-			"has_api_token":         cfg.GetAPIToken() != "",
 			"has_password":          cfg.Password != "",
-			"has_pairing_token":     cfg.GetAPIToken() != "",
-			"require_auth":          cfg.IsAuthRequired(),
-			"require_pairing_token": cfg.IsAuthRequired(),
+			"has_pairing_token":     cfg.PairingToken != "",
+			"require_pairing_token": cfg.RequirePairingToken == nil || *cfg.RequirePairingToken,
 			"listen_port":           cfg.ListenPort,
 			"broadcast_mdns":        cfg.BroadcastMDNS,
 		})
@@ -346,11 +338,9 @@ func handleAction(req *RPCRequest) {
 		cfg := loadNodeRuntimeConfig()
 		sendResponse(req.ID, map[string]interface{}{
 			"success":               true,
-			"has_api_token":         cfg.GetAPIToken() != "",
 			"has_password":          cfg.Password != "",
-			"has_pairing_token":     cfg.GetAPIToken() != "",
-			"require_auth":          cfg.IsAuthRequired(),
-			"require_pairing_token": cfg.IsAuthRequired(),
+			"has_pairing_token":     cfg.PairingToken != "",
+			"require_pairing_token": cfg.RequirePairingToken == nil || *cfg.RequirePairingToken,
 			"listen_port":           cfg.ListenPort,
 			"broadcast_mdns":        cfg.BroadcastMDNS,
 		})

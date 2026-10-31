@@ -644,5 +644,93 @@ func TestRePairingExistingIPUpdatesAndReplacesPeer(t *testing.T) {
 	}
 }
 
+func TestFetchRemoteRejectsHandshakeFingerprintMismatch(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/challenge" {
+			_ = json.NewEncoder(w).Encode(map[string]string{"nonce": "validnonce1234567890"})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	addr := server.Listener.Addr().String()
+	_, err := fetchRemoteWithAuth(addr, "test-token", "", 9321, "0000000000000000000000000000000000000000000000000000000000000000")
+	if err == nil {
+		t.Fatal("expected handshake rejection on mismatched fingerprint, got success")
+	}
+	if !strings.Contains(err.Error(), "certificate fingerprint mismatch") {
+		t.Fatalf("expected fingerprint mismatch error, got: %v", err)
+	}
+}
+
+func TestRePairingExistingIPClearsCredentialOverridesWhenEmpty(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	remoteNodes = []MeshNode{}
+
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fp := testServerFingerprint(server)
+		if r.URL.Path == "/api/v1/challenge" {
+			w.Header().Set("Content-Type", "application/json")
+			nonce, _ := newMeshNonce()
+			_ = json.NewEncoder(w).Encode(map[string]string{"nonce": nonce})
+			return
+		}
+		if r.URL.Path == "/api/v1/telemetry" {
+			body, _ := json.Marshal(remoteResponse{
+				Hostname:  "test-repaired-node",
+				Telemetry: remoteTelemetry{Hostname: "test-repaired-node", Cores: 4},
+			})
+			nonce := r.Header.Get("X-M3TAL-Nonce")
+			cNonce := r.Header.Get("X-M3TAL-Client-Nonce")
+			w.Header().Set("X-M3TAL-Proof", responseProof("default-mesh-token", nonce, cNonce, body, fp))
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(body)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	addr := server.Listener.Addr().String()
+
+	// 1. Initial peer has explicit override token
+	p1 := MeshNode{
+		ID:          "node-repaired-id",
+		Name:        "Initial Name",
+		IP:          addr,
+		APIToken:    "old-override-token",
+		HasAPIToken: true,
+	}
+	if err := persistPeerUpsert(p1); err != nil {
+		t.Fatalf("persistPeerUpsert failed: %v", err)
+	}
+
+	// Configure default pairing token
+	cfg := meshConfig{PairingToken: "default-mesh-token", ListenPort: 9321}
+	if err := saveMeshConfig(cfg); err != nil {
+		t.Fatalf("saveMeshConfig failed: %v", err)
+	}
+
+	// 2. Re-pairing with empty token should replace old override and inherit defaults
+	paired, err := pairAndPersistPeer(addr, "Re-paired Node", "server", "", "")
+	if err != nil {
+		t.Fatalf("pairAndPersistPeer failed: %v", err)
+	}
+	if paired.APIToken != "" || paired.HasAPIToken {
+		t.Fatalf("expected paired node to have cleared override token, got: %+v", paired)
+	}
+
+	peers := snapshotPeers()
+	if len(peers) != 1 {
+		t.Fatalf("expected 1 peer, got: %+v", peers)
+	}
+	if peers[0].APIToken != "" || peers[0].HasAPIToken {
+		t.Fatalf("expected persisted peer to have cleared override token, got: %+v", peers[0])
+	}
+}
+
+
 
 

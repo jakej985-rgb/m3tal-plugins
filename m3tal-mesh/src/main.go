@@ -525,13 +525,13 @@ func handleAction(req *RPCRequest) {
 			return
 		}
 		cfg := loadMeshConfig()
-		samePeerIP := savedPeer != nil && (ip == "" || strings.EqualFold(ip, savedPeer.IP))
+		samePeerIP := savedPeer != nil && strings.EqualFold(ip, savedPeer.IP)
 		tok := effectiveToken
 		if tok == "" && samePeerIP {
 			tok = savedPeer.APIToken
 		}
 		if tok == "" {
-			tok = cfg.GetDefaultAPIToken()
+			tok = cfg.PairingToken
 		}
 		pass := password
 		if pass == "" && samePeerIP {
@@ -672,7 +672,7 @@ func handleAction(req *RPCRequest) {
 		cfg := loadMeshConfig()
 		tok := target.APIToken
 		if tok == "" {
-			tok = cfg.GetDefaultAPIToken()
+			tok = cfg.PairingToken
 		}
 		pass := target.Password
 		if pass == "" {
@@ -710,7 +710,7 @@ func handleAction(req *RPCRequest) {
 			})
 			return
 		}
-		if cfg.IsPairingTokenRequired() && cfg.PairingToken == "" && cfg.DefaultPassword == "" {
+		if (cfg.RequirePairingToken == nil || *cfg.RequirePairingToken) && cfg.PairingToken == "" && cfg.DefaultPassword == "" {
 			sendResponse(req.ID, map[string]interface{}{
 				"success":    true,
 				"discovered": 0,
@@ -733,27 +733,17 @@ func handleAction(req *RPCRequest) {
 		cfg := loadMeshConfig()
 		if value, ok := raw.Args["pairing_token"].(string); ok && strings.TrimSpace(value) != "" {
 			cfg.PairingToken = strings.TrimSpace(value)
-		} else if value, ok := raw.Args["api_token"].(string); ok && strings.TrimSpace(value) != "" {
-			cfg.PairingToken = strings.TrimSpace(value)
-		} else if value, ok := raw.Args["default_api_token"].(string); ok && strings.TrimSpace(value) != "" {
-			cfg.PairingToken = strings.TrimSpace(value)
 		} else if clear, ok := raw.Args["clear_pairing_token"].(bool); ok && clear {
-			cfg.PairingToken = ""
-		} else if clear, ok := raw.Args["clear_api_token"].(bool); ok && clear {
 			cfg.PairingToken = ""
 		}
 
 		if value, ok := raw.Args["default_password"].(string); ok && strings.TrimSpace(value) != "" {
-			cfg.DefaultPassword = strings.TrimSpace(value)
-		} else if value, ok := raw.Args["password"].(string); ok && strings.TrimSpace(value) != "" {
 			cfg.DefaultPassword = strings.TrimSpace(value)
 		} else if clear, ok := raw.Args["clear_password"].(bool); ok && clear {
 			cfg.DefaultPassword = ""
 		}
 
 		if value, ok := raw.Args["require_pairing_token"].(bool); ok {
-			cfg.RequirePairingToken = &value
-		} else if value, ok := raw.Args["require_auth"].(bool); ok {
 			cfg.RequirePairingToken = &value
 		}
 		if value, ok := raw.Args["discovery_enabled"].(bool); ok {
@@ -769,12 +759,9 @@ func handleAction(req *RPCRequest) {
 		sendResponse(req.ID, map[string]interface{}{
 			"success":               true,
 			"message":               "Mesh settings saved",
-			"has_api_token":         cfg.GetDefaultAPIToken() != "",
 			"has_password":          cfg.DefaultPassword != "",
-			"has_default_password":  cfg.DefaultPassword != "",
-			"has_pairing_token":     cfg.GetDefaultAPIToken() != "",
-			"require_auth":          cfg.IsPairingTokenRequired(),
-			"require_pairing_token": cfg.IsPairingTokenRequired(),
+			"has_pairing_token":     cfg.PairingToken != "",
+			"require_pairing_token": cfg.RequirePairingToken == nil || *cfg.RequirePairingToken,
 			"discovery_enabled":     cfg.IsDiscoveryEnabled(),
 			"listen_port":           cfg.ListenPort,
 		})
@@ -810,12 +797,9 @@ func handleAction(req *RPCRequest) {
 		cfg := loadMeshConfig()
 		sendResponse(req.ID, map[string]interface{}{
 			"success":               true,
-			"has_api_token":         cfg.GetDefaultAPIToken() != "",
 			"has_password":          cfg.DefaultPassword != "",
-			"has_default_password":  cfg.DefaultPassword != "",
-			"has_pairing_token":     cfg.GetDefaultAPIToken() != "",
-			"require_auth":          cfg.IsPairingTokenRequired(),
-			"require_pairing_token": cfg.IsPairingTokenRequired(),
+			"has_pairing_token":     cfg.PairingToken != "",
+			"require_pairing_token": cfg.RequirePairingToken == nil || *cfg.RequirePairingToken,
 			"discovery_enabled":     cfg.IsDiscoveryEnabled(),
 			"listen_port":           cfg.ListenPort,
 		})

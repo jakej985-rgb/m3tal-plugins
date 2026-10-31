@@ -38,41 +38,6 @@ type nodeRuntimeConfig struct {
 	BroadcastMDNS       bool   `json:"broadcast_mdns"`
 }
 
-func (c *nodeRuntimeConfig) UnmarshalJSON(data []byte) error {
-	type Alias nodeRuntimeConfig
-	var aux struct {
-		Alias
-		APIToken    string `json:"api_token,omitempty"`
-		RequireAuth *bool  `json:"require_auth,omitempty"`
-	}
-	if err := json.Unmarshal(data, &aux); err != nil {
-		return err
-	}
-	*c = nodeRuntimeConfig(aux.Alias)
-	if c.PairingToken == "" && aux.APIToken != "" {
-		c.PairingToken = aux.APIToken
-	}
-	if c.RequirePairingToken == nil && aux.RequireAuth != nil {
-		c.RequirePairingToken = aux.RequireAuth
-	}
-	return nil
-}
-
-func (c nodeRuntimeConfig) GetAPIToken() string {
-	return c.PairingToken
-}
-
-func (c nodeRuntimeConfig) IsAuthRequired() bool {
-	if c.RequirePairingToken != nil {
-		return *c.RequirePairingToken
-	}
-	return true
-}
-
-func (c nodeRuntimeConfig) IsPairingTokenRequired() bool {
-	return c.IsAuthRequired()
-}
-
 func nodeConfigPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
@@ -218,9 +183,9 @@ func nodeTelemetryHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	current := loadNodeRuntimeConfig()
-	expectedToken := current.GetAPIToken()
+	expectedToken := current.PairingToken
 	expectedPass := current.Password
-	authRequired := current.IsAuthRequired()
+	authRequired := current.RequirePairingToken == nil || *current.RequirePairingToken
 
 	if authRequired && expectedToken == "" && expectedPass == "" {
 		http.Error(w, "authentication is required but neither API token nor password is configured on this node", http.StatusServiceUnavailable)

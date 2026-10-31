@@ -34,42 +34,6 @@ type meshConfig struct {
 	DiscoveryEnabled    *bool  `json:"discovery_enabled,omitempty"`
 }
 
-func (c *meshConfig) UnmarshalJSON(data []byte) error {
-	type Alias meshConfig
-	var aux struct {
-		Alias
-		DefaultAPIToken string `json:"default_api_token,omitempty"`
-		APIToken        string `json:"api_token,omitempty"`
-		RequireAuth     *bool  `json:"require_auth,omitempty"`
-	}
-	if err := json.Unmarshal(data, &aux); err != nil {
-		return err
-	}
-	*c = meshConfig(aux.Alias)
-	if c.PairingToken == "" {
-		if aux.APIToken != "" {
-			c.PairingToken = aux.APIToken
-		} else if aux.DefaultAPIToken != "" {
-			c.PairingToken = aux.DefaultAPIToken
-		}
-	}
-	if c.RequirePairingToken == nil && aux.RequireAuth != nil {
-		c.RequirePairingToken = aux.RequireAuth
-	}
-	return nil
-}
-
-func (c meshConfig) GetDefaultAPIToken() string {
-	return c.PairingToken
-}
-
-func (c meshConfig) IsPairingTokenRequired() bool {
-	if c.RequirePairingToken == nil {
-		return true
-	}
-	return *c.RequirePairingToken
-}
-
 func (c meshConfig) IsDiscoveryEnabled() bool {
 	if c.DiscoveryEnabled == nil {
 		return true
@@ -120,14 +84,12 @@ func newPinnedHTTPClient(expectedFP string, timeout time.Duration) *http.Client 
 					sum := sha256.Sum256(rawCerts[0])
 					got := hex.EncodeToString(sum[:])
 					if expectedFP != "" && got != expectedFP {
-						return fmt.Errorf("certificate fingerprint mismatch during TLS handshake: expected %s, got %s", expectedFP, got)
+						return fmt.Errorf("certificate fingerprint mismatch: expected %s, got %s", expectedFP, got)
 					}
 					return nil
 				},
 			},
-			IdleConnTimeout:     30 * time.Second,
-			MaxIdleConns:        64,
-			MaxIdleConnsPerHost: 8,
+			DisableKeepAlives: true,
 		},
 	}
 }
@@ -317,7 +279,7 @@ func fetchRemote(address, token string, port int, expectedFingerprint ...string)
 
 func fetchRemoteWithAuth(address, token, password string, port int, expectedFingerprint ...string) (MeshNode, error) {
 	cfg := loadMeshConfig()
-	if token == "" && password == "" && cfg.IsPairingTokenRequired() {
+	if token == "" && password == "" && (cfg.RequirePairingToken == nil || *cfg.RequirePairingToken) {
 		return MeshNode{}, fmt.Errorf("pairing token is required to authenticate mesh nodes; configure a shared secret in Mesh Settings or enter a pairing token")
 	}
 	endpoint, err := normalizeNodeAddress(address, port)
@@ -332,7 +294,11 @@ func fetchRemoteWithAuth(address, token, password string, port int, expectedFing
 		if err != nil {
 			return MeshNode{}, fmt.Errorf("invalid node address: %w", err)
 		}
-		challengeResp, err := meshHTTPClient.Do(challengeReq)
+		challengeClient := meshHTTPClient
+		if len(expectedFingerprint) > 0 && expectedFingerprint[0] != "" {
+			challengeClient = newPinnedHTTPClient(expectedFingerprint[0], 4*time.Second)
+		}
+		challengeResp, err := challengeClient.Do(challengeReq)
 		if err != nil {
 			return MeshNode{}, fmt.Errorf("cannot reach %s: %w", address, err)
 		}
@@ -340,11 +306,6 @@ func fetchRemoteWithAuth(address, token, password string, port int, expectedFing
 		if challengeResp.TLS != nil && len(challengeResp.TLS.PeerCertificates) > 0 {
 			sum := sha256.Sum256(challengeResp.TLS.PeerCertificates[0].Raw)
 			peerFingerprint = hex.EncodeToString(sum[:])
-		}
-		if len(expectedFingerprint) > 0 && expectedFingerprint[0] != "" {
-			if peerFingerprint != "" && peerFingerprint != expectedFingerprint[0] {
-				return MeshNode{}, fmt.Errorf("%s certificate fingerprint mismatch: expected %s, got %s", address, expectedFingerprint[0], peerFingerprint)
-			}
 		}
 		if challengeResp.StatusCode != http.StatusOK {
 			return MeshNode{}, fmt.Errorf("%s is not a compatible m3tal-mesh-node (HTTP %d)", address, challengeResp.StatusCode)
@@ -381,6 +342,8 @@ func fetchRemoteWithAuth(address, token, password string, port int, expectedFing
 	telemetryClient := meshHTTPClient
 	if peerFingerprint != "" {
 		telemetryClient = newPinnedHTTPClient(peerFingerprint, 4*time.Second)
+	} else if len(expectedFingerprint) > 0 && expectedFingerprint[0] != "" {
+		telemetryClient = newPinnedHTTPClient(expectedFingerprint[0], 4*time.Second)
 	}
 	resp, err := telemetryClient.Do(req)
 	latency := int(time.Since(started).Milliseconds())
@@ -397,18 +360,9 @@ func fetchRemoteWithAuth(address, token, password string, port int, expectedFing
 	if resp.StatusCode != http.StatusOK {
 		return MeshNode{}, fmt.Errorf("%s is not a compatible m3tal-mesh-node (HTTP %d)", address, resp.StatusCode)
 	}
-	if resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
+	if peerFingerprint == "" && resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
 		sum := sha256.Sum256(resp.TLS.PeerCertificates[0].Raw)
-		telemetryFP := hex.EncodeToString(sum[:])
-		if peerFingerprint != "" && telemetryFP != peerFingerprint {
-			return MeshNode{}, fmt.Errorf("%s certificate fingerprint changed during connection", address)
-		}
-		peerFingerprint = telemetryFP
-	}
-	if len(expectedFingerprint) > 0 && expectedFingerprint[0] != "" {
-		if peerFingerprint != "" && peerFingerprint != expectedFingerprint[0] {
-			return MeshNode{}, fmt.Errorf("%s certificate fingerprint mismatch: expected %s, got %s", address, expectedFingerprint[0], peerFingerprint)
-		}
+		peerFingerprint = hex.EncodeToString(sum[:])
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
@@ -463,13 +417,13 @@ func pairAndPersistPeer(address, name, role, token, password string) (MeshNode, 
 
 	connectToken := explicitToken
 	if connectToken == "" {
-		connectToken = cfg.GetDefaultAPIToken()
+		connectToken = cfg.PairingToken
 	}
 	connectPass := explicitPass
 	if connectPass == "" && cfg.DefaultPassword != "" {
 		connectPass = cfg.DefaultPassword
 	}
-	if cfg.IsPairingTokenRequired() && connectToken == "" && connectPass == "" {
+	if (cfg.RequirePairingToken == nil || *cfg.RequirePairingToken) && connectToken == "" && connectPass == "" {
 		return MeshNode{}, fmt.Errorf("pairing token is required to authenticate remote mesh nodes; configure a shared secret in Mesh Settings or enter a pairing token")
 	}
 	if cfg.PairingToken != "" && connectToken != "" && connectToken != cfg.PairingToken && connectPass == "" {
@@ -489,6 +443,8 @@ func pairAndPersistPeer(address, name, role, token, password string) (MeshNode, 
 	node.Password = explicitPass
 	node.HasPassword = explicitPass != ""
 	node.HasAPIToken = explicitToken != ""
+	node.ClearAPIToken = true
+	node.ClearPassword = true
 
 	if cfg.PairingToken == "" && explicitToken != "" {
 		cfg.PairingToken = explicitToken
@@ -507,7 +463,7 @@ func discoverAndVerifyPeers() ([]MeshNode, error) {
 	if !cfg.IsDiscoveryEnabled() {
 		return []MeshNode{}, nil
 	}
-	if cfg.IsPairingTokenRequired() && cfg.PairingToken == "" && cfg.DefaultPassword == "" {
+	if (cfg.RequirePairingToken == nil || *cfg.RequirePairingToken) && cfg.PairingToken == "" && cfg.DefaultPassword == "" {
 		return []MeshNode{}, nil
 	}
 	resolver, err := zeroconf.NewResolver(zeroconf.SelectIPTraffic(zeroconf.IPv4))
@@ -679,7 +635,7 @@ func snapshotPeers() []MeshNode {
 func refreshRemotePeers() {
 	cfg := loadMeshConfig()
 	peers := snapshotPeers()
-	defaultToken := cfg.GetDefaultAPIToken()
+	defaultToken := cfg.PairingToken
 
 	var wg sync.WaitGroup
 	for _, existing := range peers {
@@ -695,7 +651,7 @@ func refreshRemotePeers() {
 			if pass == "" {
 				pass = cfg.DefaultPassword
 			}
-			if cfg.IsPairingTokenRequired() && tok == "" && pass == "" {
+			if (cfg.RequirePairingToken == nil || *cfg.RequirePairingToken) && tok == "" && pass == "" {
 				nodeMutex.Lock()
 				for i := range remoteNodes {
 					if remoteNodes[i].ID == existing.ID {
