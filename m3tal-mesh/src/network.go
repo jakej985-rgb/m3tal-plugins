@@ -127,7 +127,12 @@ func saveMeshConfig(cfg meshConfig) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(cfg, "", "  ")
+	// Do not persist dynamically inherited Core API key into local plugin config file
+	cfgToSave := cfg
+	if coreKey := resolveCoreAPIKey(); coreKey != "" && cfgToSave.PairingToken == coreKey {
+		cfgToSave.PairingToken = ""
+	}
+	b, err := json.MarshalIndent(cfgToSave, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -136,6 +141,53 @@ func saveMeshConfig(cfg meshConfig) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// resolveCoreAPIKey retrieves the central API key configured in M3TAL Core.
+func resolveCoreAPIKey() string {
+	if k := os.Getenv("M3TAL_API_KEY"); k != "" {
+		return k
+	}
+	if k := os.Getenv("M3TAL_API_TOKEN"); k != "" {
+		return k
+	}
+	if k := os.Getenv("API_TOKEN"); k != "" {
+		return k
+	}
+	home, err := os.UserHomeDir()
+	if err == nil && home != "" {
+		// 1. Check Core's api_keys.json (managed by Core API Key Manager)
+		keyFile := filepath.Join(home, ".config", "m3tal", "api_keys.json")
+		if data, err := os.ReadFile(keyFile); err == nil {
+			var parsed struct {
+				PrimaryToken string `json:"primary_token"`
+			}
+			if err := json.Unmarshal(data, &parsed); err == nil && parsed.PrimaryToken != "" {
+				return parsed.PrimaryToken
+			}
+		}
+		// 2. Check Core's config.json
+		coreCfgFile := filepath.Join(home, ".config", "m3tal", "config.json")
+		if data, err := os.ReadFile(coreCfgFile); err == nil {
+			var parsed struct {
+				APIToken string `json:"api_token"`
+			}
+			if err := json.Unmarshal(data, &parsed); err == nil && parsed.APIToken != "" {
+				return parsed.APIToken
+			}
+		}
+		// 3. Check legacy ~/.m3tal/config
+		legacyCfg := filepath.Join(home, ".m3tal", "config")
+		if data, err := os.ReadFile(legacyCfg); err == nil {
+			var parsed struct {
+				APIToken string `json:"api_token"`
+			}
+			if err := json.Unmarshal(data, &parsed); err == nil && parsed.APIToken != "" {
+				return parsed.APIToken
+			}
+		}
+	}
+	return ""
 }
 
 func loadMeshConfig() meshConfig {
@@ -150,6 +202,12 @@ func loadMeshConfig() meshConfig {
 	}
 	if cfg.ListenPort < 1 || cfg.ListenPort > 65535 {
 		cfg.ListenPort = 9321
+	}
+	// Inherit Core's managed API key if no explicit cluster token is configured
+	if coreKey := resolveCoreAPIKey(); coreKey != "" {
+		if cfg.PairingToken == "" || cfg.PairingToken == coreKey {
+			cfg.PairingToken = coreKey
+		}
 	}
 	return cfg
 }

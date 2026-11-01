@@ -20,7 +20,7 @@
     },
     "pairing_token": {
       "type": "string",
-      "description": "Shared secret used to authenticate remote mesh nodes."
+      "description": "Optional local pairing token fallback (inherited from M3TAL Core API key by default)."
     },
     "require_pairing_token": {
       "type": "boolean",

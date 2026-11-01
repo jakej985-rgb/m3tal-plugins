@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -375,3 +377,61 @@ func TestTelemetryEndpointHMACBranchWithPasswordAndRejectEmptyToken(t *testing.T
 		t.Fatalf("expected 200 for REST password on password-only node, got %d", resp.StatusCode)
 	}
 }
+
+func TestNodeRuntimeConfigInheritsCoreAPIKey(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+	t.Setenv("M3TAL_API_KEY", "")
+	t.Setenv("M3TAL_API_TOKEN", "")
+	t.Setenv("API_TOKEN", "")
+
+	// 1. Negative Case: No token and no Core API key configured -> empty PairingToken
+	cfg := loadNodeRuntimeConfig()
+	if cfg.PairingToken != "" {
+		t.Fatalf("expected empty PairingToken, got %q", cfg.PairingToken)
+	}
+
+	// 2. Environment inheritance
+	t.Setenv("M3TAL_API_KEY", "node-env-secret-key-32chars!!")
+	cfgEnv := loadNodeRuntimeConfig()
+	if cfgEnv.PairingToken != "node-env-secret-key-32chars!!" {
+		t.Fatalf("expected node to inherit M3TAL_API_KEY, got %q", cfgEnv.PairingToken)
+	}
+
+	// 3. Fallback file inheritance from Core's api_keys.json
+	t.Setenv("M3TAL_API_KEY", "")
+	coreDir := filepath.Join(tempHome, ".config", "m3tal")
+	_ = os.MkdirAll(coreDir, 0700)
+	keyFile := filepath.Join(coreDir, "api_keys.json")
+	_ = os.WriteFile(keyFile, []byte(`{"primary_token": "core-gen-key-v1"}`), 0600)
+
+	cfgFile := loadNodeRuntimeConfig()
+	if cfgFile.PairingToken != "core-gen-key-v1" {
+		t.Fatalf("expected node to inherit from api_keys.json, got %q", cfgFile.PairingToken)
+	}
+
+	// 4. Saving node settings must not persist the inherited Core API key to disk
+	if err := saveNodeRuntimeConfig(cfgFile); err != nil {
+		t.Fatalf("saveNodeRuntimeConfig failed: %v", err)
+	}
+	nodeCfgPath := filepath.Join(tempHome, ".config", "m3tal", "plugins", "mesh-node", "config.json")
+	data, err := os.ReadFile(nodeCfgPath)
+	if err != nil {
+		t.Fatalf("could not read saved node config: %v", err)
+	}
+	var onDisk nodeRuntimeConfig
+	if err := json.Unmarshal(data, &onDisk); err != nil {
+		t.Fatalf("could not parse saved node config: %v", err)
+	}
+	if onDisk.PairingToken != "" {
+		t.Errorf("expected inherited Core key to NOT be persisted to disk, got %q", onDisk.PairingToken)
+	}
+
+	// 5. Dynamic rotation: updating Core's api_keys.json updates loadNodeRuntimeConfig immediately
+	_ = os.WriteFile(keyFile, []byte(`{"primary_token": "core-gen-key-v2-rotated"}`), 0600)
+	cfgRotated := loadNodeRuntimeConfig()
+	if cfgRotated.PairingToken != "core-gen-key-v2-rotated" {
+		t.Fatalf("expected node to pick up rotated Core key, got %q", cfgRotated.PairingToken)
+	}
+}
+

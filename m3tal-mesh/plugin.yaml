@@ -25,13 +25,8 @@ spec:
   settings:
     - id: "mesh_settings"
       title: "Mesh Fleet Federation"
-      description: "Mesh cluster federation, shared pairing secret, and remote node authentication"
+      description: "Mesh cluster federation, remote node discovery, and authentication (uses M3TAL Core API key)"
       fields:
-        - key: "pairing_token"
-          label: "Default API Token / Secret"
-          type: "password"
-          default: ""
-          description: "Default API token used to authenticate connection and telemetry requests with remote nodes"
         - key: "default_password"
           label: "Default Connection Password (Optional)"
           type: "password"
