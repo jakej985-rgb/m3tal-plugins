@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.0] - 2026-11-01
+
+### 🚀 Changes & Improvements
+- **feat(mesh): inherit Core API key instead of local custom token (#9)** (`d097c87`)
+
+---
+
 ## [0.3.0] - 2026-10-31
 
 ### 🚀 Changes & Improvements
