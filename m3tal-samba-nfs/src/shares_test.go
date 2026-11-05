@@ -342,3 +342,112 @@ func TestSortedUnique(t *testing.T) {
 		t.Errorf("got %v want %v", got, want)
 	}
 }
+
+func TestCreateSmbShareRejectsNewlines(t *testing.T) {
+	dir := t.TempDir()
+	smbPath := filepath.Join(dir, "smb.conf")
+	shareDir := filepath.Join(dir, "sharedata")
+	if err := os.MkdirAll(shareDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(smbPath, []byte(sampleSmbConf), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := pluginConfig{SmbConfPath: smbPath, ExportsPath: filepath.Join(dir, "exports"), AutoReload: boolPtr(false)}
+
+	for _, s := range []Share{
+		{Protocol: "smb", Name: "evil", Path: shareDir, Comment: "x\n\tadmin users = *"},
+		{Protocol: "smb", Name: "evil\n[global]", Path: shareDir},
+		{Protocol: "smb", Name: "evil2", Path: shareDir, Users: []string{"alice\nbob"}},
+	} {
+		if _, err := CreateSmbShare(cfg, s); err == nil {
+			t.Errorf("expected rejection for %+v", s)
+		}
+	}
+	data, _ := os.ReadFile(smbPath)
+	if strings.Contains(string(data), "admin users") {
+		t.Error("injected directive written to smb.conf")
+	}
+}
+
+func TestConfigPathValidation(t *testing.T) {
+	for _, p := range []string{"/etc/samba/smb.conf", "/etc/samba/alt.conf"} {
+		if err := validateSmbConfPath(p); err != nil {
+			t.Errorf("validateSmbConfPath(%q): %v", p, err)
+		}
+	}
+	for _, p := range []string{"/etc/passwd", "/etc/samba/../shadow", "relative.conf", "/etc/samba/x.txt"} {
+		if err := validateSmbConfPath(p); err == nil {
+			t.Errorf("validateSmbConfPath(%q) should fail", p)
+		}
+	}
+	for _, p := range []string{"/etc/exports", "/etc/exports.d/media.exports"} {
+		if err := validateExportsPath(p); err != nil {
+			t.Errorf("validateExportsPath(%q): %v", p, err)
+		}
+	}
+	for _, p := range []string{"/etc/shadow", "/etc/exports/../passwd", "exports"} {
+		if err := validateExportsPath(p); err == nil {
+			t.Errorf("validateExportsPath(%q) should fail", p)
+		}
+	}
+}
+
+func TestRestartServicesAllowlist(t *testing.T) {
+	if _, err := RestartServices([]string{"ssh"}); err == nil {
+		t.Error("expected rejection of non-allowlisted service")
+	}
+	if _, err := RestartServices([]string{"smbd", "evil.service"}); err == nil {
+		t.Error("expected rejection when any service is not allowlisted")
+	}
+}
+
+func TestCreateNFSExportRejectsBadTokens(t *testing.T) {
+	dir := t.TempDir()
+	exportsPath := filepath.Join(dir, "exports")
+	shareDir := filepath.Join(dir, "nfsdata")
+	if err := os.MkdirAll(shareDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(exportsPath, []byte(""), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := pluginConfig{SmbConfPath: filepath.Join(dir, "smb.conf"), ExportsPath: exportsPath, AutoReload: boolPtr(false)}
+
+	if _, err := CreateNFSExport(cfg, shareDir, []string{"*"}, "rw *(ro)"); err == nil {
+		t.Error("expected rejection of options containing whitespace/parens")
+	}
+	if _, err := CreateNFSExport(cfg, shareDir, []string{"10.0.0.1 extra"}, "rw"); err == nil {
+		t.Error("expected rejection of client containing whitespace")
+	}
+	data, _ := os.ReadFile(exportsPath)
+	if strings.Contains(string(data), shareDir) {
+		t.Error("rejected export was written")
+	}
+}
+
+func TestDeleteNFSExportContinuation(t *testing.T) {
+	dir := t.TempDir()
+	exportsPath := filepath.Join(dir, "exports")
+	shareDir := filepath.Join(dir, "nfsdata")
+	if err := os.MkdirAll(shareDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	content := "# header\n" + shareDir + " 10.0.0.1(rw) \\\n  10.0.0.2(ro)\n/srv/other *\n"
+	if err := os.WriteFile(exportsPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := pluginConfig{SmbConfPath: filepath.Join(dir, "smb.conf"), ExportsPath: exportsPath, AutoReload: boolPtr(false)}
+
+	if _, err := DeleteNFSExport(cfg, shareDir, "10.0.0.1"); err != nil {
+		t.Fatalf("DeleteNFSExport on continued line: %v", err)
+	}
+	data, _ := os.ReadFile(exportsPath)
+	out := string(data)
+	if strings.Contains(out, "10.0.0.1") {
+		t.Error("continued-line client still present")
+	}
+	if !strings.Contains(out, "10.0.0.2") || !strings.Contains(out, "/srv/other") {
+		t.Errorf("unrelated content damaged:\n%s", out)
+	}
+}

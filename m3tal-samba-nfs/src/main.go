@@ -140,11 +140,11 @@ func handleInit(req *RPCRequest) {
 			{"id": "create_smb_user", "label": "Create Samba User", "description": "Add a Samba user account with a password", "confirm": false},
 			{"id": "delete_smb_user", "label": "Delete Samba User", "description": "Remove a Samba user account", "confirm": true},
 			{"id": "set_smb_password", "label": "Set Samba Password", "description": "Change a Samba user's password", "confirm": false},
-			{"id": "mount_share", "label": "Mount Network Share", "description": "Mount a remote CIFS (SMB) or NFS share to a local mount point", "confirm": false},
-			{"id": "unmount_share", "label": "Unmount Share", "description": "Unmount a network share from a local mount point", "confirm": false},
+			{"id": "mount_share", "label": "Mount Network Share", "description": "Mount a remote CIFS (SMB) or NFS share to a local mount point", "confirm": true},
+			{"id": "unmount_share", "label": "Unmount Share", "description": "Unmount a network share from a local mount point", "confirm": true},
 			{"id": "restart_services", "label": "Restart Share Services", "description": "Restart smbd, nmbd, and nfs-server", "confirm": true},
 			{"id": "get_settings", "label": "Get Settings", "description": "Read plugin configuration", "confirm": false},
-			{"id": "set_settings", "label": "Save Settings", "description": "Save plugin configuration", "confirm": false},
+			{"id": "set_settings", "label": "Save Settings", "description": "Save plugin configuration", "confirm": true},
 		},
 	})
 }
@@ -499,9 +499,17 @@ func handleAction(req *RPCRequest) {
 	case "set_settings":
 		newCfg := cfg
 		if v := strArg(args, "smb_conf_path"); v != "" {
+			if err := validateSmbConfPath(v); err != nil {
+				fail("%s", err)
+				return
+			}
 			newCfg.SmbConfPath = v
 		}
 		if v := strArg(args, "exports_path"); v != "" {
+			if err := validateExportsPath(v); err != nil {
+				fail("%s", err)
+				return
+			}
 			newCfg.ExportsPath = v
 		}
 		if v, ok := args["auto_reload"].(bool); ok {

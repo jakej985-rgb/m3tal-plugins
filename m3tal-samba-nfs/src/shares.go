@@ -113,6 +113,30 @@ func (c pluginConfig) isAutoReload() bool {
 	return c.AutoReload == nil || *c.AutoReload
 }
 
+// validateSmbConfPath restricts the managed smb.conf location to Samba's
+// config directory so settings cannot redirect writes at arbitrary files.
+func validateSmbConfPath(path string) error {
+	if !filepath.IsAbs(path) || strings.Contains(path, "..") {
+		return fmt.Errorf("smb_conf_path must be an absolute path without '..': %q", path)
+	}
+	if filepath.Dir(path) != "/etc/samba" || !strings.HasSuffix(path, ".conf") {
+		return fmt.Errorf("smb_conf_path must be a .conf file inside /etc/samba: %q", path)
+	}
+	return nil
+}
+
+// validateExportsPath restricts the managed exports file to the standard
+// NFS locations so settings cannot redirect writes at arbitrary files.
+func validateExportsPath(path string) error {
+	if !filepath.IsAbs(path) || strings.Contains(path, "..") {
+		return fmt.Errorf("exports_path must be an absolute path without '..': %q", path)
+	}
+	if path == "/etc/exports" || strings.HasPrefix(path, "/etc/exports.d/") {
+		return nil
+	}
+	return fmt.Errorf("exports_path must be /etc/exports or a file under /etc/exports.d: %q", path)
+}
+
 func backupFile(path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -303,10 +327,13 @@ func smbReload(cfg pluginConfig) string {
 	var notes []string
 	if out, err := runCmd("smbcontrol", "all", "reload-config"); err == nil {
 		notes = append(notes, "smbcontrol reload-config: "+out)
-	} else if out, err := runCmd("systemctl", "reload", "smbd"); err == nil {
-		notes = append(notes, "systemctl reload smbd: ok")
 	} else {
-		notes = append(notes, fmt.Sprintf("smbd reload failed: %s", strings.TrimSpace(out)))
+		ctrlOut := strings.TrimSpace(out)
+		if out2, err2 := runCmd("systemctl", "reload", "smbd"); err2 == nil {
+			notes = append(notes, "systemctl reload smbd: ok (smbcontrol: "+ctrlOut+")")
+		} else {
+			notes = append(notes, fmt.Sprintf("smbd reload failed: smbcontrol: %s; systemctl: %s", ctrlOut, strings.TrimSpace(out2)))
+		}
 	}
 	return strings.Join(notes, "; ")
 }
@@ -317,6 +344,16 @@ func CreateSmbShare(cfg pluginConfig, s Share) (string, error) {
 	}
 	if s.Path == "" {
 		return "", fmt.Errorf("path is required")
+	}
+	for label, v := range map[string]string{"name": s.Name, "path": s.Path, "comment": s.Comment} {
+		if strings.ContainsAny(v, "\r\n") {
+			return "", fmt.Errorf("%s must not contain newlines", label)
+		}
+	}
+	for _, u := range s.Users {
+		if strings.ContainsAny(u, "\r\n \t") {
+			return "", fmt.Errorf("invalid user entry %q", u)
+		}
 	}
 	if st, err := os.Stat(s.Path); err != nil || !st.IsDir() {
 		return "", fmt.Errorf("path %q is not an existing directory", s.Path)
@@ -575,12 +612,18 @@ func CreateNFSExport(cfg pluginConfig, path string, clients []string, options st
 	if options == "" {
 		options = "rw,sync,no_subtree_check"
 	}
+	if strings.ContainsAny(options, " \t\r\n()") {
+		return "", fmt.Errorf("options must not contain whitespace or parentheses: %q", options)
+	}
 
 	var toks []string
 	for _, c := range clients {
 		c = strings.TrimSpace(c)
 		if c == "" {
 			continue
+		}
+		if strings.ContainsAny(c, " \t\r\n()") {
+			return "", fmt.Errorf("invalid client %q", c)
 		}
 		toks = append(toks, fmt.Sprintf("%s(%s)", c, options))
 	}
@@ -615,6 +658,41 @@ func CreateNFSExport(cfg pluginConfig, path string, clients []string, options st
 	return fmt.Sprintf("NFS export added: %s; %s", newline, nfsReload(cfg)), nil
 }
 
+// joinContinuationLines merges backslash-continued physical lines into
+// logical lines so exports entries spanning multiple lines are handled as a
+// unit. Comment and blank lines are preserved as-is.
+func joinContinuationLines(lines []string) []string {
+	var out []string
+	var pending strings.Builder
+	flush := func() {
+		if pending.Len() > 0 {
+			out = append(out, pending.String())
+			pending.Reset()
+		}
+	}
+	for _, l := range lines {
+		trimmed := strings.TrimSpace(l)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			flush()
+			out = append(out, l)
+			continue
+		}
+		if strings.HasSuffix(trimmed, "\\") {
+			pending.WriteString(strings.TrimSuffix(trimmed, "\\"))
+			pending.WriteString(" ")
+			continue
+		}
+		if pending.Len() > 0 {
+			pending.WriteString(trimmed)
+			flush()
+		} else {
+			out = append(out, l)
+		}
+	}
+	flush()
+	return out
+}
+
 func DeleteNFSExport(cfg pluginConfig, path, client string) (string, error) {
 	lines, err := smbConfLines(cfg.ExportsPath)
 	if err != nil {
@@ -623,6 +701,7 @@ func DeleteNFSExport(cfg pluginConfig, path, client string) (string, error) {
 		}
 		return "", fmt.Errorf("cannot read %s: %w", cfg.ExportsPath, err)
 	}
+	lines = joinContinuationLines(lines)
 
 	removed := false
 	var out []string
@@ -781,6 +860,13 @@ func UnmountShare(target string) (string, error) {
 	return fmt.Sprintf("Unmounted %s", target), nil
 }
 
+// restartableServices is the allowlist of systemd units this plugin may
+// restart on behalf of the share manager.
+var restartableServices = map[string]bool{
+	"smbd": true, "nmbd": true, "winbind": true,
+	"nfs-server": true, "nfs-kernel-server": true,
+}
+
 func RestartServices(names []string) (string, error) {
 	if len(names) == 0 {
 		names = []string{"smbd", "nmbd", "nfs-server"}
@@ -790,6 +876,9 @@ func RestartServices(names []string) (string, error) {
 		svc = strings.TrimSpace(svc)
 		if svc == "" {
 			continue
+		}
+		if !restartableServices[svc] {
+			return "", fmt.Errorf("service %q is not managed by this plugin", svc)
 		}
 		out, err := runCmd("systemctl", "restart", svc)
 		if err != nil {
