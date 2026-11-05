@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.8.1] - 2026-11-05
+
+### 🚀 Changes & Improvements
+- **🛡️ Sentinel: [HIGH] Validate container target inputs to prevent CLI flag injection (#17)** (`022e1a0`)
+
+---
+
 ## [0.8.0] - 2026-11-05
 
 ### 🚀 Changes & Improvements
