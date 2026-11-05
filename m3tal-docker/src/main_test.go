@@ -131,3 +131,52 @@ func TestInspectContainer(t *testing.T) {
 	handleRequest(&req)
 }
 
+func TestTargetValidationRejectsMaliciousInput(t *testing.T) {
+	SetMockMode(true)
+	defer SetMockMode(false)
+
+	maliciousTargets := []string{
+		"",
+		"--checkpoint=foo",
+		"-t",
+		"; rm -rf /",
+		"container $(whoami)",
+		"cont/ainer",
+		"../../etc/passwd",
+		"container name with spaces",
+		".hidden",
+	}
+
+	for _, target := range maliciousTargets {
+		if isValidContainerTarget(target) {
+			t.Errorf("expected target %q to be rejected by isValidContainerTarget", target)
+		}
+		if err := StartContainer(target); err == nil {
+			t.Errorf("expected StartContainer to reject %q", target)
+		}
+		if err := StopContainer(target); err == nil {
+			t.Errorf("expected StopContainer to reject %q", target)
+		}
+		if err := RestartContainer(target); err == nil {
+			t.Errorf("expected RestartContainer to reject %q", target)
+		}
+		if _, err := GetLogs(target, 50); err == nil {
+			t.Errorf("expected GetLogs to reject %q", target)
+		}
+		if _, err := InspectContainer(target); err == nil {
+			t.Errorf("expected InspectContainer to reject %q", target)
+		}
+	}
+
+	validTargets := []string{
+		"c1a2b3c4d5e6",
+		"m3tal-proxy",
+		"my_web_service.1",
+		"web-1",
+	}
+	for _, target := range validTargets {
+		if !isValidContainerTarget(target) {
+			t.Errorf("expected target %q to be valid", target)
+		}
+	}
+}

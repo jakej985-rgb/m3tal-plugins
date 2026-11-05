@@ -118,8 +118,32 @@ func attachStats(containers []Container) {
 	}
 }
 
+// isValidContainerTarget validates container identifiers or names against strict
+// naming rules to prevent CLI argument injection (e.g. strings starting with '-')
+// and path traversal or shell manipulation when passed to docker exec.
+func isValidContainerTarget(target string) bool {
+	if len(target) == 0 || len(target) > 128 {
+		return false
+	}
+	// Docker container names and hex IDs cannot begin with '-' or '.'
+	first := target[0]
+	if !((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || (first >= '0' && first <= '9')) {
+		return false
+	}
+	for i := 1; i < len(target); i++ {
+		c := target[i]
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
 // StartContainer starts a stopped container.
 func StartContainer(target string) error {
+	if !isValidContainerTarget(target) {
+		return fmt.Errorf("invalid container identifier: %q", target)
+	}
 	mockMu.Lock()
 	if mockEnabled {
 		defer mockMu.Unlock()
@@ -143,6 +167,9 @@ func StartContainer(target string) error {
 
 // StopContainer stops a running container.
 func StopContainer(target string) error {
+	if !isValidContainerTarget(target) {
+		return fmt.Errorf("invalid container identifier: %q", target)
+	}
 	mockMu.Lock()
 	if mockEnabled {
 		defer mockMu.Unlock()
@@ -166,6 +193,9 @@ func StopContainer(target string) error {
 
 // RestartContainer restarts a container.
 func RestartContainer(target string) error {
+	if !isValidContainerTarget(target) {
+		return fmt.Errorf("invalid container identifier: %q", target)
+	}
 	mockMu.Lock()
 	if mockEnabled {
 		defer mockMu.Unlock()
@@ -211,6 +241,9 @@ func PruneImages() (string, error) {
 
 // GetLogs fetches the tail logs of a container.
 func GetLogs(target string, tail int) (string, error) {
+	if !isValidContainerTarget(target) {
+		return "", fmt.Errorf("invalid container identifier: %q", target)
+	}
 	if tail <= 0 {
 		tail = 50
 	}
@@ -233,6 +266,9 @@ func GetLogs(target string, tail int) (string, error) {
 
 // InspectContainer inspects target container and returns low-level Docker metadata.
 func InspectContainer(target string) (map[string]interface{}, error) {
+	if !isValidContainerTarget(target) {
+		return nil, fmt.Errorf("invalid container identifier: %q", target)
+	}
 	mockMu.Lock()
 	if mockEnabled {
 		defer mockMu.Unlock()
