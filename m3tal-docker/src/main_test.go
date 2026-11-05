@@ -159,6 +159,58 @@ func TestApplyStatsOutput(t *testing.T) {
 	}
 }
 
+func TestValidateContainerTarget(t *testing.T) {
+	validTargets := []string{
+		"c1a2b3c4d5e6",
+		"m3tal-proxy",
+		"my_service.v1",
+		"container-123",
+		"A1b2C3",
+		"69a83d735fb29dc0a4cb29bdf934810294827103859203810284719283749281",
+	}
+
+	for _, target := range validTargets {
+		if err := validateContainerTarget(target); err != nil {
+			t.Errorf("validateContainerTarget(%q) returned unexpected error: %v", target, err)
+		}
+	}
+
+	invalidTargets := []string{
+		"",
+		"-f",
+		"--all",
+		"-checkpoint",
+		"foo/bar",
+		"container;rm -rf /",
+		"container|cat",
+		"container&echo",
+		"container name",
+		"container\nnewline",
+		strings.Repeat("a", 129),
+	}
+
+	for _, target := range invalidTargets {
+		if err := validateContainerTarget(target); err == nil {
+			t.Errorf("validateContainerTarget(%q) expected error, got nil", target)
+		}
+		if err := StartContainer(target); err == nil {
+			t.Errorf("StartContainer(%q) expected error, got nil", target)
+		}
+		if err := StopContainer(target); err == nil {
+			t.Errorf("StopContainer(%q) expected error, got nil", target)
+		}
+		if err := RestartContainer(target); err == nil {
+			t.Errorf("RestartContainer(%q) expected error, got nil", target)
+		}
+		if _, err := GetLogs(target, 50); err == nil {
+			t.Errorf("GetLogs(%q) expected error, got nil", target)
+		}
+		if _, err := InspectContainer(target); err == nil {
+			t.Errorf("InspectContainer(%q) expected error, got nil", target)
+		}
+	}
+}
+
 func BenchmarkApplyStatsOutput(b *testing.B) {
 	const n = 100
 	containers := make([]Container, n)

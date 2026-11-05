@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -153,8 +154,23 @@ func applyStatsOutput(containers []Container, output string) {
 	}
 }
 
+// containerTargetRe enforces standard Docker container ID / name format.
+// Prevents command-line flag injection (leading '-') and dangerous shell/path metacharacters.
+var containerTargetRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`)
+
+// validateContainerTarget ensures target is a valid Docker container ID or name.
+func validateContainerTarget(target string) error {
+	if !containerTargetRe.MatchString(target) {
+		return fmt.Errorf("invalid container identifier %q", target)
+	}
+	return nil
+}
+
 // StartContainer starts a stopped container.
 func StartContainer(target string) error {
+	if err := validateContainerTarget(target); err != nil {
+		return err
+	}
 	mockMu.Lock()
 	if mockEnabled {
 		defer mockMu.Unlock()
@@ -178,6 +194,9 @@ func StartContainer(target string) error {
 
 // StopContainer stops a running container.
 func StopContainer(target string) error {
+	if err := validateContainerTarget(target); err != nil {
+		return err
+	}
 	mockMu.Lock()
 	if mockEnabled {
 		defer mockMu.Unlock()
@@ -201,6 +220,9 @@ func StopContainer(target string) error {
 
 // RestartContainer restarts a container.
 func RestartContainer(target string) error {
+	if err := validateContainerTarget(target); err != nil {
+		return err
+	}
 	mockMu.Lock()
 	if mockEnabled {
 		defer mockMu.Unlock()
@@ -246,6 +268,9 @@ func PruneImages() (string, error) {
 
 // GetLogs fetches the tail logs of a container.
 func GetLogs(target string, tail int) (string, error) {
+	if err := validateContainerTarget(target); err != nil {
+		return "", err
+	}
 	if tail <= 0 {
 		tail = 50
 	}
@@ -268,6 +293,9 @@ func GetLogs(target string, tail int) (string, error) {
 
 // InspectContainer inspects target container and returns low-level Docker metadata.
 func InspectContainer(target string) (map[string]interface{}, error) {
+	if err := validateContainerTarget(target); err != nil {
+		return nil, err
+	}
 	mockMu.Lock()
 	if mockEnabled {
 		defer mockMu.Unlock()
