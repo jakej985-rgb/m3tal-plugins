@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.0] - 2026-11-05
+
+### 🚀 Changes & Improvements
+- **feat(ux): improve accessibility and focus in containers UI (#12)** (`a9fdf85`)
+
+---
+
+## [0.6.2] - 2026-11-05
+
+### 🚀 Changes & Improvements
+- **⚡ perf(m3tal-docker): optimize container stats matching to O(1) hash lookup (#10)** (`f3c1bfb`)
+
+---
+
 ## [0.6.1] - 2026-11-05
 
 ### 🚀 Changes & Improvements
