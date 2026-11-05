@@ -31,3 +31,17 @@ func TestAssessFreshnessFlagsFutureDates(t *testing.T) {
 		t.Fatalf("future date label = %q", got.Label)
 	}
 }
+
+func BenchmarkAssessFreshness(b *testing.B) {
+	// Sample realistic doc text with ~1000 words without an explicit review date
+	doc := "This is an architectural overview and guide to configure networking and manage container storage on linux. "
+	for len(doc) < 8000 {
+		doc += doc
+	}
+	now := time.Date(2026, time.November, 3, 0, 0, 0, 0, time.UTC)
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		AssessFreshness(doc, now)
+	}
+}
