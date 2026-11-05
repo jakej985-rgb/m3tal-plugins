@@ -116,3 +116,37 @@ func TestKnowledgeSearchCapsResultCount(t *testing.T) {
 		t.Fatalf("returned %d results, cap is %d", len(results), maxKnowledgeResults)
 	}
 }
+
+func TestSplitIdentifiers(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"", ""},
+		{"simple", "simple"},
+		{"CamelCaseIdentifier", "Camel Case Identifier"},
+		{"IPv4AddressAndIPv6Port", "IPv4 Address And IPv6 Port"},
+		{"m3talDockerPlugin", "m3tal Docker Plugin"},
+		{"HTTPResponse200OK", "HTTPResponse200 OK"},
+	}
+
+	for _, tc := range tests {
+		got := splitIdentifiers(tc.input)
+		if got != tc.want {
+			t.Errorf("splitIdentifiers(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+func BenchmarkSplitIdentifiers(b *testing.B) {
+	sampleDoc := "ThisIsACompoundIdentifier with SomeCamelCaseWords and snake_case_tokens. HTTPResponseCode should handle XMLDocument and JSONDataParsing correctly. "
+	for len(sampleDoc) < 8000 {
+		sampleDoc += sampleDoc
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		splitIdentifiers(sampleDoc)
+	}
+}
