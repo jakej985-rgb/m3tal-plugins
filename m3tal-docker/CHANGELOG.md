@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.8.0] - 2026-11-05
+
+### 🚀 Changes & Improvements
+- **feat(mesh): authenticate via Core API Key Manager keys + settings categories** (`5d21d5a`)
+
+---
+
 ## [0.7.0] - 2026-11-05
 
 ### 🚀 Changes & Improvements
