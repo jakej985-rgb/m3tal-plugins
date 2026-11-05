@@ -402,6 +402,47 @@ func TestRestartServicesAllowlist(t *testing.T) {
 	}
 }
 
+func TestValidateSmbUsername(t *testing.T) {
+	valid := []string{"alice", "bob_1", "carol.d", "user-name", "workstation$", "Admin", "_svc"}
+	for _, u := range valid {
+		if err := validateSmbUsername(u); err != nil {
+			t.Errorf("validateSmbUsername(%q) expected valid, got error: %v", u, err)
+		}
+	}
+
+	invalid := []string{
+		"",                      // empty
+		"-a",                    // flag injection
+		"--delete",              // flag injection
+		"user name",             // contains whitespace
+		"user;cat",              // command injection character
+		"user\nname",            // newline injection
+		"user`id`",              // backtick
+		"user$(whoami)",         // command substitution
+		"user/sub",              // slash
+		"user\\sub",             // backslash
+		"a_very_long_username_that_exceeds_thirty_two_characters_limit", // > 32 chars
+	}
+	for _, u := range invalid {
+		if err := validateSmbUsername(u); err == nil {
+			t.Errorf("validateSmbUsername(%q) expected failure, got nil", u)
+		}
+	}
+
+	// Test user creation rejects invalid username and password with newlines
+	if _, err := CreateSmbUser("-flag", "validpass"); err == nil {
+		t.Error("CreateSmbUser should reject usernames starting with '-'")
+	}
+	if _, err := CreateSmbUser("validuser", "pass\nnewline"); err == nil {
+		t.Error("CreateSmbUser should reject passwords containing newlines")
+	}
+
+	// Test user deletion rejects invalid username
+	if _, err := DeleteSmbUser("-flag"); err == nil {
+		t.Error("DeleteSmbUser should reject usernames starting with '-'")
+	}
+}
+
 func TestCreateNFSExportRejectsBadTokens(t *testing.T) {
 	dir := t.TempDir()
 	exportsPath := filepath.Join(dir, "exports")

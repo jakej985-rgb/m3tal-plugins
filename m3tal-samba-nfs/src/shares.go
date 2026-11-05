@@ -177,6 +177,19 @@ func binaryVersion(name string) string {
 // ---------------------------------------------------------------------------
 
 var smbShareNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
+// smbUsernameRe enforces standard POSIX/Samba username constraints (max 32 chars, optional trailing $ for machine accounts).
+// It prevents flag injection (leading '-') and dangerous metacharacters in smbpasswd/pdbedit command arguments.
+var smbUsernameRe = regexp.MustCompile(`^[A-Za-z0-9_.][A-Za-z0-9_.-]{0,31}\$?$`)
+
+func validateSmbUsername(username string) error {
+	if username == "" {
+		return fmt.Errorf("username is required")
+	}
+	if strings.HasPrefix(username, "-") || !smbUsernameRe.MatchString(username) {
+		return fmt.Errorf("invalid Samba username %q: must match %s and not begin with '-'", username, smbUsernameRe.String())
+	}
+	return nil
+}
 
 func isBuiltinShare(name string) bool {
 	switch strings.ToLower(name) {
@@ -422,11 +435,14 @@ func DeleteSmbShare(cfg pluginConfig, name string) (string, error) {
 }
 
 func CreateSmbUser(username, password string) (string, error) {
-	if username == "" {
-		return "", fmt.Errorf("username is required")
+	if err := validateSmbUsername(username); err != nil {
+		return "", err
 	}
 	if password == "" {
 		return "", fmt.Errorf("password is required")
+	}
+	if strings.ContainsAny(password, "\r\n") {
+		return "", fmt.Errorf("password must not contain newlines")
 	}
 	// smbpasswd -a -s adds a user and sets the password from stdin.
 	cmd := exec.Command("smbpasswd", "-a", "-s", username)
@@ -449,8 +465,8 @@ func CreateSmbUser(username, password string) (string, error) {
 }
 
 func DeleteSmbUser(username string) (string, error) {
-	if username == "" {
-		return "", fmt.Errorf("username is required")
+	if err := validateSmbUsername(username); err != nil {
+		return "", err
 	}
 	out, err := runCmd("pdbedit", "-x", username)
 	if err != nil {
