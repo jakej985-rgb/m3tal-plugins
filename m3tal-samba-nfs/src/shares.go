@@ -177,6 +177,7 @@ func binaryVersion(name string) string {
 // ---------------------------------------------------------------------------
 
 var smbShareNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
+
 // smbUsernameRe enforces standard POSIX/Samba username constraints (max 32 chars, optional trailing $ for machine accounts).
 // It prevents flag injection (leading '-') and dangerous metacharacters in smbpasswd/pdbedit command arguments.
 var smbUsernameRe = regexp.MustCompile(`^[A-Za-z0-9_.][A-Za-z0-9_.-]{0,31}\$?$`)

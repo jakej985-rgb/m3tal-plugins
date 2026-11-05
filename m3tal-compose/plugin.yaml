@@ -37,6 +37,7 @@ spec:
     - id: "compose_settings"
       title: "Compose Projects"
       description: "Project discovery and new stack storage settings"
+      category: "containers"
       fields:
         - key: "compose_dir"
           label: "Search folder"

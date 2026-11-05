@@ -327,7 +327,7 @@ func TestDiscoveryConcurrentVerification(t *testing.T) {
 
 	candidates := []string{slowServer.Listener.Addr().String(), fastServer.Listener.Addr().String()}
 	start := time.Now()
-	discovered := verifyCandidates(candidates, nil, "discovery-token", 9321)
+	discovered := verifyCandidates(candidates, nil, []string{"discovery-token"}, 9321)
 	elapsed := time.Since(start)
 	if len(discovered) != 1 || discovered[0].Name != "fast-node" {
 		t.Fatalf("concurrent verification failed to find fast node: %+v", discovered)
@@ -609,7 +609,7 @@ func TestDiscoveryVerifyCandidatesUsesPairingTokenAndNeverSendsPassword(t *testi
 	defer server.Close()
 
 	addr := server.Listener.Addr().String()
-	discovered := verifyCandidates([]string{addr}, nil, "discovery-secret-tok", 9321)
+	discovered := verifyCandidates([]string{addr}, nil, []string{"discovery-secret-tok"}, 9321)
 	if len(discovered) != 1 || discovered[0].Name != "discovered-box" {
 		t.Fatalf("expected candidate to be verified using pairing token HMAC proof, got: %+v", discovered)
 	}
@@ -971,7 +971,7 @@ func TestDiscoveryPresentsCandidatesRequiringPasswordForExplicitPairing(t *testi
 
 	addr := server.Listener.Addr().String()
 	candidateHosts := map[string]string{addr: "password-protected-box"}
-	discovered := verifyCandidates([]string{addr}, candidateHosts, "matching-shared-token", 9321)
+	discovered := verifyCandidates([]string{addr}, candidateHosts, []string{"matching-shared-token"}, 9321)
 	if len(discovered) != 1 {
 		t.Fatalf("expected candidate to be presented for explicit pairing, got: %+v", discovered)
 	}
@@ -994,7 +994,7 @@ func TestDiscoveryPresentsCandidatesRequiringPasswordForExplicitPairing(t *testi
 	}))
 	defer rogueServer.Close()
 	rogueAddr := rogueServer.Listener.Addr().String()
-	rogueDiscovered := verifyCandidates([]string{rogueAddr}, nil, "matching-shared-token", 9321)
+	rogueDiscovered := verifyCandidates([]string{rogueAddr}, nil, []string{"matching-shared-token"}, 9321)
 	if len(rogueDiscovered) != 0 {
 		t.Fatalf("unauthenticated rogue candidate without HMAC proof must not be listed as discovered: %+v", rogueDiscovered)
 	}

@@ -26,6 +26,7 @@ spec:
     - id: "mesh_node_settings"
       title: "Mesh Node Broadcaster"
       description: "Mesh Node telemetry sender, authentication token, and discovery settings"
+      category: "network"
       fields:
         - key: "pairing_token"
           label: "API Token / Shared Secret"

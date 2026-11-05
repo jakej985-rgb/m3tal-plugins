@@ -43,6 +43,7 @@ spec:
     - id: "docker_config"
       title: "Docker Host Engine"
       description: "Docker daemon socket path, polling cadence, and log viewing preferences"
+      category: "containers"
       fields:
         - key: "docker_host"
           label: "Docker Host Endpoint"

@@ -26,6 +26,7 @@ spec:
     - id: "mesh_settings"
       title: "Mesh Fleet Federation"
       description: "Mesh cluster federation, remote node discovery, and authentication (uses M3TAL Core API key)"
+      category: "network"
       fields:
         - key: "default_password"
           label: "Default Connection Password (Optional)"

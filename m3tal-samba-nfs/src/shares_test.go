@@ -411,16 +411,16 @@ func TestValidateSmbUsername(t *testing.T) {
 	}
 
 	invalid := []string{
-		"",                      // empty
-		"-a",                    // flag injection
-		"--delete",              // flag injection
-		"user name",             // contains whitespace
-		"user;cat",              // command injection character
-		"user\nname",            // newline injection
-		"user`id`",              // backtick
-		"user$(whoami)",         // command substitution
-		"user/sub",              // slash
-		"user\\sub",             // backslash
+		"",              // empty
+		"-a",            // flag injection
+		"--delete",      // flag injection
+		"user name",     // contains whitespace
+		"user;cat",      // command injection character
+		"user\nname",    // newline injection
+		"user`id`",      // backtick
+		"user$(whoami)", // command substitution
+		"user/sub",      // slash
+		"user\\sub",     // backslash
 		"a_very_long_username_that_exceeds_thirty_two_characters_limit", // > 32 chars
 	}
 	for _, u := range invalid {

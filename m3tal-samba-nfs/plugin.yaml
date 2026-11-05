@@ -37,6 +37,7 @@ spec:
     - id: "samba_nfs_config"
       title: "Share Manager"
       description: "Configuration file locations and reload behavior for Samba and NFS share management"
+      category: "file-sharing"
       fields:
         - key: "smb_conf_path"
           label: "Samba Configuration Path"
