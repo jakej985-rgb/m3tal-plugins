@@ -101,6 +101,14 @@
       color: #fff;
     }
 
+    .btn:focus-visible,
+    .btn-expand:focus-visible,
+    .copy-chip:focus-visible,
+    .env-filter-input:focus-visible {
+      outline: 2px solid var(--cyan);
+      outline-offset: 2px;
+    }
+
     .btn:disabled {
       opacity: 0.5;
       cursor: not-allowed;
@@ -852,7 +860,7 @@
 
         tr.innerHTML = `
           <td style="text-align: center; width: 36px;">
-            <button class="btn-expand ${isExpanded ? 'expanded' : ''}" onclick="toggleExpand('${c.id}', '${c.name}', event)" title="Expand / collapse container details">
+            <button class="btn-expand ${isExpanded ? 'expanded' : ''}" onclick="toggleExpand('${c.id}', '${c.name}', event)" title="Expand / collapse container details" aria-label="Toggle details for ${escapeHtml(c.name)}" aria-expanded="${isExpanded}">
               ▶
             </button>
           </td>
@@ -910,7 +918,10 @@
       if (expandedContainerIds.has(id)) {
         expandedContainerIds.delete(id);
         if (row) row.style.display = 'none';
-        if (btn) btn.classList.remove('expanded');
+        if (btn) {
+          btn.classList.remove('expanded');
+          btn.setAttribute('aria-expanded', 'false');
+        }
         if (tr) tr.classList.remove('is-expanded');
         const detailsBtn = tr ? tr.querySelector('.row-actions button') : null;
         if (detailsBtn) detailsBtn.innerText = 'Details';
@@ -919,7 +930,10 @@
 
       expandedContainerIds.add(id);
       if (row) row.style.display = '';
-      if (btn) btn.classList.add('expanded');
+      if (btn) {
+        btn.classList.add('expanded');
+        btn.setAttribute('aria-expanded', 'true');
+      }
       if (tr) tr.classList.add('is-expanded');
       const detailsBtn = tr ? tr.querySelector('.row-actions button') : null;
       if (detailsBtn) detailsBtn.innerText = 'Collapse';
