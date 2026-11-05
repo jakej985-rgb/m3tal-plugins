@@ -11,6 +11,7 @@ This repository contains all official and community plugins for the **M3TAL Core
   - Every running plugin subprocess, collector, and worker MUST identify as `m3tal-<process>` (e.g. `m3tal-docker`, `m3tal-stacks`, `m3tal-ai`, `m3tal-smart`) so operators and monitoring tools can instantly track high CPU, memory, or disk I/O usage in `top`, `htop`, or `m3tal-sysmon`.
   - **First-Party Plugins (Direct Execution)**: Compiles binaries canonically as `bin/m3tal-<process>`. M3TAL Core detects this and executes directly from its install location without creating symlinks, eliminating `/tmp` dependencies and avoiding `noexec` failures.
   - **Third-Party / Legacy Plugins (Runtime Symlink)**: If a plugin uses a non-canonical binary name (e.g. `server`, `app`), the supervisor automatically creates a canonical symlink inside `/run/m3tal/plugins-bin/` (the secure systemd runtime directory) instead of polluting `/tmp`.
+- **Core API Key Inheritance (`M3TAL_API_KEY`)**: When M3TAL Core supervises a plugin process, it automatically injects `M3TAL_API_KEY` into the subprocess environment from `/etc/m3tal/api_keys.json`. Plugins (such as `m3tal-mesh`) inherit this key seamlessly to securely interact with the Core API without manual configuration.
 - **Debian Packaging & Central Signing**: All `.deb` packages (`m3tal-plugin-<name>_<version>_amd64.deb`) are built in this repository and dispatched to `jakej985-rgb/m3tal-apt-key` for official GPG signing and APT repository indexing.
 
 ---
@@ -22,6 +23,8 @@ For full profiles, capabilities, and detailed documentation on every plugin, con
 | Plugin Folder | Title | Canonical Process | Debian Package | Status | What it does |
 |---|---|---|---|---|---|
 | [`m3tal-docker`](./m3tal-docker/) | **Containers** | `m3tal-docker` | `m3tal-plugin-docker-monitor` | 🟢 Available | Docker fleet monitor, log inspector, lifecycle controls, image pruning. |
+| [`m3tal-mesh`](./m3tal-mesh/) | **Mesh Fleet** | `m3tal-mesh` | `m3tal-plugin-mesh` | 🟢 Available | Personal Cloud & Local Network Fleet Federation, peer discovery, and multi-node hardware telemetry reader. |
+| [`m3tal-mesh-node`](./m3tal-mesh-node/) | **Mesh Node** | `m3tal-mesh-node` | `m3tal-plugin-mesh-node` | 🟢 Available | Headless M3TAL telemetry broadcaster and node metrics daemon for personal cloud clustering. |
 | [`m3tal-compose`](./m3tal-compose/) | **Compose Editor** | `m3tal-compose` | `m3tal-plugin-compose` | 🟡 Developing | Visual & YAML Compose editor, live syntax validator, stack deployer (`up`/`down`). |
 | [`m3tal-stacks`](./m3tal-stacks/) | **Compose Template DB** | `m3tal-stacks` | `m3tal-plugin-stacks` | 🟡 Planned | Curated database of verified Docker Compose templates, argument presets, 1-click apps. |
 | [`m3tal-ai`](./m3tal-ai/) | **Local AI & LLM** | `m3tal-ai` | `m3tal-plugin-ai` | 🟡 Planned | Local LLM inference manager (Ollama, vLLM), GPU VRAM stats, job queue. |

@@ -15,6 +15,8 @@ All plugins strictly adhere to the **M3TAL Plugin Standardization Specification*
 | Folder Name | Title | Category | Canonical Process | Debian Package | Status | Short Description |
 |---|---|---|---|---|---|---|
 | [`m3tal-docker`](./m3tal-docker/) | **Containers** | Container Fleet | `m3tal-docker` | `m3tal-plugin-docker-monitor` | 🟢 Available | Docker fleet monitor, live log inspector, lifecycle controls, image pruning. |
+| [`m3tal-mesh`](./m3tal-mesh/) | **Mesh Fleet** | Fleet Federation | `m3tal-mesh` | `m3tal-plugin-mesh` | 🟢 Available | Personal Cloud & Local Network Fleet Federation, peer discovery, and multi-node hardware telemetry reader. |
+| [`m3tal-mesh-node`](./m3tal-mesh-node/) | **Mesh Node** | Telemetry Sender | `m3tal-mesh-node` | `m3tal-plugin-mesh-node` | 🟢 Available | Headless M3TAL telemetry broadcaster and node metrics daemon for personal cloud clustering. |
 | [`m3tal-compose`](./m3tal-compose/) | **Compose Editor** | Container Management | `m3tal-compose` | `m3tal-plugin-compose` | 🟡 Developing | Visual & YAML Compose editor, live syntax validator, stack deployer (`up`/`down`). |
 | [`m3tal-stacks`](./m3tal-stacks/) | **Compose Template DB** | App Store & Hub | `m3tal-stacks` | `m3tal-plugin-stacks` | 🟡 Planned | Curated database of verified Docker Compose templates, argument presets, and 1-click apps. |
 | [`m3tal-ai`](./m3tal-ai/) | **Local AI & LLM** | Local AI & LLM | `m3tal-ai` | `m3tal-plugin-ai` | 🟡 Planned | Local LLM inference manager (Ollama, vLLM), GPU VRAM stats, job queue. |
@@ -66,7 +68,7 @@ All plugins strictly adhere to the **M3TAL Plugin Standardization Specification*
 - **Debian Package**: `m3tal-plugin-mesh` (or bundle via `m3tal-plugin-mesh-cluster`)
 - **Dashboard Mount**: `/mesh` (`/plugins/m3tal-mesh/`) — Route: `Mesh Fleet`
 - **Capabilities**: `collector`, `actions`, `ui_view`
-- **Status**: 🟢 **Available (v0.1.0)**
+- **Status**: 🟢 **Available (v0.4.0)**
 - **What it does**:
   Personal cloud and local network fleet federation reader. Discovers other M3TAL instances on your LAN/Tailscale, pairs with authenticated remote `m3tal-mesh-node` peers, aggregates multi-machine telemetry (CPU, RAM, ZFS/NVMe storage pools, GPU), and provides a live cluster health dashboard.
 - **Install Command**:
@@ -82,7 +84,7 @@ All plugins strictly adhere to the **M3TAL Plugin Standardization Specification*
 - **Debian Package**: `m3tal-plugin-mesh-node`
 - **Dashboard Mount**: Headless Daemon (No UI tab)
 - **Capabilities**: `collector`, `actions`
-- **Status**: 🟢 **Available (v0.1.0)**
+- **Status**: 🟢 **Available (v0.4.0)**
 - **What it does**:
   Lightweight headless sender daemon designed to run on servers, NAS appliances, and secondary PCs. Broadcasts local system telemetry (CPU load, memory, disk mounts, ZFS pools, GPU status) over mDNS and authenticated endpoints for consumption by `m3tal-mesh`.
 - **Install Command**:

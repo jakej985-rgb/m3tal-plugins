@@ -10,7 +10,7 @@ all: build
 build:
 	@mkdir -p $(GOTMPDIR) $(BIN_DIR)
 	@echo "🔨 Compiling $(BINARY_NAME)..."
-	@cd $(SRC_DIR) && GOTMPDIR=$(GOTMPDIR) go build -ldflags="-s -w" -o ../$(BIN_DIR)/$(BINARY_NAME) .
+	@cd $(SRC_DIR) && GOTMPDIR=$(GOTMPDIR) CGO_ENABLED=0 GOAMD64=v1 go build -ldflags="-s -w" -o ../$(BIN_DIR)/$(BINARY_NAME) .
 	@echo "✅ Built $(BIN_DIR)/$(BINARY_NAME)"
 
 test:

@@ -71,7 +71,7 @@ endif
 	elif [ -f "$(PLUGIN)/plugin.yaml" ]; then \
 		echo "Building standard plugin in $(PLUGIN)..."; \
 		[ -d "$(PLUGIN)/ui" ] && (cd "$(PLUGIN)/ui" && npm run build 2>/dev/null || true); \
-		[ -d "$(PLUGIN)/src" ] && (cd "$(PLUGIN)/src" && go build -o ../bin/$(PLUGIN) . 2>/dev/null || true); \
+		[ -d "$(PLUGIN)/src" ] && (cd "$(PLUGIN)/src" && CGO_ENABLED=0 GOAMD64=v1 go build -ldflags="-s -w" -o ../bin/$(PLUGIN) . 2>/dev/null || true); \
 	else \
 		echo "Plugin $(PLUGIN) not found or missing plugin.yaml"; exit 1; \
 	fi
