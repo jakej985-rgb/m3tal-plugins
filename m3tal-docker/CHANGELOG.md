@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.6.2] - 2026-11-05
+
+### 🚀 Changes & Improvements
+- **⚡ perf(m3tal-docker): optimize container stats matching to O(1) hash lookup (#10)** (`f3c1bfb`)
+
+---
+
 ## [0.6.1] - 2026-11-05
 
 ### 🚀 Changes & Improvements
