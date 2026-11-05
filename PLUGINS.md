@@ -23,7 +23,7 @@ All plugins strictly adhere to the **M3TAL Plugin Standardization Specification*
 | [`m3tal-smart`](./m3tal-smart/) | **Smart Disk Telemetry** | Hardware Diagnostics | `m3tal-smart` | `m3tal-plugin-smart` | 🟡 Planned | Drive health telemetry, NVMe wear life, S.M.A.R.T. self-tests, thermal history. |
 | [`m3tal-traefik`](./m3tal-traefik/) | **Traefik Gateway** | Networking & Proxy | `m3tal-traefik` | `m3tal-plugin-traefik` | 🟡 Planned | Traefik v3 reverse proxy, automated Let's Encrypt SSL/TLS, dynamic routing. |
 | [`m3tal-vpn`](./m3tal-vpn/) | **VPN Tunnel** | Network Privacy | `m3tal-vpn` | `m3tal-plugin-vpn` | 🟡 Planned | WireGuard/OpenVPN tunnel connectivity with container egress routing and leak protection. |
-| [`m3tal-samba`](./m3tal-samba/) | **Samba Manager** | File Sharing | `m3tal-samba` | `m3tal-plugin-samba` | 🟡 Planned | Graphical Samba/NFS share manager, guest permissions, user credentials, active mounts. |
+| [`m3tal-samba-nfs`](./m3tal-samba-nfs/) | **File Shares** | File Sharing | `m3tal-samba-nfs` | `m3tal-plugin-samba-nfs` | 🟡 Developing | Graphical Samba/NFS share manager, guest permissions, user credentials, active mounts. |
 | [`m3tal-bench`](./m3tal-bench/) | **System Benchmarks** | Diagnostics | `m3tal-bench` | `m3tal-plugin-bench` | 🟡 Planned | One-click benchmarking for CPU multi-threading, GPU compute, and disk I/O throughput. |
 
 ---
@@ -174,18 +174,18 @@ All plugins strictly adhere to the **M3TAL Plugin Standardization Specification*
 
 ---
 
-### 📁 [`m3tal-samba`](./m3tal-samba/) — Samba & NFS Share Manager
-- **Directory**: `m3tal-samba/`
-- **Process Identity**: `m3tal-samba`
-- **Debian Package**: `m3tal-plugin-samba`
+### 📁 [`m3tal-samba-nfs`](./m3tal-samba-nfs/) — Samba & NFS Share Manager
+- **Directory**: `m3tal-samba-nfs/`
+- **Process Identity**: `m3tal-samba-nfs`
+- **Debian Package**: `m3tal-plugin-samba-nfs`
 - **Dashboard Mount**: `/storage/shares`
-- **Capabilities**: `actions`, `ui_view`, `system_admin`
-- **Status**: 🟡 **Planned**
+- **Capabilities**: `collector`, `actions`, `ui_view`, `settings`
+- **Status**: 🟡 **Developing (v0.1.0)**
 - **What it does**:
-  Provides an intuitive visual interface for setting up and managing network shares on Linux. Manages SMB (`/etc/samba/smb.conf`) and NFS (`/etc/exports`) definitions, controls user permissions and guest access, monitors connected clients and active file locks in real time, and enables Apple Time Machine backup support.
+  Provides an intuitive visual interface for setting up and managing SMB/CIFS and NFS network shares on Linux. Manages `smb.conf` share definitions and `/etc/exports` entries with automatic backups and service reloads, controls Samba user credentials via `smbpasswd`/`pdbedit`, monitors connected SMB clients and locked files via `smbstatus` plus NFS clients via `showmount`, and mounts remote network shares to local mount points.
 - **Install Command**:
   ```bash
-  sudo apt install -y m3tal-plugin-samba
+  sudo apt install -y m3tal-plugin-samba-nfs
   ```
 
 ---

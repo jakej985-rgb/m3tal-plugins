@@ -31,7 +31,7 @@ For full profiles, capabilities, and detailed documentation on every plugin, con
 | [`m3tal-smart`](./m3tal-smart/) | **Smart Disk Telemetry** | `m3tal-smart` | `m3tal-plugin-smart` | 🟡 Planned | Drive health telemetry, NVMe wear life, S.M.A.R.T. self-tests, temperature history. |
 | [`m3tal-traefik`](./m3tal-traefik/) | **Traefik Gateway** | `m3tal-traefik` | `m3tal-plugin-traefik` | 🟡 Planned | Traefik v3 reverse proxy, automated Let's Encrypt SSL/TLS, dynamic routing. |
 | [`m3tal-vpn`](./m3tal-vpn/) | **VPN Tunnel** | `m3tal-vpn` | `m3tal-plugin-vpn` | 🟡 Planned | WireGuard/OpenVPN tunnel connectivity with container egress routing and leak protection. |
-| [`m3tal-samba`](./m3tal-samba/) | **Samba Manager** | `m3tal-samba` | `m3tal-plugin-samba` | 🟡 Planned | Graphical Samba/NFS share manager, guest permissions, user credentials, active mounts. |
+| [`m3tal-samba-nfs`](./m3tal-samba-nfs/) | **File Shares** | `m3tal-samba-nfs` | `m3tal-plugin-samba-nfs` | 🟡 Developing | Graphical Samba/NFS share manager, guest permissions, user credentials, active mounts. |
 | [`m3tal-bench`](./m3tal-bench/) | **System Benchmarks** | `m3tal-bench` | `m3tal-plugin-bench` | 🟡 Planned | One-click benchmarking for CPU multi-threading, GPU compute, and disk I/O throughput. |
 
 ---

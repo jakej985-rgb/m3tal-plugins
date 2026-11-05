@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M3TAL File Shares — Samba &amp; NFS</title>
+<style>
+  :root {
+    --bg-dark: #0d1117; --bg-card: #161b22; --border: #30363d;
+    --text-main: #c9d1d9; --text-muted: #8b949e;
+    --emerald: #10b981; --emerald-dark: #065f46;
+    --cyan: #06b6d4; --cyan-dark: #0e7490;
+    --amber: #f59e0b; --rose: #f43f5e;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  body { background: var(--bg-dark); color: var(--text-main); min-height: 100vh; }
+  header { background: var(--bg-card); border-bottom: 1px solid var(--border); padding: 12px 24px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand h1 { font-size: 1.1rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 8px; }
+  .badge { background: #21262d; color: var(--cyan); font-size: 0.75rem; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); font-family: monospace; font-weight: 600; }
+  .metrics { display: flex; gap: 12px; flex-wrap: wrap; }
+  .metric-pill { background: #21262d; border: 1px solid var(--border); border-radius: 8px; padding: 6px 14px; font-size: 0.8rem; display: flex; align-items: center; gap: 8px; }
+  .metric-val { font-weight: 700; color: #fff; }
+  .header-actions { display: flex; gap: 8px; }
+  .btn { padding: 6px 14px; border-radius: 6px; font-size: 0.8rem; font-weight: 600; cursor: pointer; border: 1px solid var(--border); background: #21262d; color: var(--text-main); display: inline-flex; align-items: center; gap: 6px; transition: all .2s; }
+  .btn:hover { background: #30363d; color: #fff; }
+  .btn-primary { background: var(--emerald-dark); border-color: var(--emerald); color: #fff; }
+  .btn-primary:hover { background: var(--emerald); }
+  .btn-danger { background: rgba(244,63,94,.12); border-color: var(--rose); color: #fda4af; }
+  .btn-danger:hover { background: var(--rose); color: #fff; }
+  .btn-sm { padding: 3px 10px; font-size: 0.72rem; }
+  main { padding: 20px 24px; max-width: 1400px; margin: 0 auto; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 20px; flex-wrap: wrap; }
+  .tab { padding: 10px 18px; cursor: pointer; font-size: 0.85rem; font-weight: 600; color: var(--text-muted); border-bottom: 2px solid transparent; }
+  .tab.active { color: #fff; border-bottom-color: var(--cyan); }
+  .tab:hover { color: var(--text-main); }
+  .panel { display: none; }
+  .panel.active { display: block; }
+  .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 18px; margin-bottom: 18px; }
+  .card h2 { font-size: 0.95rem; margin-bottom: 14px; color: #fff; display: flex; align-items: center; gap: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  th { text-align: left; color: var(--text-muted); font-weight: 600; padding: 8px 10px; border-bottom: 1px solid var(--border); text-transform: uppercase; font-size: 0.7rem; letter-spacing: .04em; }
+  td { padding: 9px 10px; border-bottom: 1px solid #21262d; vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255,255,255,.02); }
+  .proto { font-family: monospace; font-size: 0.72rem; font-weight: 700; padding: 2px 8px; border-radius: 4px; }
+  .proto.smb { background: rgba(16,185,129,.15); color: var(--emerald); border: 1px solid rgba(16,185,129,.3); }
+  .proto.nfs { background: rgba(6,182,212,.15); color: var(--cyan); border: 1px solid rgba(6,182,212,.3); }
+  .mono { font-family: monospace; font-size: 0.78rem; color: var(--text-main); }
+  .muted { color: var(--text-muted); font-size: 0.78rem; }
+  .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+  label.form-label { display: block; font-size: 0.75rem; font-weight: 600; color: var(--text-muted); margin-bottom: 4px; }
+  input.form-input, select.form-input, textarea.form-input { width: 100%; background: #0d1117; border: 1px solid var(--border); border-radius: 6px; color: var(--text-main); padding: 8px 10px; font-size: 0.82rem; }
+  input.form-input:focus, select.form-input:focus { outline: none; border-color: var(--cyan); }
+  .check-row { display: flex; align-items: center; gap: 8px; font-size: 0.8rem; margin-top: 18px; }
+  .check-row input { width: 16px; height: 16px; accent-color: var(--emerald); }
+  #toast { position: fixed; bottom: 20px; right: 20px; padding: 12px 18px; border-radius: 8px; font-size: 0.82rem; font-weight: 600; display: none; z-index: 100; max-width: 480px; }
+  #toast.ok { background: rgba(16,185,129,.15); border: 1px solid var(--emerald); color: #6ee7b7; display: block; }
+  #toast.err { background: rgba(244,63,94,.15); border: 1px solid var(--rose); color: #fda4af; display: block; }
+  .empty { text-align: center; padding: 40px 20px; color: var(--text-muted); }
+  .section-title { font-size: 0.8rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; margin: 18px 0 10px; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <h1>📁 File Shares <span class="badge">m3tal-samba-nfs</span></h1>
+  </div>
+  <div class="metrics">
+    <div class="metric-pill">Shares <span class="metric-val" id="m-shares">–</span></div>
+    <div class="metric-pill">SMB <span class="metric-val" id="m-smb">–</span></div>
+    <div class="metric-pill">NFS <span class="metric-val" id="m-nfs">–</span></div>
+    <div class="metric-pill">Users <span class="metric-val" id="m-users">–</span></div>
+    <div class="metric-pill">Clients <span class="metric-val" id="m-conns">–</span></div>
+    <div class="metric-pill">Locked <span class="metric-val" id="m-locked">–</span></div>
+  </div>
+  <div class="header-actions">
+    <button class="btn" onclick="restartServices()">🔄 Restart Services</button>
+    <button class="btn btn-primary" onclick="refresh()">↻ Refresh</button>
+  </div>
+</header>
+
+<main>
+  <div class="tabs">
+    <div class="tab active" data-tab="shares" onclick="showTab('shares')">Network Shares</div>
+    <div class="tab" data-tab="users" onclick="showTab('users')">Samba Users</div>
+    <div class="tab" data-tab="connections" onclick="showTab('connections')">Connections</div>
+    <div class="tab" data-tab="mounts" onclick="showTab('mounts')">Mounts</div>
+  </div>
+
+  <!-- ============ SHARES ============ -->
+  <div class="panel active" id="panel-shares">
+    <div class="two-col">
+      <div class="card">
+        <h2>📂 All Shares</h2>
+        <div id="shares-table"><div class="empty">Loading…</div></div>
+      </div>
+      <div>
+        <div class="card">
+          <h2>➕ New SMB Share</h2>
+          <div class="form-grid">
+            <div><label class="form-label">Share Name</label><input class="form-input" id="smb-name" placeholder="media"></div>
+            <div><label class="form-label">Path</label><input class="form-input" id="smb-path" placeholder="/srv/media"></div>
+            <div><label class="form-label">Comment</label><input class="form-input" id="smb-comment" placeholder="Optional"></div>
+            <div><label class="form-label">Valid Users (comma separated)</label><input class="form-input" id="smb-users" placeholder="alice, bob"></div>
+          </div>
+          <div class="check-row"><input type="checkbox" id="smb-ro"><label for="smb-ro">Read-only</label></div>
+          <div class="check-row"><input type="checkbox" id="smb-guest"><label for="smb-guest">Allow guest access</label></div>
+          <div style="margin-top:14px"><button class="btn btn-primary" onclick="createSmbShare()">Create SMB Share</button></div>
+        </div>
+        <div class="card">
+          <h2>🌐 New NFS Export</h2>
+          <div class="form-grid">
+            <div><label class="form-label">Export Path</label><input class="form-input" id="nfs-path" placeholder="/srv/nfs"></div>
+            <div><label class="form-label">Clients (comma separated, * for all)</label><input class="form-input" id="nfs-clients" placeholder="192.168.1.0/24, 10.0.0.5"></div>
+            <div><label class="form-label">Options</label><input class="form-input" id="nfs-options" value="rw,sync,no_subtree_check"></div>
+          </div>
+          <div style="margin-top:14px"><button class="btn btn-primary" onclick="createNfsExport()">Create NFS Export</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ USERS ============ -->
+  <div class="panel" id="panel-users">
+    <div class="two-col">
+      <div class="card">
+        <h2>👤 Samba Users</h2>
+        <div id="users-table"><div class="empty">Loading…</div></div>
+      </div>
+      <div class="card">
+        <h2>➕ Manage Samba User</h2>
+        <div class="form-grid">
+          <div><label class="form-label">Username</label><input class="form-input" id="user-name" placeholder="alice"></div>
+          <div><label class="form-label">Password</label><input class="form-input" id="user-pass" type="password" placeholder="••••••••"></div>
+        </div>
+        <div style="margin-top:14px;display:flex;gap:8px">
+          <button class="btn btn-primary" onclick="createSmbUser()">Create / Update</button>
+        </div>
+        <p class="muted" style="margin-top:10px">Creates the account if missing, otherwise updates the password. Delete users from the table.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ CONNECTIONS ============ -->
+  <div class="panel" id="panel-connections">
+    <div class="two-col">
+      <div class="card">
+        <h2>🔌 Active SMB Sessions</h2>
+        <div id="sessions-table"><div class="empty">Loading…</div></div>
+      </div>
+      <div class="card">
+        <h2>🌐 NFS Clients</h2>
+        <div id="nfs-clients-table"><div class="empty">Loading…</div></div>
+        <div class="section-title">Locked Files</div>
+        <div id="locked-info" class="muted">–</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ MOUNTS ============ -->
+  <div class="panel" id="panel-mounts">
+    <div class="two-col">
+      <div class="card">
+        <h2>⬇️ Mount Network Share</h2>
+        <div class="form-grid">
+          <div><label class="form-label">Protocol</label>
+            <select class="form-input" id="mnt-proto"><option value="cifs">SMB/CIFS</option><option value="nfs">NFS</option></select></div>
+          <div><label class="form-label">Source</label><input class="form-input" id="mnt-source" placeholder="//server/share or server:/export"></div>
+          <div><label class="form-label">Target (mount point)</label><input class="form-input" id="mnt-target" placeholder="/mnt/share"></div>
+          <div><label class="form-label">Options</label><input class="form-input" id="mnt-options" placeholder="username=...,vers=3.0 or nfsvers=4"></div>
+        </div>
+        <div style="margin-top:14px"><button class="btn btn-primary" onclick="mountShare()">Mount</button></div>
+      </div>
+      <div class="card">
+        <h2>⬆️ Unmount Share</h2>
+        <div class="form-grid">
+          <div><label class="form-label">Mount Point</label><input class="form-input" id="umnt-target" placeholder="/mnt/share"></div>
+        </div>
+        <div style="margin-top:14px"><button class="btn btn-danger" onclick="unmountShare()">Unmount</button></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<div id="toast"></div>
+
+<script>
+const PLUGIN = 'samba-nfs';
+let state = { shares: [], users: [], sessions: [], nfsClients: [], locked: 0 };
+
+function getToken() {
+  const p = new URLSearchParams(window.location.search);
+  const t = p.get('token');
+  if (t) { localStorage.setItem('m3tal_token', t); return t; }
+  return localStorage.getItem('m3tal_token') || 'change_me_api_token';
+}
+function headers() {
+  const t = getToken();
+  return { 'Content-Type': 'application/json', 'X-API-Token': t, 'Authorization': 'Bearer ' + t };
+}
+function toast(msg, ok) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = ok ? 'ok' : 'err';
+  setTimeout(() => el.className = '', 5000);
+}
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function showTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + name));
+}
+
+async function apiAction(action, args) {
+  const res = await fetch(`/api/v2/plugins/${PLUGIN}/action`, {
+    method: 'POST', headers: headers(),
+    body: JSON.stringify({ action, args: args || {} })
+  });
+  const json = await res.json();
+  const data = json.data || json.result || json;
+  return data;
+}
+
+async function refresh() {
+  try {
+    const res = await fetch(`/api/v2/plugins/${PLUGIN}/collect`, { headers: headers() });
+    const json = await res.json();
+    const d = json.data || json.result || {};
+    state.shares = d.shares || [];
+    state.users = d.samba_users || [];
+    state.sessions = d.smb_sessions || [];
+    state.nfsClients = d.nfs_clients || [];
+    state.locked = d.locked_files || 0;
+    render();
+  } catch (e) {
+    // Fallback: action endpoint
+    try {
+      const d = await apiAction('get_shares', {});
+      state.shares = d.shares || []; state.users = d.samba_users || [];
+      state.sessions = d.smb_sessions || []; state.nfsClients = d.nfs_clients || [];
+      state.locked = d.locked_files || 0;
+      render();
+    } catch (e2) { toast('Failed to load shares: ' + e2.message, false); }
+  }
+}
+
+function metric(name) {
+  return (state.shares || []).filter(s => s.protocol === name).length;
+}
+
+function render() {
+  const smb = metric('smb'), nfs = metric('nfs');
+  document.getElementById('m-shares').textContent = state.shares.length;
+  document.getElementById('m-smb').textContent = smb;
+  document.getElementById('m-nfs').textContent = nfs;
+  document.getElementById('m-users').textContent = state.users.length;
+  document.getElementById('m-conns').textContent = state.sessions.length;
+  document.getElementById('m-locked').textContent = state.locked;
+
+  // Shares table
+  const st = document.getElementById('shares-table');
+  if (!state.shares.length) {
+    st.innerHTML = '<div class="empty">No shares configured. Create one using the forms.</div>';
+  } else {
+    let rows = state.shares.map(s => {
+      const proto = s.protocol === 'smb'
+        ? '<span class="proto smb">SMB</span>' : '<span class="proto nfs">NFS</span>';
+      let detail, access;
+      if (s.protocol === 'nfs') {
+        detail = `<span class="mono">${esc(s.path)}</span>` + (s.clients?.length ? ` → <span class="mono">${esc(s.clients.join(', '))}</span>` : '');
+        access = s.read_only ? 'read-only' : 'read/write';
+      } else {
+        const bits = [`<span class="mono">${esc(s.path)}</span>`];
+        if (s.comment) bits.push(`<span class="muted">${esc(s.comment)}</span>`);
+        if (s.users?.length) bits.push(`<span class="muted">users: ${esc(s.users.join(', '))}</span>`);
+        if (s.guest_ok) bits.push('<span class="muted">guest</span>');
+        detail = bits.join('<br>');
+        access = s.read_only ? 'read-only' : 'read/write';
+      }
+      const delAction = s.protocol === 'smb' ? 'delete_smb_share' : 'delete_nfs_export';
+      const delArgs = s.protocol === 'smb' ? { name: s.name } : { path: s.path, client: s.clients?.[0] || '' };
+      return `<tr><td>${proto}</td><td class="mono">${esc(s.name)}</td><td>${detail}</td><td>${access}</td>
+        <td><button class="btn btn-danger btn-sm" onclick='delShare(${JSON.stringify(delAction)}, ${JSON.stringify(delArgs)})'>Delete</button></td></tr>`;
+    }).join('');
+    st.innerHTML = `<table><thead><tr><th>Type</th><th>Name</th><th>Path / Clients</th><th>Access</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  // Users table
+  const ut = document.getElementById('users-table');
+  ut.innerHTML = state.users.length
+    ? `<table><thead><tr><th>Username</th><th>UID</th><th></th></tr></thead><tbody>${state.users.map(u =>
+        `<tr><td class="mono">${esc(u.username)}</td><td class="mono">${esc(u.uid || '–')}</td>
+         <td><button class="btn btn-danger btn-sm" onclick="delUser('${esc(u.username)}')">Delete</button></td></tr>`).join('')}</tbody></table>`
+    : '<div class="empty">No Samba users.</div>';
+
+  // Sessions
+  const ct = document.getElementById('sessions-table');
+  ct.innerHTML = state.sessions.length
+    ? `<table><thead><tr><th>Share</th><th>Client</th><th>PID</th><th>Protocol</th></tr></thead><tbody>${state.sessions.map(s =>
+        `<tr><td class="mono">${esc(s.service)}</td><td class="mono">${esc(s.machine)}</td><td class="mono">${esc(s.pid)}</td><td>${esc(s.protocol)}</td></tr>`).join('')}</tbody></table>`
+    : '<div class="empty">No active SMB sessions.</div>';
+
+  // NFS clients
+  const nt = document.getElementById('nfs-clients-table');
+  nt.innerHTML = state.nfsClients.length
+    ? `<table><thead><tr><th>Client</th><th>Exports</th></tr></thead><tbody>${state.nfsClients.map(c =>
+        `<tr><td class="mono">${esc(c.client)}</td><td class="mono">${esc((c.shares||[]).join(', '))}</td></tr>`).join('')}</tbody></table>`
+    : '<div class="empty">No NFS clients connected.</div>';
+  document.getElementById('locked-info').textContent = state.locked + ' locked file(s) reported by smbstatus';
+}
+
+async function delShare(action, args) {
+  if (!confirm('Delete this share/export?')) return;
+  const d = await apiAction(action, args);
+  toast(d.message || (d.success ? 'Deleted' : 'Failed'), !!d.success);
+  refresh();
+}
+async function createSmbShare() {
+  const d = await apiAction('create_smb_share', {
+    name: document.getElementById('smb-name').value,
+    path: document.getElementById('smb-path').value,
+    comment: document.getElementById('smb-comment').value,
+    users: document.getElementById('smb-users').value,
+    read_only: document.getElementById('smb-ro').checked,
+    guest_ok: document.getElementById('smb-guest').checked
+  });
+  toast(d.message || (d.success ? 'Created' : 'Failed'), !!d.success);
+  if (d.success) refresh();
+}
+async function createNfsExport() {
+  const d = await apiAction('create_nfs_export', {
+    path: document.getElementById('nfs-path').value,
+    clients: document.getElementById('nfs-clients').value,
+    options: document.getElementById('nfs-options').value
+  });
+  toast(d.message || (d.success ? 'Created' : 'Failed'), !!d.success);
+  if (d.success) refresh();
+}
+async function createSmbUser() {
+  const d = await apiAction('create_smb_user', {
+    username: document.getElementById('user-name').value,
+    password: document.getElementById('user-pass').value
+  });
+  toast(d.message || (d.success ? 'Done' : 'Failed'), !!d.success);
+  if (d.success) { document.getElementById('user-pass').value = ''; refresh(); }
+}
+async function delUser(u) {
+  if (!confirm('Delete Samba user ' + u + '?')) return;
+  const d = await apiAction('delete_smb_user', { username: u });
+  toast(d.message || (d.success ? 'Deleted' : 'Failed'), !!d.success);
+  refresh();
+}
+async function mountShare() {
+  const d = await apiAction('mount_share', {
+    protocol: document.getElementById('mnt-proto').value,
+    source: document.getElementById('mnt-source').value,
+    target: document.getElementById('mnt-target').value,
+    options: document.getElementById('mnt-options').value
+  });
+  toast(d.message || (d.success ? 'Mounted' : 'Failed'), !!d.success);
+}
+async function unmountShare() {
+  const d = await apiAction('unmount_share', { target: document.getElementById('umnt-target').value });
+  toast(d.message || (d.success ? 'Unmounted' : 'Failed'), !!d.success);
+}
+async function restartServices() {
+  if (!confirm('Restart smbd, nmbd and nfs-server? Active client connections will drop.')) return;
+  const d = await apiAction('restart_services', {});
+  toast(d.message || (d.success ? 'Restarted' : 'Failed'), !!d.success);
+  refresh();
+}
+
+refresh();
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>
