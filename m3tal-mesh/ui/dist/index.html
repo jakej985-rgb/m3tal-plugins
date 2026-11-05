@@ -56,6 +56,7 @@
       transition: all 0.2s;
     }
     .btn:hover { background: #30363d; color: #fff; }
+    .btn:focus-visible, .form-input:focus-visible, .form-select:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
     .btn-primary { background: var(--emerald-dark); border-color: var(--emerald); color: #fff; }
     .btn-primary:hover { background: var(--emerald); }
     .btn-cyan { background: var(--cyan-dark); border-color: var(--cyan); color: #fff; }
@@ -378,7 +379,7 @@
   </main>
 
   <!-- Pair Node Modal -->
-  <div class="modal-overlay" id="pair-modal">
+  <div class="modal-overlay" id="pair-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
     <div class="modal-card">
       <input type="hidden" id="edit-node-id" value="" />
       <div class="modal-title" id="modal-title">🔗 Connect Remote M3TAL Node</div>
@@ -931,6 +932,7 @@
         help.textContent = 'Warning: Node connection without authentication is not recommended.';
       }
       document.getElementById('pair-modal').style.display = 'flex';
+      setTimeout(() => document.getElementById('input-name').focus(), 50);
     }
 
     function editNodeConnection(id, name, ip, role) {
@@ -954,6 +956,7 @@
       inputPass.placeholder = 'Leave blank to keep existing password';
 
       document.getElementById('pair-modal').style.display = 'flex';
+      setTimeout(() => document.getElementById('input-name').focus(), 50);
     }
 
     async function testModalConnection() {
@@ -1304,6 +1307,15 @@
       document.getElementById('input-password').value = '';
       await submitPairNode();
     }
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        const modal = document.getElementById('pair-modal');
+        if (modal && modal.style.display === 'flex') {
+          closePairModal();
+        }
+      }
+    });
 
     renderFleet();
     loadMeshSettings();
