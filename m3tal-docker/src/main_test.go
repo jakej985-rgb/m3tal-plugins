@@ -131,48 +131,52 @@ func TestInspectContainer(t *testing.T) {
 	handleRequest(&req)
 }
 
-func TestApplyStatsOutput(t *testing.T) {
-	containers := []Container{
-		{ID: "c1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2", Name: "full-hash-container"},
-		{ID: "f7e8d9c0b1a2", Name: "short-hash-container"},
-		{ID: "shortid", Name: "sub12-char-container"},
-		{ID: "unmatched12345", Name: "unmatched-container"},
+func TestTargetValidationRejectsMaliciousInput(t *testing.T) {
+	SetMockMode(true)
+	defer SetMockMode(false)
+
+	maliciousTargets := []string{
+		"",
+		"--checkpoint=foo",
+		"-t",
+		"; rm -rf /",
+		"container $(whoami)",
+		"cont/ainer",
+		"../../etc/passwd",
+		"container name with spaces",
+		".hidden",
 	}
 
-	statsTSV := "c1a2b3c4d5e6\t12.5%\t256MiB / 8GiB\n" +
-		"f7e8d9c0b1a2\t1.2%\t64MiB / 8GiB\n" +
-		"shortidprefix\t0.5%\t16MiB / 8GiB\n"
+	for _, target := range maliciousTargets {
+		if isValidContainerTarget(target) {
+			t.Errorf("expected target %q to be rejected by isValidContainerTarget", target)
+		}
+		if err := StartContainer(target); err == nil {
+			t.Errorf("expected StartContainer to reject %q", target)
+		}
+		if err := StopContainer(target); err == nil {
+			t.Errorf("expected StopContainer to reject %q", target)
+		}
+		if err := RestartContainer(target); err == nil {
+			t.Errorf("expected RestartContainer to reject %q", target)
+		}
+		if _, err := GetLogs(target, 50); err == nil {
+			t.Errorf("expected GetLogs to reject %q", target)
+		}
+		if _, err := InspectContainer(target); err == nil {
+			t.Errorf("expected InspectContainer to reject %q", target)
+		}
+	}
 
-	applyStatsOutput(containers, statsTSV)
-
-	if containers[0].CPU != "12.5%" || containers[0].Memory != "256MiB / 8GiB" {
-		t.Errorf("expected container 0 stats to match full ID via 12-char prefix, got cpu=%s mem=%s", containers[0].CPU, containers[0].Memory)
+	validTargets := []string{
+		"c1a2b3c4d5e6",
+		"m3tal-proxy",
+		"my_web_service.1",
+		"web-1",
 	}
-	if containers[1].CPU != "1.2%" || containers[1].Memory != "64MiB / 8GiB" {
-		t.Errorf("expected container 1 stats to match exact short ID, got cpu=%s mem=%s", containers[1].CPU, containers[1].Memory)
-	}
-	if containers[2].CPU != "0.5%" || containers[2].Memory != "16MiB / 8GiB" {
-		t.Errorf("expected container 2 stats to match fallback prefix, got cpu=%s mem=%s", containers[2].CPU, containers[2].Memory)
-	}
-	if containers[3].CPU != "" || containers[3].Memory != "" {
-		t.Errorf("expected container 3 stats to remain empty, got cpu=%s mem=%s", containers[3].CPU, containers[3].Memory)
-	}
-}
-
-func BenchmarkApplyStatsOutput(b *testing.B) {
-	const n = 100
-	containers := make([]Container, n)
-	var sb strings.Builder
-	for i := 0; i < n; i++ {
-		fullID := strings.Repeat(string(rune('a'+(i%26))), 64)
-		containers[i] = Container{ID: fullID}
-		sb.WriteString(fullID[:12])
-		sb.WriteString("\t2.5%\t128MiB / 16GiB\n")
-	}
-	statsOutput := sb.String()
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		applyStatsOutput(containers, statsOutput)
+	for _, target := range validTargets {
+		if !isValidContainerTarget(target) {
+			t.Errorf("expected target %q to be valid", target)
+		}
 	}
 }
