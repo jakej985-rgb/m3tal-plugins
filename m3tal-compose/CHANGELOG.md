@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.5.1] - 2026-11-05
+
+### 🚀 Changes & Improvements
+- **docs updated and no cgo and goamd64 v1 for older cpu support** (`13cc89e`)
+
+---
+
 ## [0.5.0] - 2026-10-27
 
 ### 🚀 Changes & Improvements
