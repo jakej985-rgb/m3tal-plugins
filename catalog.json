@@ -1,129 +1,129 @@
 [
- {
-  "name": "docker-monitor",
-  "title": "Containers",
-  "process_name": "m3tal-docker",
-  "package_name": "m3tal-plugin-docker-monitor",
-  "category": "Container Management",
-  "description": "Docker container fleet monitor, log inspector, container lifecycle controls, and image pruning.",
-  "capabilities": [
-   "collector",
-   "actions",
-   "ui_view",
-   "websocket_stream"
-  ],
-  "version": "0.1.0",
-  "status": "available",
-  "apt_command": "sudo apt install -y m3tal-plugin-docker-monitor"
- },
- {
-  "name": "stack-orchestrator",
-  "title": "Compose Stacks",
-  "process_name": "m3tal-stacks",
-  "package_name": "m3tal-plugin-stacks",
-  "category": "Compose Stacks",
-  "description": "Multi-service compose stack orchestration, live health checks, and lifecycle deployment.",
-  "capabilities": [
-   "orchestrator",
-   "actions",
-   "ui_view"
-  ],
-  "version": "0.1.0",
-  "status": "planned",
-  "apt_command": "sudo apt install -y m3tal-plugin-stacks"
- },
- {
-  "name": "ai-engine",
-  "title": "Local AI & LLM",
-  "process_name": "m3tal-ai",
-  "package_name": "m3tal-plugin-ai",
-  "category": "Local AI & LLM",
-  "description": "Local LLM inference manager (Ollama, vLLM), job queue, and model catalog.",
-  "capabilities": [
-   "inference_runner",
-   "job_queue",
-   "ui_view"
-  ],
-  "version": "0.1.0",
-  "status": "planned",
-  "apt_command": "sudo apt install -y m3tal-plugin-ai"
- },
- {
-  "name": "smart-disk",
-  "title": "Smart Disk Telemetry",
-  "process_name": "m3tal-smart",
-  "package_name": "m3tal-plugin-smart",
-  "category": "Hardware Diagnostics",
-  "description": "Drive health telemetry, NVMe wear life, S.M.A.R.T. self-tests, and temperature history.",
-  "capabilities": [
-   "collector",
-   "ui_widget",
-   "alerts"
-  ],
-  "version": "0.1.0",
-  "status": "planned",
-  "apt_command": "sudo apt install -y m3tal-plugin-smart"
- },
- {
-  "name": "traefik-gateway",
-  "title": "Traefik Gateway",
-  "process_name": "m3tal-traefik",
-  "package_name": "m3tal-plugin-traefik",
-  "category": "Networking & Proxy",
-  "description": "Traefik v3 reverse proxy, automated Let's Encrypt SSL/TLS certificates, and dynamic routing.",
-  "capabilities": [
-   "proxy_generator",
-   "route_provider"
-  ],
-  "version": "0.1.0",
-  "status": "planned",
-  "apt_command": "sudo apt install -y m3tal-plugin-traefik"
- },
- {
-  "name": "gluetun-vpn",
-  "title": "VPN Tunnel",
-  "process_name": "m3tal-vpn",
-  "package_name": "m3tal-plugin-vpn",
-  "category": "Network Privacy",
-  "description": "WireGuard/OpenVPN tunnel connectivity with container egress routing and leak protection.",
-  "capabilities": [
-   "network_tunnel",
-   "status_checker"
-  ],
-  "version": "0.1.0",
-  "status": "planned",
-  "apt_command": "sudo apt install -y m3tal-plugin-vpn"
- },
- {
-  "name": "samba-nfs",
-  "title": "File Shares",
-  "process_name": "m3tal-samba-nfs",
-  "package_name": "m3tal-plugin-samba-nfs",
-  "category": "File Sharing",
-  "description": "Graphical Samba (SMB/CIFS) and NFS share manager: share provisioning, user credentials, guest permissions, active client monitoring, and network mounts.",
-  "capabilities": [
-   "collector",
-   "actions",
-   "ui_view",
-   "settings"
-  ],
-  "version": "0.1.0",
-  "status": "developing",
-  "apt_command": "sudo apt install -y m3tal-plugin-samba-nfs"
- },
- {
-  "name": "system-bench",
-  "title": "System Benchmarks",
-  "process_name": "m3tal-bench",
-  "package_name": "m3tal-plugin-bench",
-  "category": "Diagnostics",
-  "description": "One-click benchmarking for CPU multi-threading, GPU compute, and disk I/O throughput.",
-  "capabilities": [
-   "benchmark_runner",
-   "ui_view"
-  ],
-  "version": "0.1.0",
-  "status": "planned",
-  "apt_command": "sudo apt install -y m3tal-plugin-bench"
- }
+  {
+    "name": "docker-monitor",
+    "title": "Containers",
+    "process_name": "m3tal-docker",
+    "package_name": "m3tal-plugin-docker-monitor",
+    "category": "Container Management",
+    "description": "Docker container fleet monitor, log inspector, container lifecycle controls, and image pruning.",
+    "capabilities": [
+      "collector",
+      "actions",
+      "ui_view",
+      "websocket_stream"
+    ],
+    "version": "0.1.0",
+    "status": "available",
+    "apt_command": "sudo apt install -y m3tal-plugin-docker-monitor"
+  },
+  {
+    "name": "stack-orchestrator",
+    "title": "Compose Stacks",
+    "process_name": "m3tal-stacks",
+    "package_name": "m3tal-plugin-stacks",
+    "category": "Compose Stacks",
+    "description": "Multi-service compose stack orchestration, live health checks, and lifecycle deployment.",
+    "capabilities": [
+      "orchestrator",
+      "actions",
+      "ui_view"
+    ],
+    "version": "0.1.0",
+    "status": "planned",
+    "apt_command": "sudo apt install -y m3tal-plugin-stacks"
+  },
+  {
+    "name": "ai-engine",
+    "title": "Local AI & LLM",
+    "process_name": "m3tal-ai",
+    "package_name": "m3tal-plugin-ai",
+    "category": "Local AI & LLM",
+    "description": "Local LLM inference manager (Ollama, vLLM), job queue, and model catalog.",
+    "capabilities": [
+      "inference_runner",
+      "job_queue",
+      "ui_view"
+    ],
+    "version": "0.1.0",
+    "status": "planned",
+    "apt_command": "sudo apt install -y m3tal-plugin-ai"
+  },
+  {
+    "name": "smart-disk",
+    "title": "Smart Disk Telemetry",
+    "process_name": "m3tal-smart",
+    "package_name": "m3tal-plugin-smart",
+    "category": "Hardware Diagnostics",
+    "description": "Drive health telemetry, NVMe wear life, S.M.A.R.T. self-tests, and temperature history.",
+    "capabilities": [
+      "collector",
+      "ui_widget",
+      "alerts"
+    ],
+    "version": "0.1.0",
+    "status": "planned",
+    "apt_command": "sudo apt install -y m3tal-plugin-smart"
+  },
+  {
+    "name": "traefik-gateway",
+    "title": "Traefik Gateway",
+    "process_name": "m3tal-traefik",
+    "package_name": "m3tal-plugin-traefik",
+    "category": "Networking & Proxy",
+    "description": "Traefik v3 reverse proxy, automated Let's Encrypt SSL/TLS certificates, and dynamic routing.",
+    "capabilities": [
+      "proxy_generator",
+      "route_provider"
+    ],
+    "version": "0.1.0",
+    "status": "planned",
+    "apt_command": "sudo apt install -y m3tal-plugin-traefik"
+  },
+  {
+    "name": "gluetun-vpn",
+    "title": "VPN Tunnel",
+    "process_name": "m3tal-vpn",
+    "package_name": "m3tal-plugin-vpn",
+    "category": "Network Privacy",
+    "description": "WireGuard/OpenVPN tunnel connectivity with container egress routing and leak protection.",
+    "capabilities": [
+      "network_tunnel",
+      "status_checker"
+    ],
+    "version": "0.1.0",
+    "status": "planned",
+    "apt_command": "sudo apt install -y m3tal-plugin-vpn"
+  },
+  {
+    "name": "samba-nfs",
+    "title": "File Shares",
+    "process_name": "m3tal-samba-nfs",
+    "package_name": "m3tal-plugin-samba-nfs",
+    "category": "File Sharing",
+    "description": "Graphical Samba (SMB/CIFS) and NFS share manager: share provisioning, user credentials, guest permissions, active client monitoring, and network mounts.",
+    "capabilities": [
+      "collector",
+      "actions",
+      "ui_view",
+      "settings"
+    ],
+    "version": "0.1.0",
+    "status": "developing",
+    "apt_command": "sudo apt install -y m3tal-plugin-samba-nfs"
+  },
+  {
+    "name": "system-bench",
+    "title": "System Benchmarks",
+    "process_name": "m3tal-bench",
+    "package_name": "m3tal-plugin-bench",
+    "category": "Diagnostics",
+    "description": "One-click benchmarking for CPU multi-threading, GPU compute, and disk I/O throughput.",
+    "capabilities": [
+      "benchmark_runner",
+      "ui_view"
+    ],
+    "version": "0.1.0",
+    "status": "planned",
+    "apt_command": "sudo apt install -y m3tal-plugin-bench"
+  }
 ]
