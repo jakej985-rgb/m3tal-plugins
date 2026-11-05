@@ -24,6 +24,7 @@
   .header-actions { display: flex; gap: 8px; }
   .btn { padding: 6px 14px; border-radius: 6px; font-size: 0.8rem; font-weight: 600; cursor: pointer; border: 1px solid var(--border); background: #21262d; color: var(--text-main); display: inline-flex; align-items: center; gap: 6px; transition: all .2s; }
   .btn:hover { background: #30363d; color: #fff; }
+  .btn:focus-visible, .tab:focus-visible, input.form-input:focus-visible, select.form-input:focus-visible, textarea.form-input:focus-visible, .check-row input:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
   .btn-primary { background: var(--emerald-dark); border-color: var(--emerald); color: #fff; }
   .btn-primary:hover { background: var(--emerald); }
   .btn-danger { background: rgba(244,63,94,.12); border-color: var(--rose); color: #fda4af; }
@@ -31,7 +32,7 @@
   .btn-sm { padding: 3px 10px; font-size: 0.72rem; }
   main { padding: 20px 24px; max-width: 1400px; margin: 0 auto; }
   .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 20px; flex-wrap: wrap; }
-  .tab { padding: 10px 18px; cursor: pointer; font-size: 0.85rem; font-weight: 600; color: var(--text-muted); border-bottom: 2px solid transparent; }
+  .tab { padding: 10px 18px; cursor: pointer; font-size: 0.85rem; font-weight: 600; color: var(--text-muted); border-bottom: 2px solid transparent; background: transparent; border-top: none; border-left: none; border-right: none; }
   .tab.active { color: #fff; border-bottom-color: var(--cyan); }
   .tab:hover { color: var(--text-main); }
   .panel { display: none; }
@@ -83,15 +84,15 @@
 </header>
 
 <main>
-  <div class="tabs">
-    <div class="tab active" data-tab="shares" onclick="showTab('shares')">Network Shares</div>
-    <div class="tab" data-tab="users" onclick="showTab('users')">Samba Users</div>
-    <div class="tab" data-tab="connections" onclick="showTab('connections')">Connections</div>
-    <div class="tab" data-tab="mounts" onclick="showTab('mounts')">Mounts</div>
+  <div class="tabs" role="tablist" aria-label="File Shares Navigation" onkeydown="handleTabKey(event)">
+    <button class="tab active" role="tab" id="tab-shares" aria-selected="true" aria-controls="panel-shares" tabindex="0" data-tab="shares" onclick="showTab('shares')">Network Shares</button>
+    <button class="tab" role="tab" id="tab-users" aria-selected="false" aria-controls="panel-users" tabindex="-1" data-tab="users" onclick="showTab('users')">Samba Users</button>
+    <button class="tab" role="tab" id="tab-connections" aria-selected="false" aria-controls="panel-connections" tabindex="-1" data-tab="connections" onclick="showTab('connections')">Connections</button>
+    <button class="tab" role="tab" id="tab-mounts" aria-selected="false" aria-controls="panel-mounts" tabindex="-1" data-tab="mounts" onclick="showTab('mounts')">Mounts</button>
   </div>
 
   <!-- ============ SHARES ============ -->
-  <div class="panel active" id="panel-shares">
+  <div class="panel active" role="tabpanel" id="panel-shares" aria-labelledby="tab-shares">
     <div class="two-col">
       <div class="card">
         <h2>📂 All Shares</h2>
@@ -101,10 +102,10 @@
         <div class="card">
           <h2>➕ New SMB Share</h2>
           <div class="form-grid">
-            <div><label class="form-label">Share Name</label><input class="form-input" id="smb-name" placeholder="media"></div>
-            <div><label class="form-label">Path</label><input class="form-input" id="smb-path" placeholder="/srv/media"></div>
-            <div><label class="form-label">Comment</label><input class="form-input" id="smb-comment" placeholder="Optional"></div>
-            <div><label class="form-label">Valid Users (comma separated)</label><input class="form-input" id="smb-users" placeholder="alice, bob"></div>
+            <div><label class="form-label" for="smb-name">Share Name</label><input class="form-input" id="smb-name" placeholder="media"></div>
+            <div><label class="form-label" for="smb-path">Path</label><input class="form-input" id="smb-path" placeholder="/srv/media"></div>
+            <div><label class="form-label" for="smb-comment">Comment</label><input class="form-input" id="smb-comment" placeholder="Optional"></div>
+            <div><label class="form-label" for="smb-users">Valid Users (comma separated)</label><input class="form-input" id="smb-users" placeholder="alice, bob"></div>
           </div>
           <div class="check-row"><input type="checkbox" id="smb-ro"><label for="smb-ro">Read-only</label></div>
           <div class="check-row"><input type="checkbox" id="smb-guest"><label for="smb-guest">Allow guest access</label></div>
@@ -113,9 +114,9 @@
         <div class="card">
           <h2>🌐 New NFS Export</h2>
           <div class="form-grid">
-            <div><label class="form-label">Export Path</label><input class="form-input" id="nfs-path" placeholder="/srv/nfs"></div>
-            <div><label class="form-label">Clients (comma separated, * for all)</label><input class="form-input" id="nfs-clients" placeholder="192.168.1.0/24, 10.0.0.5"></div>
-            <div><label class="form-label">Options</label><input class="form-input" id="nfs-options" value="rw,sync,no_subtree_check"></div>
+            <div><label class="form-label" for="nfs-path">Export Path</label><input class="form-input" id="nfs-path" placeholder="/srv/nfs"></div>
+            <div><label class="form-label" for="nfs-clients">Clients (comma separated, * for all)</label><input class="form-input" id="nfs-clients" placeholder="192.168.1.0/24, 10.0.0.5"></div>
+            <div><label class="form-label" for="nfs-options">Options</label><input class="form-input" id="nfs-options" value="rw,sync,no_subtree_check"></div>
           </div>
           <div style="margin-top:14px"><button class="btn btn-primary" onclick="createNfsExport()">Create NFS Export</button></div>
         </div>
@@ -124,7 +125,7 @@
   </div>
 
   <!-- ============ USERS ============ -->
-  <div class="panel" id="panel-users">
+  <div class="panel" role="tabpanel" id="panel-users" aria-labelledby="tab-users">
     <div class="two-col">
       <div class="card">
         <h2>👤 Samba Users</h2>
@@ -133,8 +134,8 @@
       <div class="card">
         <h2>➕ Manage Samba User</h2>
         <div class="form-grid">
-          <div><label class="form-label">Username</label><input class="form-input" id="user-name" placeholder="alice"></div>
-          <div><label class="form-label">Password</label><input class="form-input" id="user-pass" type="password" placeholder="••••••••"></div>
+          <div><label class="form-label" for="user-name">Username</label><input class="form-input" id="user-name" placeholder="alice"></div>
+          <div><label class="form-label" for="user-pass">Password</label><input class="form-input" id="user-pass" type="password" placeholder="••••••••"></div>
         </div>
         <div style="margin-top:14px;display:flex;gap:8px">
           <button class="btn btn-primary" onclick="createSmbUser()">Create / Update</button>
@@ -145,7 +146,7 @@
   </div>
 
   <!-- ============ CONNECTIONS ============ -->
-  <div class="panel" id="panel-connections">
+  <div class="panel" role="tabpanel" id="panel-connections" aria-labelledby="tab-connections">
     <div class="two-col">
       <div class="card">
         <h2>🔌 Active SMB Sessions</h2>
@@ -161,23 +162,23 @@
   </div>
 
   <!-- ============ MOUNTS ============ -->
-  <div class="panel" id="panel-mounts">
+  <div class="panel" role="tabpanel" id="panel-mounts" aria-labelledby="tab-mounts">
     <div class="two-col">
       <div class="card">
         <h2>⬇️ Mount Network Share</h2>
         <div class="form-grid">
-          <div><label class="form-label">Protocol</label>
+          <div><label class="form-label" for="mnt-proto">Protocol</label>
             <select class="form-input" id="mnt-proto"><option value="cifs">SMB/CIFS</option><option value="nfs">NFS</option></select></div>
-          <div><label class="form-label">Source</label><input class="form-input" id="mnt-source" placeholder="//server/share or server:/export"></div>
-          <div><label class="form-label">Target (mount point)</label><input class="form-input" id="mnt-target" placeholder="/mnt/share"></div>
-          <div><label class="form-label">Options</label><input class="form-input" id="mnt-options" placeholder="username=...,vers=3.0 or nfsvers=4"></div>
+          <div><label class="form-label" for="mnt-source">Source</label><input class="form-input" id="mnt-source" placeholder="//server/share or server:/export"></div>
+          <div><label class="form-label" for="mnt-target">Target (mount point)</label><input class="form-input" id="mnt-target" placeholder="/mnt/share"></div>
+          <div><label class="form-label" for="mnt-options">Options</label><input class="form-input" id="mnt-options" placeholder="username=...,vers=3.0 or nfsvers=4"></div>
         </div>
         <div style="margin-top:14px"><button class="btn btn-primary" onclick="mountShare()">Mount</button></div>
       </div>
       <div class="card">
         <h2>⬆️ Unmount Share</h2>
         <div class="form-grid">
-          <div><label class="form-label">Mount Point</label><input class="form-input" id="umnt-target" placeholder="/mnt/share"></div>
+          <div><label class="form-label" for="umnt-target">Mount Point</label><input class="form-input" id="umnt-target" placeholder="/mnt/share"></div>
         </div>
         <div style="margin-top:14px"><button class="btn btn-danger" onclick="unmountShare()">Unmount</button></div>
       </div>
@@ -209,8 +210,34 @@ function toast(msg, ok) {
 }
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function showTab(name) {
-  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.tab').forEach(t => {
+    const isActive = t.dataset.tab === name;
+    t.classList.toggle('active', isActive);
+    t.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    t.setAttribute('tabindex', isActive ? '0' : '-1');
+  });
   document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + name));
+}
+
+function handleTabKey(e) {
+  const tabs = Array.from(document.querySelectorAll('.tab'));
+  const idx = tabs.findIndex(t => t === document.activeElement);
+  if (idx === -1) return;
+  let nextIdx = idx;
+  if (e.key === 'ArrowRight') {
+    nextIdx = (idx + 1) % tabs.length;
+  } else if (e.key === 'ArrowLeft') {
+    nextIdx = (idx - 1 + tabs.length) % tabs.length;
+  } else if (e.key === 'Home') {
+    nextIdx = 0;
+  } else if (e.key === 'End') {
+    nextIdx = tabs.length - 1;
+  } else {
+    return;
+  }
+  e.preventDefault();
+  tabs[nextIdx].focus();
+  showTab(tabs[nextIdx].dataset.tab);
 }
 
 async function apiAction(action, args) {
@@ -282,7 +309,7 @@ function render() {
       const delAction = s.protocol === 'smb' ? 'delete_smb_share' : 'delete_nfs_export';
       const delArgs = s.protocol === 'smb' ? { name: s.name } : { path: s.path, client: s.clients?.[0] || '' };
       return `<tr><td>${proto}</td><td class="mono">${esc(s.name)}</td><td>${detail}</td><td>${access}</td>
-        <td><button class="btn btn-danger btn-sm" onclick='delShare(${JSON.stringify(delAction)}, ${JSON.stringify(delArgs)})'>Delete</button></td></tr>`;
+        <td><button class="btn btn-danger btn-sm" aria-label="Delete share ${esc(s.name)}" onclick='delShare(${JSON.stringify(delAction)}, ${JSON.stringify(delArgs)})'>Delete</button></td></tr>`;
     }).join('');
     st.innerHTML = `<table><thead><tr><th>Type</th><th>Name</th><th>Path / Clients</th><th>Access</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
   }
@@ -292,7 +319,7 @@ function render() {
   ut.innerHTML = state.users.length
     ? `<table><thead><tr><th>Username</th><th>UID</th><th></th></tr></thead><tbody>${state.users.map(u =>
         `<tr><td class="mono">${esc(u.username)}</td><td class="mono">${esc(u.uid || '–')}</td>
-         <td><button class="btn btn-danger btn-sm" onclick="delUser('${esc(u.username)}')">Delete</button></td></tr>`).join('')}</tbody></table>`
+         <td><button class="btn btn-danger btn-sm" aria-label="Delete user ${esc(u.username)}" onclick="delUser('${esc(u.username)}')">Delete</button></td></tr>`).join('')}</tbody></table>`
     : '<div class="empty">No Samba users.</div>';
 
   // Sessions
