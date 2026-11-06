@@ -1,0 +1,112 @@
+name: Build m3tal-samba-nfs DEB
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'm3tal-samba-nfs/**'
+  workflow_dispatch:
+    inputs:
+      force_bump:
+        description: "Force version bump type (auto, patch, minor, major)"
+        required: false
+        default: "auto"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Require main branch
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Publishing can only run from main (selected ref: $GITHUB_REF)."
+            exit 1
+          fi
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Packaging Tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends dpkg-dev apt-utils gnupg curl
+          python3 -m pip install --upgrade pip pyyaml
+
+      - name: Smart Auto-Bump m3tal-samba-nfs
+        id: bump
+        run: |
+          FORCE_BUMP="${{ github.event.inputs.force_bump || 'auto' }}"
+          BASE_REF="${{ github.event.before }}"
+          [ -z "$BASE_REF" ] || [ "$BASE_REF" = "0000000000000000000000000000000000000000" ] && BASE_REF="HEAD~1"
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            ./scripts/smart-bump.py --plugin "m3tal-samba-nfs" --bump-type "$FORCE_BUMP" --apply --force
+          else
+            TOUCHED=$(./scripts/smart-bump.py --plugin "m3tal-samba-nfs" --base "$BASE_REF" --list-touched)
+            if [ -z "$TOUCHED" ]; then
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            ./scripts/smart-bump.py --plugin "m3tal-samba-nfs" --base "$BASE_REF" --apply
+          fi
+
+          if [ -n "$(git status --porcelain m3tal-samba-nfs/)" ]; then
+            git config user.name "m3tal-bot"
+            git config user.email "bot@m3tal.io"
+            git add m3tal-samba-nfs/
+            git commit -m "chore(release): auto-bump m3tal-samba-nfs version and update CHANGELOG [skip ci]"
+            bash scripts/push-release-commit.sh origin main
+          fi
+
+      - name: Build and Package DEB
+        if: steps.bump.outputs.skip != 'true'
+        run: |
+          mkdir -p dist/packages
+          ./scripts/build-plugin-deb.sh m3tal-samba-nfs
+          mv m3tal-plugin-samba-nfs*.deb dist/packages/ 2>/dev/null || true
+          mv m3tal-plugin-samba-nfs*.sha256 dist/packages/ 2>/dev/null || true
+          ls -la dist/packages/
+
+      - uses: softprops/action-gh-release@v2
+        if: steps.bump.outputs.skip != 'true' && hashFiles('dist/packages/*.deb') != ''
+        with:
+          files: dist/packages/*
+          tag_name: plugins-latest
+          name: "M3TAL Plugins Release"
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Publish to m3tal-apt-key
+        if: steps.bump.outputs.skip != 'true' && hashFiles('dist/packages/*.deb') != ''
+        run: |
+          for deb in dist/packages/*.deb; do
+            [ -f "$deb" ] || continue
+            DEB_BASENAME=$(basename "$deb")
+            PKG_ID=$(echo "$DEB_BASENAME" | cut -d_ -f1)
+            PKG_VER=$(echo "$DEB_BASENAME" | cut -d_ -f2)
+            DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/plugins-latest/${DEB_BASENAME}"
+            curl -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}" \
+              https://api.github.com/repos/jakej985-rgb/m3tal-apt-key/dispatches \
+              -d "{\"event_type\":\"publish-deb\",\"client_payload\":{\"package_id\":\"${PKG_ID}\",\"version\":\"${PKG_VER}\",\"deb_url\":\"${DOWNLOAD_URL}\",\"allow_replace\":true}}"
+          done
