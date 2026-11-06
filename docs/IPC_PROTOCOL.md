@@ -36,7 +36,17 @@ spec:
     transport: "stdio"
 ```
 
-Core discovers manifests under configured plugin directories, including `/usr/lib/m3tal/plugins`, `/usr/local/lib/m3tal/plugins`, `~/.local/lib/m3tal/plugins`, and `~/.config/m3tal/plugins`.
+Note: `spec.rpc` is declarative metadata — the current Core manifest parser
+records but does not consume it; the JSON-RPC stdio contract above is what
+Core actually implements.
+
+Core discovers manifests under these search paths (see `NewManager` in `M3tal-core/pkg/plugins/host.go`):
+
+1. `./plugins` (working directory of `m3tal-api`)
+2. `~/.config/m3tal/plugins`
+3. `/var/lib/m3tal/plugins`
+4. `/usr/lib/m3tal/plugins`
+5. `/etc/m3tal/plugins`
 
 ## Core → plugin methods
 
@@ -71,7 +81,9 @@ Expected result:
 
 ### `m3tal.collect`
 
-Sent on Core's collection cycle for plugins with the `collector` capability.
+Sent on demand for plugins with the `collector` capability — Core has no
+scheduled collection loop; collection happens when the GUI or an API
+client calls `GET /api/v2/plugins/{name}/collect`.
 
 Params:
 
@@ -139,7 +151,7 @@ Expected result:
 
 ## Lifecycle and shutdown
 
-Core starts the process, calls `m3tal.init`, periodically calls `m3tal.collect`, and calls `m3tal.action` on demand. On stop, Core closes the plugin's stdin, sends SIGINT, and escalates if needed. A plugin may implement its own `m3tal.shutdown` handler for cleanup, but Core's host currently does not send that method as part of its normal stop path.
+Core starts the process, calls `m3tal.init`, calls `m3tal.collect` on demand (no scheduled collection loop exists today), and calls `m3tal.action` on demand. On stop, Core closes the plugin's stdin, sends SIGINT, and escalates if needed. A plugin may implement its own `m3tal.shutdown` handler for cleanup, but Core's host currently does not send that method as part of its normal stop path.
 
 ## Error handling
 
