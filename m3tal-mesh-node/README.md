@@ -4,7 +4,7 @@
 [![Process Identity: m3tal-mesh-node](https://img.shields.io/badge/Process-m3tal--mesh--node-brightgreen.svg)](https://m3tal.io)
 [![Package: m3tal-plugin-mesh-node](https://img.shields.io/badge/Package-m3tal--plugin--mesh--node-blue.svg)](https://m3tal.io)
 
-The **M3TAL Mesh Node Telemetry Broadcaster** (`m3tal-mesh-node`) is a lightweight headless daemon designed to run on remote servers, NAS devices, and secondary machines. It gathers local hardware telemetry and exposes it to `m3tal-mesh` cluster readers.
+The **M3TAL Mesh Node Telemetry Broadcaster** (`m3tal-mesh-node`) is a lightweight telemetry daemon designed to run on remote servers, NAS devices, and secondary machines. It gathers local hardware telemetry, exposes it to `m3tal-mesh` cluster readers, and provides a small Core settings/status UI at `/mesh-node`.
 
 ---
 

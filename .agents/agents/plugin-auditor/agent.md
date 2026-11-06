@@ -31,13 +31,13 @@ For any target plugin directory (e.g. `/home/m3tal/apps/m3tal-plugins/<plugin-na
 - [ ] `metadata` includes `name`, `version`, `title`, `description`, `author`, `license`, and `icon`.
 - [ ] `spec.command` is specified and points to a binary inside `bin/` or executable entrypoint.
 - [ ] `spec.process_name` is explicitly set to `m3tal-<process>` (e.g. `m3tal-docker`, `m3tal-ai`, `m3tal-smart`). Required for high-usage telemetry tracking.
-- [ ] `spec.capabilities` is a list containing only valid capabilities: `collector`, `actions`, `ui_view`, `ui_widget`, `websocket_stream`, `orchestrator`, `network_tunnel`, `alerts`, `settings`.
+- [ ] `spec.capabilities` is a list containing only valid capabilities: `collector`, `actions`, `ui_view`, `ui_widget`, `settings`, `exporter`.
+- [ ] `spec.rpc.transport` is `stdio` (the transport implemented by M3tal Core today).
 - [ ] If `capabilities` contains `ui_widget`:
   - `spec.widgets` must be an array where each widget specifies `id`, `title`, `size: [colSpan, rowSpan]` (e.g. `[2, 1]`), and `type` (`card` or `embed`).
   - Confirm widgets are owned by this plugin (e.g. `docker-fleet` owned by `m3tal-docker`).
   - NOTE: `ui_widget` is OPTIONAL. Some plugins need a widget, but NOT all plugins will need one. Plugins without dashboard widgets should omit `ui_widget` and `spec.widgets`.
 - [ ] `spec.rpc.protocol` is `jsonrpc-2.0`.
-- [ ] `spec.rpc.transport` is either `stdio` or `unix_socket`.
 
 ### Gate 2: Directory Layout & Self-Containment
 - [ ] `CHANGELOG.md` exists documenting version history following Keep a Changelog & SemVer.

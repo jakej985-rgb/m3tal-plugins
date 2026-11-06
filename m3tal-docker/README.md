@@ -38,10 +38,11 @@ The **M3TAL Docker Plugin** (`m3tal-docker`) is the official container fleet man
 ## 2. Capabilities & IPC Methods
 
 Declared in `plugin.yaml`:
-- `collector`: Continuous telemetry of container counts, CPU/memory stats, and states.
-- `actions`: Immediate operational commands for container management.
-- `ui_view`: Dedicated web console embedded in the M3TAL dashboard.
-- `websocket_stream`: Live log tailing and container event streaming.
+- `collector`: Periodic telemetry of container counts, CPU/memory stats, and states.
+- `actions`: Operational commands for container lifecycle and image pruning.
+- `ui_view`: Dedicated fleet console embedded in the M3TAL dashboard.
+- `ui_widget`: Dashboard widget showing container fleet state.
+- `settings`: Docker endpoint, log tail, stopped-container visibility, and poll interval settings.
 
 ### JSON-RPC 2.0 Stdio Contract
 
@@ -49,8 +50,8 @@ Declared in `plugin.yaml`:
 |---|---|---|
 | `m3tal.init` | Request → Response | Handshake exchanging plugin version, capabilities, actions, and UI routes. |
 | `m3tal.collect` | Request → Response | Periodic snapshot of running, paused, stopped containers, images, and disk usage. |
-| `m3tal.action` | Request → Response | Dispatches operational tasks: `start`, `stop`, `restart`, `remove`, `prune_images`. |
-| `m3tal.shutdown` | Request → Response | Gracefully terminates active background monitoring loops and flushes buffers. |
+| `m3tal.action` | Request → Response | Dispatches `start_container`, `stop_container`, `restart_container`, `prune_images`, `get_logs`, `inspect_container`, and `set_settings`. |
+| `m3tal.shutdown` | Plugin-side handler | Optional cleanup handler; Core's current host does not send this method during normal stop. |
 
 ---
 

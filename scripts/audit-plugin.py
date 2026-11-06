@@ -28,8 +28,7 @@ BOLD = "\033[1m"
 RESET = "\033[0m"
 
 VALID_CAPABILITIES = {
-    "collector", "actions", "ui_view", "ui_widget", 
-    "websocket_stream", "orchestrator", "network_tunnel", "alerts", "settings"
+    "collector", "actions", "ui_view", "ui_widget", "settings", "exporter"
 }
 
 SEMVER_REGEX = re.compile(r"^v?([0-9]+)\.([0-9]+)\.([0-9]+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
@@ -155,8 +154,8 @@ class PluginAuditor:
         rpc = spec.get("rpc", {})
         if rpc.get("protocol") != "jsonrpc-2.0":
             self.add_finding(gate, "BLOCKER", f"spec.rpc.protocol must be 'jsonrpc-2.0', got '{rpc.get('protocol')}'", "plugin.yaml", "Set spec.rpc.protocol: jsonrpc-2.0")
-        if rpc.get("transport") not in ["stdio", "unix_socket"]:
-            self.add_finding(gate, "BLOCKER", f"spec.rpc.transport must be 'stdio' or 'unix_socket', got '{rpc.get('transport')}'", "plugin.yaml", "Set spec.rpc.transport: stdio")
+        if rpc.get("transport") != "stdio":
+            self.add_finding(gate, "BLOCKER", f"spec.rpc.transport must be 'stdio' (the transport implemented by M3tal Core), got '{rpc.get('transport')}'", "plugin.yaml", "Set spec.rpc.transport: stdio")
 
         if self.gate_results[gate]["status"] == "PASS":
             self.gate_results[gate]["details"].append("Valid m3tal.io/v1alpha1 manifest, process naming, and capabilities.")
