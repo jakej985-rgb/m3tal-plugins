@@ -17,3 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Network mount actions: mount/unmount remote CIFS (SMB) and NFS shares to local mount points.
 - Service controls: reload/restart `smbd`, `nmbd`, `nfs-server`.
 - Dashboard UI at `/storage/shares` with share tables, user management, and connection monitoring.
+
+
+## [0.1.1] - 2026-11-06
+
+### 🚀 Changes & Improvements
+- **docs: plugin ecosystem manual, per-plugin docs, and release workflows** (`71f9401`)
+
+---
+

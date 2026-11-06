@@ -2,7 +2,7 @@ apiVersion: m3tal.io/v1alpha1
 kind: Plugin
 metadata:
   name: samba-nfs
-  version: "0.1.0"
+  version: "0.1.1"
   title: "File Shares"
   description: "Samba (SMB/CIFS) and NFS network share manager with user credentials, guest permissions, active client monitoring, and network mounts"
   author: "jakej985-rgb"
