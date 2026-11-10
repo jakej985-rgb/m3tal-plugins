@@ -1,6 +1,6 @@
-# Sentinel's Journal - Critical Security Learnings
+# Sentinel's Journal
 
-## 2026-11-05 - Docker Subprocess Argument Injection via Unvalidated Target Parameters
-**Vulnerability:** Subprocess wrappers around the `docker` CLI in `m3tal-docker` (`StartContainer`, `StopContainer`, `RestartContainer`, `GetLogs`, `InspectContainer`) took arbitrary user-supplied container identifiers or names and passed them directly as positional arguments to `exec.Command("docker", ... target)`. Attackers could inject CLI flags (e.g. `--checkpoint`, `--time`) or shell metacharacters.
-**Learning:** Even when `exec.Command` avoids shell interpretation and splitting, passing untrusted strings directly as positional CLI arguments to utilities like `docker` is vulnerable to CLI argument/flag injection if the argument starts with `-` or contains unexpected control structures.
-**Prevention:** Enforce strict whitelisting validation (`isValidContainerTarget`) on all container IDs and names (1-128 alphanumeric characters, dots, underscores, dashes, strictly prohibiting leading hyphens) before invoking external CLI tools or looking up container state.
+## 2026-11-05 - Enforce Container Identifier Allowlist Against Command-Line Flag and Argument Injection
+**Vulnerability:** Subprocess wrappers invoking `exec.Command("docker", ...)` with unsanitized user-supplied container identifiers allowed command-line argument injection (e.g. passing leading dashes such as `--checkpoint` or `-f` as container names).
+**Learning:** Even though `exec.Command` avoids shell metacharacter expansion by passing arguments directly via `execve`, passing arbitrary strings as CLI positional parameters still exposes CLI flag injection vulnerabilities when the CLI utility parses optional flags anywhere in the argument vector.
+**Prevention:** Always validate external identifiers with an explicit regex allowlist (such as `^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`) before passing them to external CLI processes, ensuring names begin with an alphanumeric character and contain no command options or illegal path characters.
