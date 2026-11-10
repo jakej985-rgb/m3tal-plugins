@@ -76,3 +76,43 @@ func TestMatrixShapeErrors(t *testing.T) {
 		t.Fatal("expected matrix/vector shape error")
 	}
 }
+
+func BenchmarkMatMul(b *testing.B) {
+	rowsA, colsA := 64, 64
+	colsB := 64
+	valA := make([]float64, rowsA*colsA)
+	valB := make([]float64, colsA*colsB)
+	for i := range valA {
+		valA[i] = float64(i%10) * 0.1
+	}
+	for i := range valB {
+		valB[i] = float64((i+3)%10) * 0.1
+	}
+	matA := mustMatrix(&testing.T{}, rowsA, colsA, valA)
+	matB := mustMatrix(&testing.T{}, colsA, colsB, valB)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, _ = matA.MatMul(matB)
+	}
+}
+
+func BenchmarkMulVec(b *testing.B) {
+	rows, cols := 128, 128
+	val := make([]float64, rows*cols)
+	vecVal := make(Vector, cols)
+	for i := range val {
+		val[i] = float64(i%10) * 0.1
+	}
+	for i := range vecVal {
+		vecVal[i] = float64((i+5)%10) * 0.1
+	}
+	mat := mustMatrix(&testing.T{}, rows, cols, val)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, _ = mat.MulVec(vecVal)
+	}
+}
