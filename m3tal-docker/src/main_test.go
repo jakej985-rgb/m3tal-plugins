@@ -167,6 +167,7 @@ func TestValidateContainerTarget(t *testing.T) {
 		"container-123",
 		"A1b2C3",
 		"69a83d735fb29dc0a4cb29bdf934810294827103859203810284719283749281",
+		strings.Repeat("a", 129),
 	}
 
 	for _, target := range validTargets {
@@ -186,7 +187,8 @@ func TestValidateContainerTarget(t *testing.T) {
 		"container&echo",
 		"container name",
 		"container\nnewline",
-		strings.Repeat("a", 129),
+		".hidden",
+		"../../etc/passwd",
 	}
 
 	for _, target := range invalidTargets {

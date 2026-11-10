@@ -154,9 +154,10 @@ func applyStatsOutput(containers []Container, output string) {
 	}
 }
 
-// containerTargetRe enforces standard Docker container ID / name format.
-// Prevents command-line flag injection (leading '-') and dangerous shell/path metacharacters.
-var containerTargetRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`)
+// containerTargetRe mirrors Docker's container name syntax ([a-zA-Z0-9][a-zA-Z0-9_.-]+)
+// without an artificial length cap. The leading alphanumeric prevents command-line flag
+// injection (leading '-') and the character class excludes shell/path metacharacters.
+var containerTargetRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
 
 // validateContainerTarget ensures target is a valid Docker container ID or name.
 func validateContainerTarget(target string) error {
