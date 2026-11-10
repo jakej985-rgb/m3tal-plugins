@@ -1,0 +1,68 @@
+apiVersion: m3tal.io/v1alpha1
+kind: Plugin
+metadata:
+  name: samba-nfs
+  version: "0.1.2"
+  title: "File Shares"
+  description: "Samba (SMB/CIFS) and NFS network share manager with user credentials, guest permissions, active client monitoring, and network mounts"
+  author: "jakej985-rgb"
+  license: "MIT"
+  icon: "IconFolder"
+  package_name: "m3tal-plugin-samba-nfs"
+
+spec:
+  command: "./bin/m3tal-samba-nfs"
+  args: []
+  process_name: "m3tal-samba-nfs"
+  poll_interval: 5s
+
+  capabilities:
+    - collector
+    - actions
+    - ui_view
+    - settings
+
+  ui:
+    entry: "ui/dist/index.html"
+    route: "/storage/shares"
+    category: "storage"
+    category_title: "Storage"
+    tab_id: "samba_nfs_shares"
+    title: "Shares"
+    sidebar: true
+    order: 40
+    roles: ["admin"]
+
+  settings:
+    - id: "samba_nfs_config"
+      title: "Share Manager"
+      description: "Configuration file locations and reload behavior for Samba and NFS share management"
+      category: "file-sharing"
+      fields:
+        - key: "smb_conf_path"
+          label: "Samba Configuration Path"
+          type: "text"
+          default: "/etc/samba/smb.conf"
+          description: "Path to smb.conf managed by this plugin"
+        - key: "exports_path"
+          label: "NFS Exports Path"
+          type: "text"
+          default: "/etc/exports"
+          description: "Path to the NFS exports file managed by this plugin"
+        - key: "auto_reload"
+          label: "Reload Services After Changes"
+          type: "boolean"
+          default: true
+          description: "Automatically reload/restart smbd, nmbd, and nfs-server after share changes"
+
+  rpc:
+    protocol: "jsonrpc-2.0"
+    transport: "stdio"
+
+  requirements:
+    binaries:
+      - smbd
+      - testparm
+      - pdbedit
+      - exportfs
+    root: true

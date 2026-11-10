@@ -434,4 +434,3 @@ func TestNodeRuntimeConfigInheritsCoreAPIKey(t *testing.T) {
 		t.Fatalf("expected node to pick up rotated Core key, got %q", cfgRotated.PairingToken)
 	}
 }
-

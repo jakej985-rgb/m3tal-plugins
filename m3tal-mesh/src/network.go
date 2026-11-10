@@ -190,6 +190,47 @@ func resolveCoreAPIKey() string {
 	return ""
 }
 
+type coreAPIKeyEntry struct {
+	Token       string   `json:"token"`
+	Permissions []string `json:"permissions"`
+	Direction   string   `json:"direction"`
+}
+
+// resolveRemoteAPIKeys returns the remote-direction credentials registered in
+// Core's API Key Manager — tokens this PC uses to authenticate to other
+// machines' or apps' APIs (e.g. mesh peers). They form the outbound
+// credential pool tried alongside the configured pairing token.
+func resolveRemoteAPIKeys() []string {
+	seen := make(map[string]bool)
+	var out []string
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return out
+	}
+	keyFile := filepath.Join(home, ".config", "m3tal", "api_keys.json")
+	data, err := os.ReadFile(keyFile)
+	if err != nil {
+		return out
+	}
+	var parsed struct {
+		Keys []coreAPIKeyEntry `json:"keys"`
+	}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return out
+	}
+	for _, k := range parsed.Keys {
+		if k.Direction != "remote" {
+			continue
+		}
+		t := strings.TrimSpace(k.Token)
+		if t != "" && !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 func loadMeshConfig() meshConfig {
 	cfg := meshConfig{
 		ListenPort: 9321,
@@ -525,43 +566,94 @@ func effectiveCredentials(explicitToken, explicitPass string, passwordOnly bool,
 	return tok, pass
 }
 
+// meshTokenCandidates builds the outbound credential pool for peer
+// connections: the effective primary token (explicit per-peer token or the
+// inherited pairing token) followed by every remote-direction key registered
+// in Core's API Key Manager. Explicit credentials never fall back to the
+// manager pool.
+func meshTokenCandidates(primary, explicitToken string, passwordOnly bool) []string {
+	if explicitToken != "" || passwordOnly {
+		if strings.TrimSpace(primary) == "" {
+			return nil
+		}
+		return []string{primary}
+	}
+	seen := make(map[string]bool)
+	var out []string
+	add := func(t string) {
+		t = strings.TrimSpace(t)
+		if t != "" && !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	add(primary)
+	for _, t := range resolveRemoteAPIKeys() {
+		add(t)
+	}
+	return out
+}
+
 // connectAndNegotiateNode attempts to authenticate with a remote node using effective credentials.
 // To prevent exfiltration of mesh-wide secrets to untrusted hosts, DefaultPassword is never sent upfront.
 // If the remote host returns an authenticated password_required response, it retries with DefaultPassword,
 // pinning the peer certificate fingerprint authenticated by the first exchange.
+// When no explicit per-peer token is configured, every credential in the pool
+// (pairing token + remote API keys) is tried until the peer accepts one.
 // If an inherited token was rejected and a password was available, it retries in password-only mode.
 // If passwordOnly is specified as true (e.g. for a saved password-only peer), token inheritance is suppressed.
 func connectAndNegotiateNode(address, explicitToken, explicitPass string, cfg meshConfig, expectedFingerprint string, passwordOnly bool) (MeshNode, bool, error) {
 	tok, pass := effectiveCredentials(explicitToken, explicitPass, passwordOnly, cfg)
-	if cfg.IsPairingTokenRequired() && tok == "" && pass == "" {
+	candidates := meshTokenCandidates(tok, explicitToken, passwordOnly)
+	if cfg.IsPairingTokenRequired() && len(candidates) == 0 && pass == "" {
 		return MeshNode{}, false, fmt.Errorf("pairing token is required to authenticate remote mesh nodes; configure a shared secret in Mesh Settings or enter a pairing token")
 	}
-	node, err := fetchRemoteWithAuth(address, tok, pass, cfg.ListenPort, expectedFingerprint)
-	if err != nil {
+	if len(candidates) == 0 {
+		candidates = []string{""}
+	}
+
+	var lastErr error
+	for _, candidate := range candidates {
+		node, err := fetchRemoteWithAuth(address, candidate, pass, cfg.ListenPort, expectedFingerprint)
+		if err == nil {
+			pwOnly := candidate == "" && pass != ""
+			return node, pwOnly, nil
+		}
+		lastErr = err
+
 		// Only send default password to unpinned address after an authenticated password_required response,
 		// and strictly pin the retry to the peer certificate fingerprint authenticated by the first exchange.
 		// A peer authenticated only with a custom per-peer token must not receive mesh DefaultPassword.
-		if errors.Is(err, ErrPasswordRequired) && explicitPass == "" && cfg.DefaultPassword != "" && explicitToken == "" && cfg.PairingToken != "" {
+		if errors.Is(err, ErrPasswordRequired) && explicitPass == "" && cfg.DefaultPassword != "" && explicitToken == "" && candidate != "" {
 			authFP := node.Fingerprint
 			if authFP == "" {
 				authFP = expectedFingerprint
 			}
 			if authFP != "" {
-				if authNode, authErr := fetchRemoteWithAuth(address, tok, cfg.DefaultPassword, cfg.ListenPort, authFP); authErr == nil {
+				if authNode, authErr := fetchRemoteWithAuth(address, candidate, cfg.DefaultPassword, cfg.ListenPort, authFP); authErr == nil {
 					return authNode, false, nil
 				}
 			}
 		}
-		// Only retry in password-only mode when the inherited token was specifically rejected by the node
-		if explicitToken == "" && pass != "" && tok != "" && errors.Is(err, ErrTokenRejected) {
-			if altNode, altErr := fetchRemoteWithAuth(address, "", pass, cfg.ListenPort, expectedFingerprint); altErr == nil {
-				return altNode, true, nil
-			}
+
+		// Only move on to the next credential when the node rejected this token;
+		// other failures (network, TLS) are not credential problems.
+		if errors.Is(err, ErrTokenRejected) {
+			continue
 		}
-		return MeshNode{}, false, err
+		break
 	}
-	pwOnly := tok == "" && pass != ""
-	return node, pwOnly, nil
+
+	// Only retry in password-only mode when the inherited token was specifically rejected by the node
+	if explicitToken == "" && pass != "" && lastErr != nil && errors.Is(lastErr, ErrTokenRejected) {
+		if altNode, altErr := fetchRemoteWithAuth(address, "", pass, cfg.ListenPort, expectedFingerprint); altErr == nil {
+			return altNode, true, nil
+		}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no credentials available to authenticate remote mesh node %s", address)
+	}
+	return MeshNode{}, false, lastErr
 }
 
 func pairAndPersistPeer(address, name, role, token, password string) (MeshNode, error) {
@@ -663,21 +755,31 @@ func discoverAndVerifyPeers() ([]MeshNode, error) {
 				}
 			}
 		case <-ctx.Done():
-			return verifyCandidates(candidates, candidateHosts, cfg.PairingToken, cfg.ListenPort), nil
+			return verifyCandidates(candidates, candidateHosts, meshTokenCandidates(cfg.PairingToken, "", false), cfg.ListenPort), nil
 		}
 	}
 }
 
-func verifyCandidates(candidates []string, candidateHosts map[string]string, token string, port int) []MeshNode {
+func verifyCandidates(candidates []string, candidateHosts map[string]string, tokens []string, port int) []MeshNode {
 	var wg sync.WaitGroup
 	mu := sync.Mutex{}
 	discovered := make([]MeshNode, 0)
+	if len(tokens) == 0 {
+		tokens = []string{""}
+	}
 	for _, address := range candidates {
 		address := address
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			node, err := fetchRemoteWithAuth(address, token, "", port)
+			var node MeshNode
+			var err error
+			for _, tok := range tokens {
+				node, err = fetchRemoteWithAuth(address, tok, "", port)
+				if err == nil || !errors.Is(err, ErrTokenRejected) {
+					break
+				}
+			}
 			if err == nil {
 				mu.Lock()
 				discovered = append(discovered, node)

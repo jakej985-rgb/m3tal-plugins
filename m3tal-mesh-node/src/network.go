@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -121,6 +122,83 @@ func resolveCoreAPIKey() string {
 		}
 	}
 	return ""
+}
+
+type coreAPIKeyEntry struct {
+	Token       string   `json:"token"`
+	Permissions []string `json:"permissions"`
+	Direction   string   `json:"direction"`
+}
+
+// coreAPIKeyAllowsMesh reports whether an exported API key may authenticate
+// mesh federation. Accepts full access ("*"), the dedicated mesh scope, any
+// "mesh*" scope, or empty permissions (legacy keys).
+func coreAPIKeyAllowsMesh(perms []string) bool {
+	for _, p := range perms {
+		if p == "*" || p == "mesh:access" || strings.HasPrefix(p, "mesh") {
+			return true
+		}
+	}
+	return len(perms) == 0
+}
+
+// resolveCoreAPIKeys returns every API key token exported by M3TAL Core's API
+// Key Manager that is permitted for mesh federation, including the primary
+// token for backward compatibility. Remote-direction keys are credentials for
+// other machines and are never accepted.
+func resolveCoreAPIKeys() []string {
+	seen := make(map[string]bool)
+	var out []string
+	add := func(t string) {
+		t = strings.TrimSpace(t)
+		if t != "" && !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	home, err := os.UserHomeDir()
+	if err == nil && home != "" {
+		keyFile := filepath.Join(home, ".config", "m3tal", "api_keys.json")
+		if data, err := os.ReadFile(keyFile); err == nil {
+			var parsed struct {
+				PrimaryToken string            `json:"primary_token"`
+				Keys         []coreAPIKeyEntry `json:"keys"`
+			}
+			if err := json.Unmarshal(data, &parsed); err == nil {
+				add(parsed.PrimaryToken)
+				for _, k := range parsed.Keys {
+					if k.Direction == "remote" {
+						continue
+					}
+					if !coreAPIKeyAllowsMesh(k.Permissions) {
+						continue
+					}
+					add(k.Token)
+				}
+			}
+		}
+	}
+	return out
+}
+
+// acceptedTokens returns all tokens this node will accept: the explicitly
+// configured/inherited pairing token plus every mesh-capable key from Core's
+// API Key Manager, deduplicated.
+func (c nodeRuntimeConfig) acceptedTokens() []string {
+	seen := make(map[string]bool)
+	var out []string
+	add := func(t string) {
+		t = strings.TrimSpace(t)
+		if t != "" && !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	add(c.PairingToken)
+	for _, t := range resolveCoreAPIKeys() {
+		add(t)
+	}
+	return out
 }
 
 func loadNodeRuntimeConfig() nodeRuntimeConfig {
@@ -241,11 +319,11 @@ func nodeTelemetryHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	current := loadNodeRuntimeConfig()
-	expectedToken := current.PairingToken
+	acceptedTokens := current.acceptedTokens()
 	expectedPass := current.Password
 	authRequired := current.IsPairingTokenRequired()
 
-	if authRequired && expectedToken == "" && expectedPass == "" {
+	if authRequired && len(acceptedTokens) == 0 && expectedPass == "" {
 		http.Error(w, "authentication is required but neither API token nor password is configured on this node", http.StatusServiceUnavailable)
 		return
 	}
@@ -260,7 +338,8 @@ func nodeTelemetryHandler(w http.ResponseWriter, r *http.Request) {
 		nodeCertFingerprintMu.RUnlock()
 	}
 
-	if expectedToken != "" {
+	matchedToken := ""
+	if len(acceptedTokens) > 0 {
 		if suppliedProof == "" || nonce == "" || clientNonce == "" {
 			http.Error(w, "pairing token required", http.StatusUnauthorized)
 			return
@@ -276,7 +355,15 @@ func nodeTelemetryHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if subtle.ConstantTimeCompare([]byte(suppliedProof), []byte(nodeRequestProof(expectedToken, nonce, clientNonce, fp))) != 1 {
+		// Multiple API keys may be live at once: accept the proof if it was
+		// computed with any authorized token from Core's API Key Manager.
+		for _, tok := range acceptedTokens {
+			if subtle.ConstantTimeCompare([]byte(suppliedProof), []byte(nodeRequestProof(tok, nonce, clientNonce, fp))) == 1 {
+				matchedToken = tok
+				break
+			}
+		}
+		if matchedToken == "" {
 			http.Error(w, "invalid pairing token", http.StatusUnauthorized)
 			return
 		}
@@ -286,8 +373,8 @@ func nodeTelemetryHandler(w http.ResponseWriter, r *http.Request) {
 		suppliedPass := r.Header.Get("X-M3TAL-Password")
 		if suppliedPass == "" {
 			w.Header().Set("X-M3TAL-Auth-Status", "password_required")
-			if suppliedProof != "" && expectedToken != "" {
-				w.Header().Set("X-M3TAL-Proof", nodeResponseProof(expectedToken, nonce, clientNonce, []byte("password required\n"), fp))
+			if suppliedProof != "" && matchedToken != "" {
+				w.Header().Set("X-M3TAL-Proof", nodeResponseProof(matchedToken, nonce, clientNonce, []byte("password required\n"), fp))
 			}
 			http.Error(w, "password required", http.StatusUnauthorized)
 			return
@@ -308,8 +395,8 @@ func nodeTelemetryHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	if suppliedProof != "" && expectedToken != "" {
-		w.Header().Set("X-M3TAL-Proof", nodeResponseProof(expectedToken, nonce, clientNonce, body, fp))
+	if matchedToken != "" {
+		w.Header().Set("X-M3TAL-Proof", nodeResponseProof(matchedToken, nonce, clientNonce, body, fp))
 	}
 	_, _ = w.Write(body)
 }

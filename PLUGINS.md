@@ -1,205 +1,160 @@
 # M3TAL Official Plugin Catalog (`PLUGINS.md`)
 
-This document is the canonical directory of all official and planned plugins for the **M3TAL Core** Linux Supervisor and Control Plane (`jakej985-rgb/m3tal-core`).
+This document is the human-readable catalog for plugins in the **M3tal Plugins** monorepo. It describes what each plugin currently implements, how it is packaged, and whether it is published to the central APT repository.
 
-All plugins strictly adhere to the **M3TAL Plugin Standardization Specification**:
-- **Folder Format**: `m3tal-<plugin-name>`
-- **Process Identity**: Every plugin executes under the canonical title `m3tal-<process>` for instant visibility in `top`, `htop`, and system diagnostic monitors.
-- **IPC Protocol**: JSON-RPC 2.0 communication over standard input/output (`stdio`).
-- **Debian Distribution**: Packaged as official Debian `.deb` archives and indexed via `jakej985-rgb/m3tal-apt-key`.
+Machine-readable catalog data lives in [`catalog.json`](./catalog.json), with a detached signature in [`catalog.json.sig`](./catalog.json.sig). Core can use that catalog for the Plugin Manager, but this document remains the authoritative explanation of plugin status and boundaries.
 
----
+## Status vocabulary
 
-## 1. Plugin Catalog Overview
+| Status | Meaning |
+|---|---|
+| `available` | A `plugin.yaml` exists, the plugin has release automation or a published package, and the documented APT package is present in `m3tal-apt-key`. |
+| `developing` | Implementation exists, but packaging, release automation, or production readiness is incomplete. |
+| `planned` | Product direction or scaffold documentation exists, but there is no installable plugin implementation yet. |
 
-| Folder Name | Title | Category | Canonical Process | Debian Package | Status | Short Description |
-|---|---|---|---|---|---|---|
-| [`m3tal-docker`](./m3tal-docker/) | **Containers** | Container Fleet | `m3tal-docker` | `m3tal-plugin-docker-monitor` | 🟢 Available | Docker fleet monitor, live log inspector, lifecycle controls, image pruning. |
-| [`m3tal-mesh`](./m3tal-mesh/) | **Mesh Fleet** | Fleet Federation | `m3tal-mesh` | `m3tal-plugin-mesh` | 🟢 Available | Personal Cloud & Local Network Fleet Federation, peer discovery, and multi-node hardware telemetry reader. |
-| [`m3tal-mesh-node`](./m3tal-mesh-node/) | **Mesh Node** | Telemetry Sender | `m3tal-mesh-node` | `m3tal-plugin-mesh-node` | 🟢 Available | Headless M3TAL telemetry broadcaster and node metrics daemon for personal cloud clustering. |
-| [`m3tal-compose`](./m3tal-compose/) | **Compose Editor** | Container Management | `m3tal-compose` | `m3tal-plugin-compose` | 🟡 Developing | Visual & YAML Compose editor, live syntax validator, stack deployer (`up`/`down`). |
-| [`m3tal-stacks`](./m3tal-stacks/) | **Compose Template DB** | App Store & Hub | `m3tal-stacks` | `m3tal-plugin-stacks` | 🟡 Planned | Curated database of verified Docker Compose templates, argument presets, and 1-click apps. |
-| [`m3tal-ai`](./m3tal-ai/) | **Local AI & LLM** | Local AI & LLM | `m3tal-ai` | `m3tal-plugin-ai` | 🟡 Planned | Local LLM inference manager (Ollama, vLLM), GPU VRAM stats, job queue. |
-| [`m3tal-smart`](./m3tal-smart/) | **Smart Disk Telemetry** | Hardware Diagnostics | `m3tal-smart` | `m3tal-plugin-smart` | 🟡 Planned | Drive health telemetry, NVMe wear life, S.M.A.R.T. self-tests, thermal history. |
-| [`m3tal-traefik`](./m3tal-traefik/) | **Traefik Gateway** | Networking & Proxy | `m3tal-traefik` | `m3tal-plugin-traefik` | 🟡 Planned | Traefik v3 reverse proxy, automated Let's Encrypt SSL/TLS, dynamic routing. |
-| [`m3tal-vpn`](./m3tal-vpn/) | **VPN Tunnel** | Network Privacy | `m3tal-vpn` | `m3tal-plugin-vpn` | 🟡 Planned | WireGuard/OpenVPN tunnel connectivity with container egress routing and leak protection. |
-| [`m3tal-samba`](./m3tal-samba/) | **Samba Manager** | File Sharing | `m3tal-samba` | `m3tal-plugin-samba` | 🟡 Planned | Graphical Samba/NFS share manager, guest permissions, user credentials, active mounts. |
-| [`m3tal-bench`](./m3tal-bench/) | **System Benchmarks** | Diagnostics | `m3tal-bench` | `m3tal-plugin-bench` | 🟡 Planned | One-click benchmarking for CPU multi-threading, GPU compute, and disk I/O throughput. |
+## Ecosystem boundary
 
----
+M3tal Core is only the dashboard, telemetry monitor, settings/API-key manager, and plugin host supervisor. Plugins own workload-specific behavior such as Docker, Compose, mesh federation, file shares, AI assistance, proxies, VPNs, storage health, and benchmarks.
 
-## 2. Detailed Plugin Profiles
+Core and plugins are one ecosystem:
 
-### 🐳 [`m3tal-docker`](./m3tal-docker/) — Containers & Docker Fleet Management
-- **Directory**: `m3tal-docker/`
-- **Process Identity**: `m3tal-docker`
-- **Debian Package**: `m3tal-plugin-docker-monitor`
-- **Dashboard Mount**: `/containers` (`/plugins/m3tal-docker/`) — Sub-Tab: `Containers Fleet`
-- **Capabilities**: `collector`, `actions`, `ui_view`, `websocket_stream`
-- **Status**: 🟢 **Available (v0.2.1)**
-- **What it does**:
-  Provides complete, real-time Docker container fleet monitoring and lifecycle management. Discovers all running, stopped, and paused containers directly through `/var/run/docker.sock`. Operators can inspect container stdout/stderr log streams live, view CPU/RAM/network usage metrics, trigger container actions (`start`, `stop`, `restart`, `remove`), and reclaim drive space with one-click unused image and builder cache pruning.
-- **Install Command**:
-  ```bash
-  sudo apt install -y m3tal-plugin-docker-monitor
-  ```
+1. A plugin lives in `m3tal-plugins/m3tal-<name>/`.
+2. Its `plugin.yaml` declares the process, capabilities, UI route, widgets, and settings.
+3. Core discovers the manifest under a plugin search path.
+4. Core launches the process and speaks JSON-RPC 2.0 over stdio.
+5. Core mounts the plugin UI at `/plugins/<metadata.name>/` and the configured dashboard route.
+6. Release automation packages the plugin as `m3tal-plugin-<name>` and dispatches it to `m3tal-apt-key`.
+7. Users install the plugin with `sudo apt install m3tal-plugin-<name>`.
 
----
+See [`docs/IPC_PROTOCOL.md`](./docs/IPC_PROTOCOL.md), [`docs/PLUGIN_AUTHORING.md`](./docs/PLUGIN_AUTHORING.md), and [`docs/RELEASING.md`](./docs/RELEASING.md) for the implementation contract.
 
-### 📝 [`m3tal-compose`](./m3tal-compose/) — Docker Compose Editor & Stack Manager
-- **Directory**: `m3tal-compose/`
-- **Process Identity**: `m3tal-compose`
-- **Debian Package**: `m3tal-plugin-compose`
-- **Dashboard Mount**: `/containers` (`/plugins/m3tal-compose/`) — Sub-Tab: `Compose Editor`
-- **Capabilities**: `collector`, `actions`, `ui_view`
-- **Status**: 🟡 **Developing (v0.2.2)**
-- **What it does**:
-  Visual and YAML editor for Docker Compose projects (`docker-compose.yml`, `compose.yaml`). Provides syntax validation, visual service creator, environment variable (`.env`) manager, and direct stack lifecycle actions (`compose up -d`, `compose down`, `compose restart`, `compose pull`, `compose logs`).
-- **Install Command**:
-  ```bash
-  sudo apt install -y m3tal-plugin-compose
-  ```
+## Catalog overview
 
----
+| Folder | Title | Process | Debian package(s) | Status | Current version |
+|---|---|---|---:|---|---:|
+| [`m3tal-docker`](./m3tal-docker/) | Containers | `m3tal-docker` | `m3tal-plugin-docker-monitor` | available | 0.8.1 |
+| [`m3tal-compose`](./m3tal-compose/) | Compose Editor | `m3tal-compose` | `m3tal-plugin-compose` | available | 0.6.0 |
+| [`m3tal-mesh`](./m3tal-mesh/) | Mesh Fleet | `m3tal-mesh` | `m3tal-plugin-mesh`, `m3tal-plugin-mesh-cluster` | available | 0.5.0 |
+| [`m3tal-mesh-node`](./m3tal-mesh-node/) | Mesh Node | `m3tal-mesh-node` | `m3tal-plugin-mesh-node` | available | 0.5.0 |
+| [`m3tal-samba-nfs`](./m3tal-samba-nfs/) | File Shares | `m3tal-samba-nfs` | `m3tal-plugin-samba-nfs` *(planned package)* | developing | 0.1.0 |
+| [`m3tal-ai`](./m3tal-ai/) | Local AI Assistant | `m3tal-ai` *(prototype)* | none yet | developing | n/a |
+| [`m3tal-stacks`](./m3tal-stacks/) | Compose Template DB | `m3tal-stacks` | `m3tal-plugin-stacks` *(planned)* | planned | n/a |
+| [`m3tal-smart`](./m3tal-smart/) | Smart Disk Telemetry | `m3tal-smart` | `m3tal-plugin-smart` *(planned)* | planned | n/a |
+| [`m3tal-traefik`](./m3tal-traefik/) | Traefik Gateway | `m3tal-traefik` | `m3tal-plugin-traefik` *(planned)* | planned | n/a |
+| [`m3tal-vpn`](./m3tal-vpn/) | VPN Tunnel | `m3tal-vpn` | `m3tal-plugin-vpn` *(planned)* | planned | n/a |
+| [`m3tal-bench`](./m3tal-bench/) | System Benchmarks | `m3tal-bench` | `m3tal-plugin-bench` *(planned)* | planned | n/a |
 
-### 🌐 [`m3tal-mesh`](./m3tal-mesh/) — Cluster & Mesh Federation Reader
-- **Directory**: `m3tal-mesh/`
-- **Process Identity**: `m3tal-mesh`
-- **Debian Package**: `m3tal-plugin-mesh` (or bundle via `m3tal-plugin-mesh-cluster`)
-- **Dashboard Mount**: `/mesh` (`/plugins/m3tal-mesh/`) — Route: `Mesh Fleet`
-- **Capabilities**: `collector`, `actions`, `ui_view`
-- **Status**: 🟢 **Available (v0.4.0)**
-- **What it does**:
-  Personal cloud and local network fleet federation reader. Discovers other M3TAL instances on your LAN/Tailscale, pairs with authenticated remote `m3tal-mesh-node` peers, aggregates multi-machine telemetry (CPU, RAM, ZFS/NVMe storage pools, GPU), and provides a live cluster health dashboard.
-- **Install Command**:
-  ```bash
-  sudo apt install -y m3tal-plugin-mesh-cluster
-  ```
+## Published plugins
 
----
+### Containers — `m3tal-docker`
 
-### 📡 [`m3tal-mesh-node`](./m3tal-mesh-node/) — Headless Telemetry Broadcaster
-- **Directory**: `m3tal-mesh-node/`
-- **Process Identity**: `m3tal-mesh-node`
-- **Debian Package**: `m3tal-plugin-mesh-node`
-- **Dashboard Mount**: Headless Daemon (No UI tab)
-- **Capabilities**: `collector`, `actions`
-- **Status**: 🟢 **Available (v0.4.0)**
-- **What it does**:
-  Lightweight headless sender daemon designed to run on servers, NAS appliances, and secondary PCs. Broadcasts local system telemetry (CPU load, memory, disk mounts, ZFS pools, GPU status) over mDNS and authenticated endpoints for consumption by `m3tal-mesh`.
-- **Install Command**:
-  ```bash
-  sudo apt install -y m3tal-plugin-mesh-node
-  ```
+- **Package**: `m3tal-plugin-docker-monitor`
+- **Route**: `/containers`
+- **Capabilities**: `collector`, `actions`, `ui_view`, `ui_widget`, `settings`
+- **Implemented actions**: `start_container`, `stop_container`, `restart_container`, `prune_images`, `get_logs`, `inspect_container`, `set_settings`
+- **What it does**: monitors Docker containers through the host Docker socket, shows fleet state and logs, and provides lifecycle controls for start/stop/restart plus image pruning.
+- **Install**:
 
----
+```bash
+sudo apt update
+sudo apt install -y m3tal-plugin-docker-monitor
+```
 
-### 📚 [`m3tal-stacks`](./m3tal-stacks/) — Docker Compose Template Database & Hub
-- **Directory**: `m3tal-stacks/`
-- **Process Identity**: `m3tal-stacks`
-- **Debian Package**: `m3tal-plugin-stacks`
-- **Dashboard Mount**: `/stacks` / `/containers`
-- **Capabilities**: `collector`, `actions`, `ui_view`
-- **Status**: 🟡 **Planned**
-- **What it does**:
-  Curated database and template store of verified, production-ready Docker Compose definitions and argument presets (Nextcloud, Plex, Vaultwarden, Pi-hole, WireGuard, Traefik, PostgreSQL, Redis, etc.). Allows operators to browse community stacks, inspect required ports/volumes/environment variables, and export definitions directly into `m3tal-compose` for instant deployment.
-- **Install Command**:
-  ```bash
-  sudo apt install -y m3tal-plugin-stacks
-  ```
+### Compose Editor — `m3tal-compose`
 
----
+- **Package**: `m3tal-plugin-compose`
+- **Route**: `/containers` (`Compose` tab)
+- **Capabilities**: `collector`, `actions`, `ui_view`, `settings`
+- **Implemented actions**: `set_settings`, `compose_up`, `compose_down`, `compose_restart`, `save_stack`, `validate_yaml`, `get_logs`
+- **What it does**: discovers Compose projects, edits Compose files, validates YAML, manages `.env`/project settings, and runs stack lifecycle commands.
+- **Install**:
 
-### 🧠 [`m3tal-ai`](./m3tal-ai/) — Local AI & LLM Inference Manager
-- **Directory**: `m3tal-ai/`
-- **Process Identity**: `m3tal-ai`
-- **Debian Package**: `m3tal-plugin-ai`
-- **Dashboard Mount**: `/ai`
-- **Capabilities**: `inference_runner`, `job_queue`, `ui_view`
-- **Status**: 🟡 **Planned**
-- **What it does**:
-  Brings unified local artificial intelligence and LLM acceleration to the M3TAL platform. Supervises local inference runtimes (Ollama, vLLM, llama.cpp), tracks GPU and VRAM saturation in real time, provides an OpenAI-compatible proxy with token authentication, queues background jobs, and allows one-click downloading and testing of open model weights.
-- **Install Command**:
-  ```bash
-  sudo apt install -y m3tal-plugin-ai
-  ```
+```bash
+sudo apt update
+sudo apt install -y m3tal-plugin-compose
+```
 
----
+### Mesh Fleet — `m3tal-mesh`
 
-### 💾 [`m3tal-smart`](./m3tal-smart/) — Smart Disk Telemetry & Hardware Diagnostics
-- **Directory**: `m3tal-smart/`
-- **Process Identity**: `m3tal-smart`
-- **Debian Package**: `m3tal-plugin-smart`
-- **Dashboard Mount**: `/storage/health`
-- **Capabilities**: `collector`, `ui_widget`, `alerts`
-- **Status**: 🟡 **Planned**
-- **What it does**:
-  Continuously monitors the physical health of NVMe drives, SATA SSDs, and HDDs. Tracks S.M.A.R.T. raw attributes, computes NVMe percentage wear life, records historic drive temperature curves to prevent thermal throttling, triggers automated background self-tests, and dispatches early warnings before disk failure occurs.
-- **Install Command**:
-  ```bash
-  sudo apt install -y m3tal-plugin-smart
-  ```
+- **Packages**: `m3tal-plugin-mesh` for the reader/dashboard and `m3tal-plugin-mesh-cluster` for the full peer bundle.
+- **Route**: `/mesh`
+- **Capabilities**: `collector`, `actions`, `ui_view`, `settings`
+- **Implemented actions**: `pair_node`, `test_node`, `update_node`, `forget_node`, `ping_node`, `scan_network`, `set_settings`, `get_fleet`, `get_peers`, `get_settings`
+- **What it does**: federates telemetry across M3TAL nodes, discovers peers, pairs authenticated nodes, and renders fleet health.
+- **Install**:
 
----
+```bash
+# Reader/dashboard package
+sudo apt install -y m3tal-plugin-mesh
 
-### 🌐 [`m3tal-traefik`](./m3tal-traefik/) — Traefik Ingress Gateway & SSL Proxy
-- **Directory**: `m3tal-traefik/`
-- **Process Identity**: `m3tal-traefik`
-- **Debian Package**: `m3tal-plugin-traefik`
-- **Dashboard Mount**: `/networking/traefik`
-- **Capabilities**: `proxy_generator`, `route_provider`
-- **Status**: 🟡 **Planned**
-- **What it does**:
-  Integrates Traefik v3 dynamic ingress management into the M3TAL dashboard. Automatically builds reverse proxy routes from container labels, manages Let's Encrypt SSL/TLS certificates via ACME (HTTP-01 / DNS-01), attaches security middlewares (rate limiting, forward auth, headers), and displays live request metrics and latency graphs.
-- **Install Command**:
-  ```bash
-  sudo apt install -y m3tal-plugin-traefik
-  ```
+# Full peer bundle (recommended for a primary node)
+sudo apt install -y m3tal-plugin-mesh-cluster
+```
 
----
+### Mesh Node — `m3tal-mesh-node`
 
-### 🛡️ [`m3tal-vpn`](./m3tal-vpn/) — VPN Tunnel & Container Egress Protection
-- **Directory**: `m3tal-vpn/`
-- **Process Identity**: `m3tal-vpn`
-- **Debian Package**: `m3tal-plugin-vpn`
-- **Dashboard Mount**: `/networking/vpn`
-- **Capabilities**: `network_tunnel`, `status_checker`
-- **Status**: 🟡 **Planned**
-- **What it does**:
-  Supervises WireGuard and OpenVPN tunnel connections (integrating with Gluetun). Provides a strict iptables kill-switch to prevent traffic leaks, allows routing specific container workloads through dedicated VPN namespaces, performs continuous public IP leak tests, and monitors port forwarding allocations.
-- **Install Command**:
-  ```bash
-  sudo apt install -y m3tal-plugin-vpn
-  ```
+- **Package**: `m3tal-plugin-mesh-node`
+- **Route**: `/mesh-node` for node settings/status
+- **Capabilities**: `collector`, `actions`, `ui_view`, `settings`
+- **Implemented actions**: `get_telemetry`, `beacon_ping`, `set_settings`, `get_settings`
+- **What it does**: runs as a telemetry broadcaster on servers/NAS/secondary machines, gathers local CPU/RAM/storage/GPU metrics, advertises over mDNS, and serves authenticated telemetry on TCP `9321` by default.
+- **Install**:
 
----
+```bash
+sudo apt install -y m3tal-plugin-mesh-node
+```
 
-### 📁 [`m3tal-samba`](./m3tal-samba/) — Samba & NFS Share Manager
-- **Directory**: `m3tal-samba/`
-- **Process Identity**: `m3tal-samba`
-- **Debian Package**: `m3tal-plugin-samba`
-- **Dashboard Mount**: `/storage/shares`
-- **Capabilities**: `actions`, `ui_view`, `system_admin`
-- **Status**: 🟡 **Planned**
-- **What it does**:
-  Provides an intuitive visual interface for setting up and managing network shares on Linux. Manages SMB (`/etc/samba/smb.conf`) and NFS (`/etc/exports`) definitions, controls user permissions and guest access, monitors connected clients and active file locks in real time, and enables Apple Time Machine backup support.
-- **Install Command**:
-  ```bash
-  sudo apt install -y m3tal-plugin-samba
-  ```
+## Developing plugins
 
----
+### File Shares — `m3tal-samba-nfs`
 
-### ⚡ [`m3tal-bench`](./m3tal-bench/) — System & Hardware Benchmarks
-- **Directory**: `m3tal-bench/`
-- **Process Identity**: `m3tal-bench`
-- **Debian Package**: `m3tal-plugin-bench`
-- **Dashboard Mount**: `/diagnostics/benchmark`
-- **Capabilities**: `benchmark_runner`, `ui_view`
-- **Status**: 🟡 **Planned**
-- **What it does**:
-  Offers one-click performance benchmarking for CPU integer and floating-point computations, sequential and 4K random disk read/write bandwidth (IOPS), GPU matrix operations, and network throughput. Maintains historic logs to evaluate hardware changes and automatically throttles tests if thermals exceed safe limits.
-- **Install Command**:
-  ```bash
-  sudo apt install -y m3tal-plugin-bench
-  ```
+- **Manifest**: `plugin.yaml` version `0.1.0`
+- **Route**: `/storage/shares`
+- **Capabilities**: `collector`, `actions`, `ui_view`, `settings`
+- **Implemented actions**: `get_shares`, `create_smb_share`, `delete_smb_share`, `create_nfs_export`, `delete_nfs_export`, `create_smb_user`, `delete_smb_user`, `set_smb_password`, `mount_share`, `unmount_share`, `restart_services`, `get_settings`, `set_settings`
+- **Status**: implementing. A dedicated release workflow exists (`Build-m3tal-samba-nfs-Deb.yml`), but `m3tal-plugin-samba-nfs` is not yet published to APT.
+- **Operational note**: the manifest declares `root: true` because Samba/NFS administration requires privileged access to `/etc/samba`, `/etc/exports`, service reloads, and mount operations.
+
+### Local AI Assistant — `m3tal-ai`
+
+- **Current state**: substantial Go assistant/RAG prototype under `cmd/m3tal-ai` and `internal/assistant`, but **not yet a complete Core plugin**.
+- **Missing for plugin release**: `plugin.yaml`, plugin Makefile/build target, UI bundle decision, release workflow, and complete lifecycle packaging.
+- **Current role**: deterministic M3TAL assistant that can answer from local documentation, query Core read-only, and propose confirmed Core actions. It can optionally use a model through a `Generator` interface.
+- **Model relationship**: `m3tal-llm` is the research/training/serving repository. `m3tal-ai` is the assistant/plugin-side consumer. Model proposals remain schema-constrained, allowlisted, and individually confirmed.
+- **Do not advertise** `m3tal-plugin-ai` as installable until the plugin manifest and release path exist.
+
+## Planned plugins
+
+These directories contain product/architecture READMEs but no installable implementation yet:
+
+- `m3tal-stacks` — curated Compose template database.
+- `m3tal-smart` — S.M.A.R.T./NVMe disk health telemetry.
+- `m3tal-traefik` — Traefik reverse-proxy management.
+- `m3tal-vpn` — WireGuard/OpenVPN tunnel management.
+- `m3tal-bench` — CPU/GPU/disk benchmark runner.
+
+Planned package names may be reserved in documentation, but they are not currently published to `m3tal-apt-key`.
+
+## Installation sources
+
+Official plugin Debian packages are distributed through the central repository:
+
+```bash
+curl -fsSL https://jakej985-rgb.github.io/m3tal-apt-key/install.sh | sudo bash
+sudo apt update
+sudo apt install -y m3tal-plugin-<name>
+```
+
+After installation, Core discovers the plugin automatically and also refreshes on `SIGHUP`/service restart.
+
+## Catalog maintenance rules
+
+When adding or changing a plugin:
+
+1. Keep `plugin.yaml`, `README.md`, `CHANGELOG.md`, and `catalog.json` synchronized.
+2. Use canonical process names (`m3tal-<process>`).
+3. Declare only capabilities the implementation actually supports.
+4. Do not claim IPC methods that are not implemented.
+5. Mark `available` only after the APT package is published.
+6. Regenerate/sign `catalog.json` through the release pipeline.
+7. Update this file whenever status, package names, routes, or major capabilities change.

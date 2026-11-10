@@ -10,43 +10,135 @@
       "collector",
       "actions",
       "ui_view",
-      "websocket_stream"
+      "ui_widget",
+      "settings"
     ],
-    "version": "0.1.0",
+    "version": "0.8.1",
     "status": "available",
     "apt_command": "sudo apt install -y m3tal-plugin-docker-monitor"
   },
   {
-    "name": "stack-orchestrator",
-    "title": "Compose Stacks",
-    "process_name": "m3tal-stacks",
-    "package_name": "m3tal-plugin-stacks",
-    "category": "Compose Stacks",
-    "description": "Multi-service compose stack orchestration, live health checks, and lifecycle deployment.",
+    "name": "compose",
+    "title": "Compose Editor",
+    "process_name": "m3tal-compose",
+    "package_name": "m3tal-plugin-compose",
+    "category": "Container Management",
+    "description": "Docker Compose visual editor, syntax validator, and multi-container stack lifecycle manager.",
     "capabilities": [
-      "orchestrator",
+      "collector",
       "actions",
-      "ui_view"
+      "ui_view",
+      "settings"
+    ],
+    "version": "0.6.0",
+    "status": "available",
+    "apt_command": "sudo apt install -y m3tal-plugin-compose"
+  },
+  {
+    "name": "mesh",
+    "title": "Mesh Fleet",
+    "process_name": "m3tal-mesh",
+    "package_name": "m3tal-plugin-mesh",
+    "category": "Networking & Fleet",
+    "description": "Local network discovery, multi-node clustering, and telemetry federation across M3TAL workstations, servers, and NAS nodes.",
+    "capabilities": [
+      "collector",
+      "actions",
+      "ui_view",
+      "settings"
+    ],
+    "version": "0.5.0",
+    "status": "available",
+    "apt_command": "sudo apt install -y m3tal-plugin-mesh",
+    "modes": [
+      {
+        "id": "cluster",
+        "label": "Cluster",
+        "sublabel": "Full Peer",
+        "description": "Full peer (Send + Receive). Broadcasts local machine metrics AND renders the multi-node fleet dashboard. Recommended for primary workstations.",
+        "package_name": "m3tal-plugin-mesh-cluster",
+        "apt_command": "sudo apt install -y m3tal-plugin-mesh-cluster",
+        "process_name": "m3tal-mesh"
+      },
+      {
+        "id": "mesh",
+        "label": "Mesh",
+        "sublabel": "Viewer",
+        "description": "Reader and dashboard UI. Scans LAN to view and monitor other connected M3TAL nodes from your desktop.",
+        "package_name": "m3tal-plugin-mesh",
+        "apt_command": "sudo apt install -y m3tal-plugin-mesh",
+        "process_name": "m3tal-mesh"
+      },
+      {
+        "id": "node",
+        "label": "Node",
+        "sublabel": "Sender",
+        "description": "Headless sender daemon. Broadcasts CPU, GPU, and disk metrics without running a GUI. Ideal for servers and NAS.",
+        "package_name": "m3tal-plugin-mesh-node",
+        "apt_command": "sudo apt install -y m3tal-plugin-mesh-node",
+        "process_name": "m3tal-mesh-node"
+      }
+    ]
+  },
+  {
+    "name": "mesh-node",
+    "title": "Mesh Node",
+    "process_name": "m3tal-mesh-node",
+    "package_name": "m3tal-plugin-mesh-node",
+    "category": "Networking & Fleet",
+    "description": "Headless telemetry broadcaster for servers, NAS devices, and secondary machines.",
+    "capabilities": [
+      "collector",
+      "actions",
+      "ui_view",
+      "settings"
+    ],
+    "version": "0.5.0",
+    "status": "available",
+    "apt_command": "sudo apt install -y m3tal-plugin-mesh-node"
+  },
+  {
+    "name": "samba-nfs",
+    "title": "File Shares",
+    "process_name": "m3tal-samba-nfs",
+    "package_name": "m3tal-plugin-samba-nfs",
+    "category": "File Sharing",
+    "description": "Graphical Samba (SMB/CIFS) and NFS share manager: share provisioning, user credentials, guest permissions, active client monitoring, and network mounts.",
+    "capabilities": [
+      "collector",
+      "actions",
+      "ui_view",
+      "settings"
     ],
     "version": "0.1.0",
-    "status": "planned",
-    "apt_command": "sudo apt install -y m3tal-plugin-stacks"
+    "status": "developing"
   },
   {
     "name": "ai-engine",
-    "title": "Local AI & LLM",
+    "title": "Local AI Assistant",
     "process_name": "m3tal-ai",
     "package_name": "m3tal-plugin-ai",
     "category": "Local AI & LLM",
-    "description": "Local LLM inference manager (Ollama, vLLM), job queue, and model catalog.",
+    "description": "In-progress M3TAL assistant/RAG prototype. Not yet a complete installable Core plugin.",
     "capabilities": [
-      "inference_runner",
-      "job_queue",
+      "collector",
+      "actions",
       "ui_view"
     ],
-    "version": "0.1.0",
-    "status": "planned",
-    "apt_command": "sudo apt install -y m3tal-plugin-ai"
+    "status": "developing"
+  },
+  {
+    "name": "stack-orchestrator",
+    "title": "Compose Template DB",
+    "process_name": "m3tal-stacks",
+    "package_name": "m3tal-plugin-stacks",
+    "category": "Compose Stacks",
+    "description": "Planned curated database of verified Docker Compose templates, argument presets, and community stacks.",
+    "capabilities": [
+      "actions",
+      "ui_view"
+    ],
+    "status": "planned"
   },
   {
     "name": "smart-disk",
@@ -54,15 +146,12 @@
     "process_name": "m3tal-smart",
     "package_name": "m3tal-plugin-smart",
     "category": "Hardware Diagnostics",
-    "description": "Drive health telemetry, NVMe wear life, S.M.A.R.T. self-tests, and temperature history.",
+    "description": "Planned drive health telemetry, NVMe wear life, S.M.A.R.T. self-tests, and temperature history.",
     "capabilities": [
       "collector",
-      "ui_widget",
-      "alerts"
+      "ui_widget"
     ],
-    "version": "0.1.0",
-    "status": "planned",
-    "apt_command": "sudo apt install -y m3tal-plugin-smart"
+    "status": "planned"
   },
   {
     "name": "traefik-gateway",
@@ -70,14 +159,13 @@
     "process_name": "m3tal-traefik",
     "package_name": "m3tal-plugin-traefik",
     "category": "Networking & Proxy",
-    "description": "Traefik v3 reverse proxy, automated Let's Encrypt SSL/TLS certificates, and dynamic routing.",
+    "description": "Planned Traefik reverse proxy, automated TLS certificates, and dynamic routing manager.",
     "capabilities": [
-      "proxy_generator",
-      "route_provider"
+      "actions",
+      "ui_view",
+      "settings"
     ],
-    "version": "0.1.0",
-    "status": "planned",
-    "apt_command": "sudo apt install -y m3tal-plugin-traefik"
+    "status": "planned"
   },
   {
     "name": "gluetun-vpn",
@@ -85,30 +173,14 @@
     "process_name": "m3tal-vpn",
     "package_name": "m3tal-plugin-vpn",
     "category": "Network Privacy",
-    "description": "WireGuard/OpenVPN tunnel connectivity with container egress routing and leak protection.",
+    "description": "Planned WireGuard/OpenVPN tunnel connectivity with container egress routing and leak protection.",
     "capabilities": [
-      "network_tunnel",
-      "status_checker"
-    ],
-    "version": "0.1.0",
-    "status": "planned",
-    "apt_command": "sudo apt install -y m3tal-plugin-vpn"
-  },
-  {
-    "name": "samba-manager",
-    "title": "Samba Manager",
-    "process_name": "m3tal-samba",
-    "package_name": "m3tal-plugin-samba",
-    "category": "File Sharing",
-    "description": "Graphical Samba/NFS share manager, guest permissions, user credentials, and active mounts.",
-    "capabilities": [
+      "collector",
       "actions",
       "ui_view",
-      "system_admin"
+      "settings"
     ],
-    "version": "0.1.0",
-    "status": "planned",
-    "apt_command": "sudo apt install -y m3tal-plugin-samba"
+    "status": "planned"
   },
   {
     "name": "system-bench",
@@ -116,13 +188,11 @@
     "process_name": "m3tal-bench",
     "package_name": "m3tal-plugin-bench",
     "category": "Diagnostics",
-    "description": "One-click benchmarking for CPU multi-threading, GPU compute, and disk I/O throughput.",
+    "description": "Planned one-click benchmarking for CPU multi-threading, GPU compute, and disk I/O throughput.",
     "capabilities": [
-      "benchmark_runner",
+      "actions",
       "ui_view"
     ],
-    "version": "0.1.0",
-    "status": "planned",
-    "apt_command": "sudo apt install -y m3tal-plugin-bench"
+    "status": "planned"
   }
 ]

@@ -2,7 +2,7 @@ apiVersion: m3tal.io/v1alpha1
 kind: Plugin
 metadata:
   name: docker-monitor
-  version: "0.7.0"
+  version: "0.8.2"
   title: "Containers"
   description: "Docker container fleet manager, log inspector, and lifecycle controller"
   author: "jakej985-rgb"
@@ -43,6 +43,7 @@ spec:
     - id: "docker_config"
       title: "Docker Host Engine"
       description: "Docker daemon socket path, polling cadence, and log viewing preferences"
+      category: "containers"
       fields:
         - key: "docker_host"
           label: "Docker Host Endpoint"

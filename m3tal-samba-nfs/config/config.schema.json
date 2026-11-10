@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "M3TAL Samba & NFS Share Manager Configuration",
+  "type": "object",
+  "properties": {
+    "smb_conf_path": {
+      "type": "string",
+      "default": "/etc/samba/smb.conf",
+      "description": "Path to smb.conf managed by this plugin."
+    },
+    "exports_path": {
+      "type": "string",
+      "default": "/etc/exports",
+      "description": "Path to the NFS exports file managed by this plugin."
+    },
+    "auto_reload": {
+      "type": "boolean",
+      "default": true,
+      "description": "Automatically reload/restart smbd, nmbd, and nfs-server after share changes."
+    },
+    "poll_interval": {
+      "type": "string",
+      "default": "5s",
+      "description": "Polling interval for share and connection telemetry."
+    }
+  },
+  "additionalProperties": false
+}

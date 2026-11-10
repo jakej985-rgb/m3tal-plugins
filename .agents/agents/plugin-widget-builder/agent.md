@@ -55,7 +55,7 @@ You are the master designer and frontend architect for plugins, ensuring all vis
    - Communicate with the plugin backend through:
      - Standard REST/RPC endpoints proxied through Core (`/api/v2/plugins/<name>/...`)
      - Direct JSON-RPC stdio/socket proxy
-     - Local WebSocket stream if declared in capabilities (`websocket_stream`)
+     - JSON-RPC `m3tal.collect` / `m3tal.action` calls via the plugin's Core-supervised endpoints
 
 ---
 

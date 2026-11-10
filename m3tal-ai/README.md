@@ -1,46 +1,42 @@
-# M3TAL Local AI & LLM Engine Plugin (`m3tal-ai`)
+# M3TAL Local AI Assistant Prototype (`m3tal-ai`)
 
-[![Status: Planned](https://img.shields.io/badge/Status-Planned-orange.svg)](https://m3tal.io)
-[![Process Identity: m3tal-ai](https://img.shields.io/badge/Process-m3tal--ai-brightgreen.svg)](https://m3tal.io)
-[![Package: m3tal-plugin-ai](https://img.shields.io/badge/Package-m3tal--plugin--ai-blue.svg)](https://m3tal.io)
+[![Status: Developing](https://img.shields.io/badge/Status-Developing-yellow.svg)](https://m3tal.io)
+[![Plugin Ready: No](https://img.shields.io/badge/Plugin%20Ready-No-orange.svg)](https://m3tal.io)
 
-The **M3TAL Local AI & LLM Engine Plugin** (`m3tal-ai`) provides unified local large language model inference orchestration (Ollama, vLLM, llama.cpp), GPU VRAM allocation telemetry, asynchronous job queuing, and a built-in model hub for self-hosted artificial intelligence workloads.
+`m3tal-ai` is an in-progress M3TAL assistant/RAG prototype. It is **not yet a complete installable M3tal Core plugin** and must not be advertised as `m3tal-plugin-ai` until it has a valid `plugin.yaml`, plugin build/release path, and lifecycle packaging.
 
----
+## Current implementation
 
-## 1. Architectural Overview & Identity
+The current code is primarily a Go assistant/RAG command-line prototype:
 
-- **Canonical Process Identity**: `m3tal-ai`
-- **Package Name**: `m3tal-plugin-ai`
-- **Dashboard UI Route**: `/ai`
-- **Capabilities**: `inference_runner`, `job_queue`, `ui_view`
+- Answers questions from local M3tal documentation.
+- Can query M3tal Core read-only endpoints when configured.
+- Proposes Core actions through deterministic, allowlisted, individually confirmed flows.
+- Uses an optional model `Generator` interface for natural-language assistance.
+- Keeps safety boundaries: model output is never trusted as an executable command by itself.
 
----
+## Relationship to `m3tal-llm`
 
-## 2. Planned Features & Scope
+- `m3tal-llm` is the experimental model/training/serving research repository.
+- `m3tal-ai` is the assistant/plugin-side integration point.
+- A model may help draft responses or proposals, but Core mutations remain deterministic, allowlisted, and confirmed by the operator.
 
-- **Inference Runtime Adapter**: Native orchestration of Ollama, vLLM, and llama.cpp backends.
-- **Model Catalog & Pull Manager**: One-click download, quantization selection, and lifecycle management for open weights (Llama, Gemma, Mistral, Qwen, DeepSeek).
-- **GPU & VRAM Telemetry**: Live NVIDIA / AMD GPU utilization, VRAM saturation curves, temperature, and power consumption stats.
-- **Unified OpenAI-Compatible Proxy**: Exposes standard `/v1/chat/completions` and `/v1/embeddings` endpoints authenticated with M3TAL API tokens.
-- **Interactive Playground**: Built-in chat interface with system prompt configuration and token throughput benchmarks (tokens/sec).
+## Missing before plugin release
 
----
+- `plugin.yaml` manifest
+- canonical plugin Makefile/build target
+- UI bundle or explicit no-UI manifest decision
+- `config/config.schema.json`
+- `CHANGELOG.md` release history
+- release workflow and `publish-deb` integration
+- lifecycle tests for `m3tal.init`, `m3tal.collect`, and `m3tal.action`
 
-## 3. IPC Methods Roadmap
-
-| Method | Description |
-|---|---|
-| `m3tal.init` | Handshake announcing AI runtime capabilities and GPU accelerators. |
-| `m3tal.collect` | Collects loaded models, VRAM usage, queue depth, and inference throughput. |
-| `m3tal.action` | Dispatches `pull_model`, `unload_model`, `delete_model`, and `benchmark_inference`. |
-| `m3tal.shutdown` | Safely flushes active inference queries and releases allocated VRAM. |
-
----
-
-## 4. Debian Installation (When Released)
+## Development
 
 ```bash
-sudo apt update
-sudo apt install -y m3tal-plugin-ai
+# From the m3tal-ai directory or repository root, use the Go commands documented
+# by the current Makefile/README once a plugin build target exists.
+go test ./...
 ```
+
+Until those pieces exist, treat this directory as assistant research code inside the plugins monorepo, not as a published plugin.

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.5.2] - 2026-11-10
+
+### 🚀 Changes & Improvements
+- **fix(ui): improve keyboard focus and a11y in mesh-node** (`8970387`)
+
+---
+
+## [0.5.1] - 2026-11-06
+
+### 🚀 Changes & Improvements
+- **docs: plugin ecosystem manual, per-plugin docs, and release workflows** (`71f9401`)
+
+---
+
+## [0.5.0] - 2026-11-05
+
+### 🚀 Changes & Improvements
+- **feat(mesh): authenticate via Core API Key Manager keys + settings categories** (`5d21d5a`)
+
+---
+
 ## [0.4.1] - 2026-11-05
 
 ### 🚀 Changes & Improvements
