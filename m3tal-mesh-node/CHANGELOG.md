@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.5.2] - 2026-11-10
+
+### 🚀 Changes & Improvements
+- **fix(ui): improve keyboard focus and a11y in mesh-node** (`8970387`)
+
+---
+
 ## [0.5.1] - 2026-11-06
 
 ### 🚀 Changes & Improvements
