@@ -26,3 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.2] - 2026-11-10
+
+### 🚀 Changes & Improvements
+- **fix(samba-nfs): validate mount and unmount targets against flag injection** (`dd436e9`)
+
+---
+
