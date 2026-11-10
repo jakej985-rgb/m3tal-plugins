@@ -680,8 +680,8 @@ func (assistant *Assistant) draftKnowledgeAnswer(query string, results []Knowled
 			title = filepath.Base(result.Source)
 		}
 		excerpt := strings.TrimSpace(result.Excerpt)
-		if len(excerpt) > 400 {
-			excerpt = excerpt[:400] + "..."
+		if len(excerpt) > 220 {
+			excerpt = excerpt[:220] + "..."
 		}
 		fmt.Fprintf(&prompt, "[%d] %s (%s)\n%s\n", i+1, title, result.Source, excerpt)
 	}

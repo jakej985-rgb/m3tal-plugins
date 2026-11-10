@@ -2,13 +2,16 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"m3tal-plugin-ai/internal/assistant"
 )
@@ -25,6 +28,7 @@ func run(arguments []string) error {
 	docsFlag := flags.String("docs", "", "additional documentation file or directory (path-list separated)")
 	apiURL := flags.String("api", os.Getenv("M3TAL_API_URL"), "M3TAL Core API URL (default http://localhost:5050)")
 	apiToken := flags.String("token", defaultAPIToken(), "M3TAL Core API token (default M3TAL_API_TOKEN or /etc/m3tal/.env)")
+	llmURL := flags.String("llm", os.Getenv("M3TAL_LLM_URL"), "M3TAL LLM server URL (default http://127.0.0.1:8080 if available)")
 	interactive := flags.Bool("interactive", false, "run an interactive assistant session")
 	jsonOutput := flags.Bool("json", false, "print Core payloads as JSON")
 	showVersion := flags.Bool("version", false, "print version and exit")
@@ -53,6 +57,13 @@ func run(arguments []string) error {
 	agent, err := assistant.New(docPaths, core)
 	if err != nil {
 		return err
+	}
+	llmEndpoint := strings.TrimSpace(*llmURL)
+	if llmEndpoint == "" {
+		llmEndpoint = "http://127.0.0.1:8080"
+	}
+	if gen := newHTTPGenerator(llmEndpoint); gen != nil {
+		agent.SetLanguageModel(gen)
 	}
 	agent.SetJSONOutput(*jsonOutput)
 	stats := agent.Knowledge().Stats()
@@ -174,4 +185,62 @@ func defaultAPIToken() string {
 		}
 	}
 	return ""
+}
+
+type httpGenerator struct {
+	client  *http.Client
+	baseURL string
+}
+
+func newHTTPGenerator(endpoint string) *httpGenerator {
+	if endpoint == "" {
+		return nil
+	}
+	endpoint = strings.TrimRight(endpoint, "/")
+	client := &http.Client{Timeout: 90 * time.Second}
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", endpoint+"/healthz", nil)
+	if err != nil {
+		return nil
+	}
+	resp, err := client.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return nil
+	}
+	_ = resp.Body.Close()
+	return &httpGenerator{client: client, baseURL: endpoint}
+}
+
+func (h *httpGenerator) Generate(prompt string, maxTokens int, temperature float64, seed int64) (string, error) {
+	reqBody := map[string]any{
+		"prompt":      prompt,
+		"max_tokens":  maxTokens,
+		"temperature": temperature,
+		"seed":        seed,
+	}
+	data, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequest("POST", h.baseURL+"/v1/generate", bytes.NewReader(data))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := h.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("llm server returned %s", resp.Status)
+	}
+	var res struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return "", err
+	}
+	return res.Text, nil
 }

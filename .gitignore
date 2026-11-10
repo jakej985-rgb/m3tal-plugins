@@ -16,6 +16,5 @@ node_modules/
 
 # Tool caches
 .claude/
-.entire/
 .m3tal-review/
 m3tal-samba-nfs/src/m3tal-samba-nfs
