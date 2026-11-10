@@ -402,6 +402,54 @@ func TestRestartServicesAllowlist(t *testing.T) {
 	}
 }
 
+func TestMountAndUnmountShareValidation(t *testing.T) {
+	// MountShare validation tests
+	invalidMountCases := []struct {
+		protocol string
+		source   string
+		target   string
+		options  string
+		desc     string
+	}{
+		{"cifs", "", "/mnt/target", "", "empty source"},
+		{"cifs", "-o", "/mnt/target", "", "source with flag prefix"},
+		{"cifs", "--source", "/mnt/target", "", "source with long flag prefix"},
+		{"cifs", "//server/share\n", "/mnt/target", "", "source with newline"},
+		{"cifs", "//server/share", "", "", "empty target"},
+		{"cifs", "//server/share", "-o", "", "target with flag prefix"},
+		{"cifs", "//server/share", "relative/path", "", "target relative path"},
+		{"cifs", "//server/share", "/mnt/target\n", "", "target with newline"},
+		{"cifs", "//server/share", "/mnt/target", "-o", "options with flag prefix"},
+		{"cifs", "//server/share", "/mnt/target", "ro,rw bad", "options with whitespace"},
+		{"unknown", "//server/share", "/mnt/target", "ro", "unsupported protocol"},
+	}
+
+	for _, tc := range invalidMountCases {
+		if _, err := MountShare(tc.protocol, tc.source, tc.target, tc.options); err == nil {
+			t.Errorf("MountShare should have failed for %s", tc.desc)
+		}
+	}
+
+	// UnmountShare validation tests
+	invalidUnmountCases := []struct {
+		target string
+		desc   string
+	}{
+		{"", "empty target"},
+		{"-f", "flag injection -f"},
+		{"-l", "flag injection -l"},
+		{"--lazy", "flag injection --lazy"},
+		{"relative/path", "relative path"},
+		{"/mnt/share\n", "newline in target"},
+	}
+
+	for _, tc := range invalidUnmountCases {
+		if _, err := UnmountShare(tc.target); err == nil {
+			t.Errorf("UnmountShare should have failed for %s", tc.desc)
+		}
+	}
+}
+
 func TestValidateSmbUsername(t *testing.T) {
 	valid := []string{"alice", "bob_1", "carol.d", "user-name", "workstation$", "Admin", "_svc"}
 	for _, u := range valid {

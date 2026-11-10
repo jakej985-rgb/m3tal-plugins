@@ -840,9 +840,44 @@ func GetNFSClients() []NFSClient {
 // Mounts
 // ---------------------------------------------------------------------------
 
+// validateMountPath validates that a mount point path is absolute and free of
+// leading dashes, control characters, or newlines to prevent CLI flag injection.
+func validateMountPath(name, path string) error {
+	if path == "" {
+		return fmt.Errorf("%s is required", name)
+	}
+	if strings.HasPrefix(path, "-") {
+		return fmt.Errorf("%s must not begin with '-': %q", name, path)
+	}
+	if strings.ContainsAny(path, "\x00\r\n") {
+		return fmt.Errorf("%s contains invalid control characters", name)
+	}
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("%s must be an absolute path: %q", name, path)
+	}
+	return nil
+}
+
 func MountShare(protocol, source, target, options string) (string, error) {
-	if source == "" || target == "" {
-		return "", fmt.Errorf("source and target are required")
+	if source == "" {
+		return "", fmt.Errorf("source is required")
+	}
+	if strings.HasPrefix(source, "-") {
+		return "", fmt.Errorf("source must not begin with '-': %q", source)
+	}
+	if strings.ContainsAny(source, "\x00\r\n") {
+		return "", fmt.Errorf("source contains invalid control characters")
+	}
+	if err := validateMountPath("target mount point", target); err != nil {
+		return "", err
+	}
+	if options != "" {
+		if strings.HasPrefix(options, "-") {
+			return "", fmt.Errorf("options must not begin with '-': %q", options)
+		}
+		if strings.ContainsAny(options, " \t\r\n\x00") {
+			return "", fmt.Errorf("options must not contain whitespace or control characters: %q", options)
+		}
 	}
 	if err := os.MkdirAll(target, 0755); err != nil {
 		return "", fmt.Errorf("cannot create mount point %s: %w", target, err)
@@ -867,8 +902,8 @@ func MountShare(protocol, source, target, options string) (string, error) {
 }
 
 func UnmountShare(target string) (string, error) {
-	if target == "" {
-		return "", fmt.Errorf("target mount point is required")
+	if err := validateMountPath("target mount point", target); err != nil {
+		return "", err
 	}
 	out, err := runCmd("umount", target)
 	if err != nil {
