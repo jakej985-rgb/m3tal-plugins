@@ -430,7 +430,24 @@ func fetchRemote(address, token string, port int, expectedFingerprint ...string)
 	return fetchRemoteWithAuth(address, token, "", port, expectedFingerprint...)
 }
 
+// ErrPasswordPinRequired is returned when a password proof would be sent to a
+// peer whose certificate fingerprint is not pinned outside interactive pairing.
+var ErrPasswordPinRequired = errors.New("password authentication requires a pinned node fingerprint; re-pair the node")
+
+// fetchRemoteWithAuth never sends a password proof to an unpinned peer: a
+// forged node could capture the proof and brute-force the password offline.
 func fetchRemoteWithAuth(address, token, password string, port int, expectedFingerprint ...string) (MeshNode, error) {
+	return fetchRemoteAuth(address, token, password, port, false, expectedFingerprint...)
+}
+
+// fetchRemoteAuth is fetchRemoteWithAuth with an explicit trust-on-first-use
+// switch. allowUnpinnedPassword must only be true for a password the user
+// typed during an interactive pairing action.
+func fetchRemoteAuth(address, token, password string, port int, allowUnpinnedPassword bool, expectedFingerprint ...string) (MeshNode, error) {
+	pinned := len(expectedFingerprint) > 0 && expectedFingerprint[0] != ""
+	if password != "" && !pinned && !allowUnpinnedPassword {
+		return MeshNode{}, fmt.Errorf("%s: %w", address, ErrPasswordPinRequired)
+	}
 	cfg := loadMeshConfig()
 	if token == "" && password == "" && cfg.IsPairingTokenRequired() {
 		return MeshNode{}, fmt.Errorf("pairing token is required to authenticate mesh nodes; configure a shared secret in Mesh Settings or enter a pairing token")
@@ -644,6 +661,14 @@ func meshTokenCandidates(primary, explicitToken string, passwordOnly bool) []str
 // If an inherited token was rejected and a password was available, it retries in password-only mode.
 // If passwordOnly is specified as true (e.g. for a saved password-only peer), token inheritance is suppressed.
 func connectAndNegotiateNode(address, explicitToken, explicitPass string, cfg meshConfig, expectedFingerprint string, passwordOnly bool) (MeshNode, bool, error) {
+	return connectAndNegotiateNodeOpts(address, explicitToken, explicitPass, cfg, expectedFingerprint, passwordOnly, false)
+}
+
+// connectAndNegotiateNodeOpts allows an unpinned password proof only when
+// allowUnpinnedPassword is set (interactive pairing with a user-typed
+// password). DefaultPassword retries are always pinned.
+func connectAndNegotiateNodeOpts(address, explicitToken, explicitPass string, cfg meshConfig, expectedFingerprint string, passwordOnly, allowUnpinnedPassword bool) (MeshNode, bool, error) {
+	allowUnpinnedPassword = allowUnpinnedPassword && explicitPass != ""
 	tok, pass := effectiveCredentials(explicitToken, explicitPass, passwordOnly, cfg)
 	candidates := meshTokenCandidates(tok, explicitToken, passwordOnly)
 	if cfg.IsPairingTokenRequired() && len(candidates) == 0 && pass == "" {
@@ -655,7 +680,7 @@ func connectAndNegotiateNode(address, explicitToken, explicitPass string, cfg me
 
 	var lastErr error
 	for _, candidate := range candidates {
-		node, err := fetchRemoteWithAuth(address, candidate, pass, cfg.ListenPort, expectedFingerprint)
+		node, err := fetchRemoteAuth(address, candidate, pass, cfg.ListenPort, allowUnpinnedPassword, expectedFingerprint)
 		if err == nil {
 			pwOnly := candidate == "" && pass != ""
 			return node, pwOnly, nil
@@ -687,7 +712,7 @@ func connectAndNegotiateNode(address, explicitToken, explicitPass string, cfg me
 
 	// Only retry in password-only mode when the inherited token was specifically rejected by the node
 	if explicitToken == "" && pass != "" && lastErr != nil && errors.Is(lastErr, ErrTokenRejected) {
-		if altNode, altErr := fetchRemoteWithAuth(address, "", pass, cfg.ListenPort, expectedFingerprint); altErr == nil {
+		if altNode, altErr := fetchRemoteAuth(address, "", pass, cfg.ListenPort, allowUnpinnedPassword, expectedFingerprint); altErr == nil {
 			return altNode, true, nil
 		}
 	}
@@ -699,7 +724,10 @@ func connectAndNegotiateNode(address, explicitToken, explicitPass string, cfg me
 
 func pairAndPersistPeer(address, name, role, token, password string) (MeshNode, error) {
 	cfg := loadMeshConfig()
-	node, passwordOnly, err := connectAndNegotiateNode(address, token, password, cfg, "", false)
+	// Interactive pairing: the user-typed password may be proven to the
+	// not-yet-pinned peer once (TOFU). The fingerprint is then saved and every
+	// later password proof requires it.
+	node, passwordOnly, err := connectAndNegotiateNodeOpts(address, token, password, cfg, "", false, true)
 	if err != nil {
 		return MeshNode{}, err
 	}
