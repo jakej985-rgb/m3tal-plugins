@@ -646,7 +646,17 @@ func handleAction(req *RPCRequest) {
 			// be proven once to the not-yet-pinned peer (TOFU); a saved
 			// password is never sent to an unpinned address.
 			allowUnpinned := password != ""
-			testedNode, pwOnly, err := connectAndNegotiateNodeOpts(foundNode.IP, foundNode.APIToken, foundNode.Password, cfg, foundNode.Fingerprint, false, allowUnpinned)
+			pinFP := foundNode.Fingerprint
+			if pinFP == "" && !allowUnpinned && foundNode.Password != "" && foundNode.APIToken != "" {
+				// Address change with a saved password: authenticate the new
+				// endpoint with the saved token alone (no password material)
+				// to learn its fingerprint, then prove the password pinned.
+				probe, probeErr := fetchRemoteWithAuth(foundNode.IP, foundNode.APIToken, "", cfg.ListenPort)
+				if probeErr == nil || errors.Is(probeErr, ErrPasswordRequired) {
+					pinFP = probe.Fingerprint
+				}
+			}
+			testedNode, pwOnly, err := connectAndNegotiateNodeOpts(foundNode.IP, foundNode.APIToken, foundNode.Password, cfg, pinFP, false, allowUnpinned)
 			if err != nil && addressChanged && foundNode.Password != "" && foundNode.Fingerprint == "" {
 				// Do not persist a password-protected node at a new address
 				// without a verified fingerprint: refresh could never reach it.

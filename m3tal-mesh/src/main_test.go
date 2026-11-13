@@ -860,26 +860,31 @@ func TestUpdateNodePreservesCredentialsOnAddressChange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 2. update_node changing IP only without supplying credentials
+	// 2. update_node changing IP only, to an unreachable address. A
+	// password-protected node must not be persisted at a new address
+	// without a verified fingerprint, or refresh could never reach it.
 	updateReq := `{"action":"update_node","args":{"node_id":"peer-to-move","ip":"127.0.0.2:9999"}}`
 	resp := runActionForTest(t, 23, updateReq)
-	if resp.Error != nil {
-		t.Fatalf("update_node failed: %s", resp.Error.Message)
+	if resp.Error == nil {
+		t.Fatal("expected unverifiable address change for a password-protected node to be rejected")
 	}
 
-	// 3. Verify credentials are preserved while fingerprint is unpinned on address change
+	// 3. Verify the saved peer is left untouched (address, credentials, pin)
 	persisted := loadPeers()
 	if len(persisted) != 1 {
 		t.Fatalf("expected 1 persisted peer, got %d", len(persisted))
 	}
+	if persisted[0].IP != "127.0.0.1:8888" {
+		t.Fatalf("expected address to be unchanged after rejected update, got: %s", persisted[0].IP)
+	}
 	if persisted[0].APIToken != "secret-token-to-keep" {
-		t.Fatalf("expected APIToken to be preserved on address change, got: %s", persisted[0].APIToken)
+		t.Fatalf("expected APIToken to be preserved, got: %s", persisted[0].APIToken)
 	}
 	if persisted[0].Password != "secret-password-to-keep" {
-		t.Fatalf("expected Password to be preserved on address change, got: %s", persisted[0].Password)
+		t.Fatalf("expected Password to be preserved, got: %s", persisted[0].Password)
 	}
-	if persisted[0].Fingerprint != "" {
-		t.Fatalf("expected Fingerprint to be unpinned on address change, got: %s", persisted[0].Fingerprint)
+	if persisted[0].Fingerprint != "saved-cert-fingerprint-9999" {
+		t.Fatalf("expected Fingerprint to be preserved after rejected update, got: %s", persisted[0].Fingerprint)
 	}
 }
 
