@@ -440,8 +440,8 @@ func TestActionsTestNodeUpdateNodeAndGetPeers(t *testing.T) {
 			nonce := r.Header.Get("X-M3TAL-Nonce")
 			clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
 			fp := testServerFingerprint(server)
-			pass := r.Header.Get("X-M3TAL-Password")
-			if r.Header.Get("X-M3TAL-Proof") != requestProof("node-secret-tok", nonce, clientNonce, fp) || pass != "node-secret-pwd" {
+			if r.Header.Get("X-M3TAL-Proof") != requestProof("node-secret-tok", nonce, clientNonce, fp) ||
+				!passwordProofValid(r, "node-secret-pwd", fp) {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
@@ -451,6 +451,7 @@ func TestActionsTestNodeUpdateNodeAndGetPeers(t *testing.T) {
 				Telemetry: remoteTelemetry{Hostname: "testbox", Cores: 8, RAMTotalGB: 32, StorageTotalGB: 500},
 			})
 			w.Header().Set("X-M3TAL-Proof", responseProof("node-secret-tok", nonce, clientNonce, body, fp))
+			setPasswordAuthProof(w, r, "node-secret-pwd", fp, body)
 			_, _ = w.Write(body)
 			return
 		}
@@ -604,7 +605,7 @@ func TestUpdateNodeRenegotiatesPasswordOnlyWhenAddressOrCredentialsChange(t *tes
 				http.Error(w, "invalid token proof", http.StatusUnauthorized)
 				return
 			}
-			if r.Header.Get("X-M3TAL-Password") != "new-secret" {
+			if !passwordProofValid(r, "new-secret", fp) {
 				http.Error(w, "invalid password", http.StatusUnauthorized)
 				return
 			}
@@ -613,6 +614,7 @@ func TestUpdateNodeRenegotiatesPasswordOnlyWhenAddressOrCredentialsChange(t *tes
 				Telemetry: remoteTelemetry{Hostname: "reconfigured-box", Cores: 4, RAMTotalGB: 16, StorageTotalGB: 500},
 			})
 			w.Header().Set("X-M3TAL-Proof", responseProof("default-mesh-token", nonce, clientNonce, body, fp))
+			setPasswordAuthProof(w, r, "new-secret", fp, body)
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(body)
 			return
@@ -713,7 +715,7 @@ func TestUpdateNodeRenegotiatesPasswordOnlyOnCredentialChangeAlone(t *testing.T)
 				http.Error(w, "invalid token proof", http.StatusUnauthorized)
 				return
 			}
-			if r.Header.Get("X-M3TAL-Password") != "updated-secret" {
+			if !passwordProofValid(r, "updated-secret", fp) {
 				http.Error(w, "invalid password", http.StatusUnauthorized)
 				return
 			}
@@ -722,6 +724,7 @@ func TestUpdateNodeRenegotiatesPasswordOnlyOnCredentialChangeAlone(t *testing.T)
 				Telemetry: remoteTelemetry{Hostname: "reconfigured-box", Cores: 4, RAMTotalGB: 16, StorageTotalGB: 500},
 			})
 			w.Header().Set("X-M3TAL-Proof", responseProof("default-mesh-token", nonce, clientNonce, body, fp))
+			setPasswordAuthProof(w, r, "updated-secret", fp, body)
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(body)
 			return
@@ -801,7 +804,7 @@ func TestTestNodeDoesNotLeakSavedCredentialsToDifferentAddress(t *testing.T) {
 			return
 		}
 		if r.URL.Path == "/api/v1/telemetry" {
-			receivedPassword = r.Header.Get("X-M3TAL-Password")
+			receivedPassword = r.Header.Get("X-M3TAL-Password-Proof")
 			receivedProof = r.Header.Get("X-M3TAL-Proof")
 			receivedNonce = r.Header.Get("X-M3TAL-Nonce")
 			receivedClientNonce = r.Header.Get("X-M3TAL-Client-Nonce")
@@ -885,7 +888,8 @@ func TestTestNodePreservesPasswordOnlyModeForUnchangedSavedAddress(t *testing.T)
 	remoteNodes = []MeshNode{}
 
 	// Server accepts default password, rejects pairing token proof
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if writeTestChallenge(w, r) {
 			return
 		}
@@ -894,7 +898,8 @@ func TestTestNodePreservesPasswordOnlyModeForUnchangedSavedAddress(t *testing.T)
 				http.Error(w, "token rejected", http.StatusUnauthorized)
 				return
 			}
-			if r.Header.Get("X-M3TAL-Password") != "mesh-default-secret" {
+			fp := testServerFingerprint(server)
+			if !passwordProofValid(r, "mesh-default-secret", fp) {
 				http.Error(w, "invalid password", http.StatusUnauthorized)
 				return
 			}
@@ -902,6 +907,7 @@ func TestTestNodePreservesPasswordOnlyModeForUnchangedSavedAddress(t *testing.T)
 				Name: "pw-only-saved-node", Hostname: "pw-only-saved-node",
 				Telemetry: remoteTelemetry{Hostname: "pw-only-saved-node", Cores: 4, RAMTotalGB: 16, StorageTotalGB: 500},
 			})
+			setPasswordAuthProof(w, r, "mesh-default-secret", fp, body)
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(body)
 			return
@@ -982,7 +988,7 @@ func TestTestNodeRenegotiatesPasswordOnlyWhenCredentialsChange(t *testing.T) {
 				http.Error(w, "missing or invalid token proof", http.StatusUnauthorized)
 				return
 			}
-			if r.Header.Get("X-M3TAL-Password") != "new-secret" {
+			if !passwordProofValid(r, "new-secret", fp) {
 				http.Error(w, "invalid password", http.StatusUnauthorized)
 				return
 			}
@@ -991,6 +997,7 @@ func TestTestNodeRenegotiatesPasswordOnlyWhenCredentialsChange(t *testing.T) {
 				Telemetry: remoteTelemetry{Hostname: "reconfigured-box", Cores: 4, RAMTotalGB: 16, StorageTotalGB: 500},
 			})
 			w.Header().Set("X-M3TAL-Proof", responseProof("default-mesh-token", nonce, clientNonce, body, fp))
+			setPasswordAuthProof(w, r, "new-secret", fp, body)
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(body)
 			return
