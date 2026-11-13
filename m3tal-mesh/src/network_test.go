@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
@@ -37,6 +38,29 @@ func testServerFingerprint(server *httptest.Server) string {
 		return hex.EncodeToString(sum[:])
 	}
 	return ""
+}
+
+// passwordProofValid reports whether r carries a valid X-M3TAL-Password-Proof
+// for the given password and peer fingerprint, mirroring the real
+// m3tal-mesh-node verification.
+func passwordProofValid(r *http.Request, password, fp string) bool {
+	proof := r.Header.Get("X-M3TAL-Password-Proof")
+	if proof == "" {
+		return false
+	}
+	nonce := r.Header.Get("X-M3TAL-Nonce")
+	clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
+	expected := passwordRequestProof(password, nonce, clientNonce, fp)
+	return hmac.Equal([]byte(expected), []byte(proof))
+}
+
+// setPasswordAuthProof emits the X-M3TAL-Password-Auth-Proof response header a
+// real mesh-node sends after password-proof authentication. body must be the
+// exact response body about to be written.
+func setPasswordAuthProof(w http.ResponseWriter, r *http.Request, password, fp string, body []byte) {
+	nonce := r.Header.Get("X-M3TAL-Nonce")
+	clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
+	w.Header().Set("X-M3TAL-Password-Auth-Proof", passwordResponseProof(password, nonce, clientNonce, body, fp))
 }
 
 func testTLSCert(t *testing.T, commonName string) tls.Certificate {
@@ -415,9 +439,9 @@ func TestFetchRemoteRESTTokenAndOptionalPassword(t *testing.T) {
 			nonce := r.Header.Get("X-M3TAL-Nonce")
 			clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
 			fp := testServerFingerprint(server)
-			pass := r.Header.Get("X-M3TAL-Password")
-			// Must receive HMAC proof (not raw Bearer token) and password
-			if r.Header.Get("X-M3TAL-Proof") != requestProof("node-api-token", nonce, clientNonce, fp) || pass != "node-pass" {
+			// Must receive HMAC proofs (not raw token or password)
+			if r.Header.Get("X-M3TAL-Proof") != requestProof("node-api-token", nonce, clientNonce, fp) ||
+				!passwordProofValid(r, "node-pass", fp) {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
@@ -427,6 +451,7 @@ func TestFetchRemoteRESTTokenAndOptionalPassword(t *testing.T) {
 				Telemetry: remoteTelemetry{Hostname: "auth-server", Cores: 16, RAMTotalGB: 64, StorageTotalGB: 2000},
 			})
 			w.Header().Set("X-M3TAL-Proof", responseProof("node-api-token", nonce, clientNonce, body, fp))
+			setPasswordAuthProof(w, r, "node-pass", fp, body)
 			_, _ = w.Write(body)
 			return
 		}
@@ -435,7 +460,7 @@ func TestFetchRemoteRESTTokenAndOptionalPassword(t *testing.T) {
 	defer server.Close()
 
 	// 1. Valid token and password via HMAC
-	node, err := fetchRemoteWithAuth(server.Listener.Addr().String(), "node-api-token", "node-pass", 9321)
+	node, err := fetchRemoteWithAuth(server.Listener.Addr().String(), "node-api-token", "node-pass", 9321, testServerFingerprint(server))
 	if err != nil {
 		t.Fatalf("fetchRemoteWithAuth failed: %v", err)
 	}
@@ -449,7 +474,7 @@ func TestFetchRemoteRESTTokenAndOptionalPassword(t *testing.T) {
 	}
 
 	// 2. Wrong password -> error
-	_, err = fetchRemoteWithAuth(server.Listener.Addr().String(), "node-api-token", "wrong-pass", 9321)
+	_, err = fetchRemoteWithAuth(server.Listener.Addr().String(), "node-api-token", "wrong-pass", 9321, testServerFingerprint(server))
 	if err == nil {
 		t.Fatal("expected failure with wrong password")
 	}
@@ -463,35 +488,43 @@ func TestFetchRemoteRESTTokenAndOptionalPassword(t *testing.T) {
 		http.Error(w, "should not be reached", http.StatusOK)
 	}))
 	defer badChallengeServer.Close()
-	_, err = fetchRemoteWithAuth(badChallengeServer.Listener.Addr().String(), "node-api-token", "node-pass", 9321)
+	_, err = fetchRemoteWithAuth(badChallengeServer.Listener.Addr().String(), "node-api-token", "node-pass", 9321, testServerFingerprint(badChallengeServer))
 	if err == nil {
 		t.Fatal("expected fetchRemoteWithAuth to fail closed when challenge fails")
 	}
 
 	// 4. Password-only peer (token == "", password != "")
-	passOnlyServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var passOnlyServer *httptest.Server
+	passOnlyServer = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/challenge" {
 			n, _ := newMeshNonce()
 			_ = json.NewEncoder(w).Encode(map[string]string{"nonce": n})
 			return
 		}
 		if r.URL.Path == "/api/v1/telemetry" {
-			if r.Header.Get("X-M3TAL-Password") != "only-pass" {
+			fp := testServerFingerprint(passOnlyServer)
+			if !passwordProofValid(r, "only-pass", fp) {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(remoteResponse{
+			body, _ := json.Marshal(remoteResponse{
 				Name: "pass-only-server", Hostname: "pass-only-server",
 				Telemetry: remoteTelemetry{Hostname: "pass-only-server", Cores: 4, RAMTotalGB: 16, StorageTotalGB: 500},
 			})
+			setPasswordAuthProof(w, r, "only-pass", fp, body)
+			_, _ = w.Write(body)
 			return
 		}
 		http.NotFound(w, r)
 	}))
 	defer passOnlyServer.Close()
 
-	passNode, err := fetchRemoteWithAuth(passOnlyServer.Listener.Addr().String(), "", "only-pass", 9321)
+	// Unpinned password proof must be refused before any request is sent.
+	if _, err := fetchRemoteWithAuth(passOnlyServer.Listener.Addr().String(), "", "only-pass", 9321); !errors.Is(err, ErrPasswordPinRequired) {
+		t.Fatalf("expected ErrPasswordPinRequired for unpinned password peer, got %v", err)
+	}
+	passNode, err := fetchRemoteWithAuth(passOnlyServer.Listener.Addr().String(), "", "only-pass", 9321, testServerFingerprint(passOnlyServer))
 	if err != nil {
 		t.Fatalf("fetchRemoteWithAuth on password-only server failed: %v", err)
 	}
@@ -584,7 +617,7 @@ func TestDiscoveryVerifyCandidatesUsesPairingTokenAndNeverSendsPassword(t *testi
 			return
 		}
 		if r.URL.Path == "/api/v1/telemetry" {
-			if r.Header.Get("X-M3TAL-Password") != "" {
+			if r.Header.Get("X-M3TAL-Password") != "" || r.Header.Get("X-M3TAL-Password-Proof") != "" {
 				http.Error(w, "password must not be sent during discovery", http.StatusBadRequest)
 				return
 			}
@@ -807,7 +840,8 @@ func TestPasswordOnlyPeerSuppressesTokenInheritance(t *testing.T) {
 				http.Error(w, "password-only server received unexpected token proof", http.StatusBadRequest)
 				return
 			}
-			if r.Header.Get("X-M3TAL-Password") != "pass-only-secret" {
+			fp := testServerFingerprint(serverA)
+			if !passwordProofValid(r, "pass-only-secret", fp) {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
@@ -815,6 +849,7 @@ func TestPasswordOnlyPeerSuppressesTokenInheritance(t *testing.T) {
 				Name: "pass-only-box", Hostname: "pass-only-box",
 				Telemetry: remoteTelemetry{Hostname: "pass-only-box", Cores: 4, RAMTotalGB: 16, StorageTotalGB: 500},
 			})
+			setPasswordAuthProof(w, r, "pass-only-secret", fp, body)
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(body)
 			return
@@ -885,7 +920,8 @@ func TestPasswordOnlyPeerSuppressesTokenInheritance(t *testing.T) {
 				http.Error(w, "pairing token was rejected", http.StatusUnauthorized)
 				return
 			}
-			if r.Header.Get("X-M3TAL-Password") != "server-c-secret" {
+			fp := testServerFingerprint(serverC)
+			if !passwordProofValid(r, "server-c-secret", fp) {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
@@ -893,6 +929,7 @@ func TestPasswordOnlyPeerSuppressesTokenInheritance(t *testing.T) {
 				Name: "server-c-box", Hostname: "server-c-box",
 				Telemetry: remoteTelemetry{Hostname: "server-c-box", Cores: 2, RAMTotalGB: 8, StorageTotalGB: 250},
 			})
+			setPasswordAuthProof(w, r, "server-c-secret", fp, body)
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(body)
 			return
@@ -948,7 +985,7 @@ func TestDiscoveryPresentsCandidatesRequiringPasswordForExplicitPairing(t *testi
 		}
 		if r.URL.Path == "/api/v1/telemetry" {
 			// Password must NEVER be sent during initial discovery probe
-			if r.Header.Get("X-M3TAL-Password") != "" {
+			if r.Header.Get("X-M3TAL-Password") != "" || r.Header.Get("X-M3TAL-Password-Proof") != "" {
 				http.Error(w, "password must not be sent during discovery probe", http.StatusBadRequest)
 				return
 			}
@@ -1023,7 +1060,7 @@ func TestPairingWithSecondaryPasswordAndDefaultTokenInheritsToken(t *testing.T) 
 				http.Error(w, "invalid pairing token", http.StatusUnauthorized)
 				return
 			}
-			if r.Header.Get("X-M3TAL-Password") != "secondary-pass" {
+			if !passwordProofValid(r, "secondary-pass", fp) {
 				http.Error(w, "invalid password", http.StatusUnauthorized)
 				return
 			}
@@ -1032,6 +1069,7 @@ func TestPairingWithSecondaryPasswordAndDefaultTokenInheritsToken(t *testing.T) 
 				Telemetry: remoteTelemetry{Hostname: "dual-auth-box", Cores: 4, RAMTotalGB: 16, StorageTotalGB: 500},
 			})
 			w.Header().Set("X-M3TAL-Proof", responseProof("default-mesh-token", nonce, clientNonce, body, fp))
+			setPasswordAuthProof(w, r, "secondary-pass", fp, body)
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(body)
 			return
@@ -1069,7 +1107,8 @@ func TestTestNodePasswordOnlyNodeWithDefaultTokenPasses(t *testing.T) {
 	}
 
 	// Password-only remote server: rejects tokens, accepts password
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if writeTestChallenge(w, r) {
 			return
 		}
@@ -1078,7 +1117,8 @@ func TestTestNodePasswordOnlyNodeWithDefaultTokenPasses(t *testing.T) {
 				http.Error(w, "pairing token was rejected", http.StatusUnauthorized)
 				return
 			}
-			if r.Header.Get("X-M3TAL-Password") != "node-secret" {
+			fp := testServerFingerprint(server)
+			if !passwordProofValid(r, "node-secret", fp) {
 				http.Error(w, "invalid password", http.StatusUnauthorized)
 				return
 			}
@@ -1086,6 +1126,7 @@ func TestTestNodePasswordOnlyNodeWithDefaultTokenPasses(t *testing.T) {
 				Name: "pass-only-node", Hostname: "pass-only-node",
 				Telemetry: remoteTelemetry{Hostname: "pass-only-node", Cores: 2, RAMTotalGB: 8, StorageTotalGB: 250},
 			})
+			setPasswordAuthProof(w, r, "node-secret", fp, body)
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(body)
 			return
@@ -1215,8 +1256,8 @@ func TestDefaultPasswordWithheldFromUnpinnedHostUntilAuthenticated(t *testing.T)
 	t.Setenv("HOME", t.TempDir())
 	cfg := meshConfig{PairingToken: "mesh-shared-token", DefaultPassword: "mesh-default-secret", ListenPort: 9321}
 
-	var firstReqPassword string
-	var secondReqPassword string
+	var firstReqHadProof bool
+	var secondReqPasswordValid bool
 	reqCount := 0
 
 	var server *httptest.Server
@@ -1233,18 +1274,18 @@ func TestDefaultPasswordWithheldFromUnpinnedHostUntilAuthenticated(t *testing.T)
 				http.Error(w, "invalid token proof", http.StatusUnauthorized)
 				return
 			}
-			pass := r.Header.Get("X-M3TAL-Password")
+			passProof := r.Header.Get("X-M3TAL-Password-Proof")
 			if reqCount == 1 {
-				firstReqPassword = pass
-				if pass == "" {
+				firstReqHadProof = passProof != ""
+				if passProof == "" {
 					w.Header().Set("X-M3TAL-Auth-Status", "password_required")
 					w.Header().Set("X-M3TAL-Proof", responseProof("mesh-shared-token", nonce, clientNonce, []byte("password required\n"), fp))
 					http.Error(w, "password required", http.StatusUnauthorized)
 					return
 				}
 			}
-			secondReqPassword = pass
-			if pass != "mesh-default-secret" {
+			secondReqPasswordValid = passwordProofValid(r, "mesh-default-secret", fp)
+			if !secondReqPasswordValid {
 				http.Error(w, "invalid password", http.StatusUnauthorized)
 				return
 			}
@@ -1253,6 +1294,7 @@ func TestDefaultPasswordWithheldFromUnpinnedHostUntilAuthenticated(t *testing.T)
 				Telemetry: remoteTelemetry{Hostname: "dual-box", Cores: 4, RAMTotalGB: 16, StorageTotalGB: 500},
 			})
 			w.Header().Set("X-M3TAL-Proof", responseProof("mesh-shared-token", nonce, clientNonce, body, fp))
+			setPasswordAuthProof(w, r, "mesh-default-secret", fp, body)
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(body)
 			return
@@ -1272,11 +1314,11 @@ func TestDefaultPasswordWithheldFromUnpinnedHostUntilAuthenticated(t *testing.T)
 	if node.Name != "dual-box" {
 		t.Fatalf("unexpected node name: %s", node.Name)
 	}
-	if firstReqPassword != "" {
-		t.Fatalf("security violation: DefaultPassword was sent on unpinned initial request: %q", firstReqPassword)
+	if firstReqHadProof {
+		t.Fatal("security violation: password proof was sent on unpinned initial request")
 	}
-	if secondReqPassword != "mesh-default-secret" {
-		t.Fatalf("expected DefaultPassword on authenticated retry, got: %q", secondReqPassword)
+	if !secondReqPasswordValid {
+		t.Fatal("expected valid DefaultPassword proof on authenticated retry")
 	}
 }
 
@@ -1291,7 +1333,7 @@ func TestDefaultPasswordNotSentToUnauthenticatedRogueHost(t *testing.T) {
 			return
 		}
 		if r.URL.Path == "/api/v1/telemetry" {
-			receivedPassword = r.Header.Get("X-M3TAL-Password")
+			receivedPassword = r.Header.Get("X-M3TAL-Password-Proof")
 			// Rogue host asks for password, but has NO valid token proof
 			w.Header().Set("X-M3TAL-Auth-Status", "password_required")
 			http.Error(w, "password required", http.StatusUnauthorized)
@@ -1315,7 +1357,6 @@ func TestDefaultPasswordNegotiatedWithPinnedHostOnChallenge(t *testing.T) {
 	cfg := meshConfig{PairingToken: "mesh-shared-token", DefaultPassword: "mesh-default-secret", ListenPort: 9321}
 
 	var reqCount int
-	var receivedPassword string
 	var server *httptest.Server
 	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if writeTestChallenge(w, r) {
@@ -1323,21 +1364,21 @@ func TestDefaultPasswordNegotiatedWithPinnedHostOnChallenge(t *testing.T) {
 		}
 		if r.URL.Path == "/api/v1/telemetry" {
 			reqCount++
-			receivedPassword = r.Header.Get("X-M3TAL-Password")
+			passProof := r.Header.Get("X-M3TAL-Password-Proof")
 			nonce := r.Header.Get("X-M3TAL-Nonce")
 			clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
 			fp := testServerFingerprint(server)
 			if reqCount == 1 {
-				// Verify DefaultPassword was NOT sent upfront in plaintext
-				if receivedPassword != "" {
-					t.Errorf("security violation: DefaultPassword sent upfront: %q", receivedPassword)
+				// Verify no password credential material was sent upfront
+				if passProof != "" {
+					t.Errorf("security violation: password proof sent upfront")
 				}
 				w.Header().Set("X-M3TAL-Auth-Status", "password_required")
 				w.Header().Set("X-M3TAL-Proof", responseProof("mesh-shared-token", nonce, clientNonce, []byte("password required\n"), fp))
 				http.Error(w, "password required", http.StatusUnauthorized)
 				return
 			}
-			if receivedPassword != "mesh-default-secret" {
+			if !passwordProofValid(r, "mesh-default-secret", fp) {
 				http.Error(w, "invalid password", http.StatusUnauthorized)
 				return
 			}
@@ -1346,6 +1387,7 @@ func TestDefaultPasswordNegotiatedWithPinnedHostOnChallenge(t *testing.T) {
 				Telemetry: remoteTelemetry{Hostname: "pinned-box", Cores: 4, RAMTotalGB: 16, StorageTotalGB: 500},
 			})
 			w.Header().Set("X-M3TAL-Proof", responseProof("mesh-shared-token", nonce, clientNonce, body, fp))
+			setPasswordAuthProof(w, r, "mesh-default-secret", fp, body)
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(body)
 			return
@@ -1362,8 +1404,8 @@ func TestDefaultPasswordNegotiatedWithPinnedHostOnChallenge(t *testing.T) {
 	if node.Name != "pinned-box" {
 		t.Fatalf("unexpected node name: %s", node.Name)
 	}
-	if receivedPassword != "mesh-default-secret" {
-		t.Fatalf("expected DefaultPassword on retry, got: %q", receivedPassword)
+	if reqCount < 2 {
+		t.Fatalf("expected authenticated retry to reach server, got %d requests", reqCount)
 	}
 }
 
@@ -1381,7 +1423,7 @@ func TestRefreshRemotePeersWithholdsDefaultPasswordFromUnpinnedPeer(t *testing.T
 			return
 		}
 		if r.URL.Path == "/api/v1/telemetry" {
-			receivedPassword = r.Header.Get("X-M3TAL-Password")
+			receivedPassword = r.Header.Get("X-M3TAL-Password-Proof")
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -1402,7 +1444,7 @@ func TestRefreshRemotePeersWithholdsDefaultPasswordFromUnpinnedPeer(t *testing.T
 
 	refreshRemotePeers()
 	if receivedPassword != "" {
-		t.Fatalf("security violation: refreshRemotePeers sent DefaultPassword to unpinned peer: %q", receivedPassword)
+		t.Fatalf("security violation: refreshRemotePeers sent password proof to unpinned peer")
 	}
 }
 
@@ -1466,7 +1508,7 @@ func TestDefaultPasswordNotSentOnRetryWhenCustomTokenSupplied(t *testing.T) {
 			nonce := r.Header.Get("X-M3TAL-Nonce")
 			clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
 			fp := testServerFingerprint(server)
-			receivedPassword = r.Header.Get("X-M3TAL-Password")
+			receivedPassword = r.Header.Get("X-M3TAL-Password-Proof")
 			// Server only knows attacker-custom-token, signs password_required response
 			if r.Header.Get("X-M3TAL-Proof") == requestProof("attacker-custom-token", nonce, clientNonce, fp) {
 				w.Header().Set("X-M3TAL-Auth-Status", "password_required")
@@ -1487,7 +1529,7 @@ func TestDefaultPasswordNotSentOnRetryWhenCustomTokenSupplied(t *testing.T) {
 		t.Fatal("expected connection to fail without password")
 	}
 	if receivedPassword != "" {
-		t.Fatalf("security violation: DefaultPassword was sent on retry to custom-token peer: %q", receivedPassword)
+		t.Fatalf("security violation: password proof was sent on retry to custom-token peer")
 	}
 }
 
@@ -1514,7 +1556,6 @@ func TestRefreshRemotePeersRetainsNegotiatedPinWhenUnpinnedNodeRecovers(t *testi
 				http.Error(w, "invalid token proof", http.StatusUnauthorized)
 				return
 			}
-			pass := r.Header.Get("X-M3TAL-Password")
 			if reqCount == 1 {
 				// First request has no password (fingerprint unpinned) -> responds password_required with token proof
 				w.Header().Set("X-M3TAL-Auth-Status", "password_required")
@@ -1522,7 +1563,7 @@ func TestRefreshRemotePeersRetainsNegotiatedPinWhenUnpinnedNodeRecovers(t *testi
 				http.Error(w, "password required", http.StatusUnauthorized)
 				return
 			}
-			if pass != "mesh-default-secret" {
+			if !passwordProofValid(r, "mesh-default-secret", fp) {
 				http.Error(w, "invalid password", http.StatusUnauthorized)
 				return
 			}
@@ -1531,6 +1572,7 @@ func TestRefreshRemotePeersRetainsNegotiatedPinWhenUnpinnedNodeRecovers(t *testi
 				Telemetry: remoteTelemetry{Hostname: "recovered-node", Cores: 4, RAMTotalGB: 16, StorageTotalGB: 500},
 			})
 			w.Header().Set("X-M3TAL-Proof", responseProof("mesh-shared-token", nonce, clientNonce, body, fp))
+			setPasswordAuthProof(w, r, "mesh-default-secret", fp, body)
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(body)
 			return
@@ -1612,24 +1654,25 @@ func TestPairingWithDefaultPasswordLeavesStoredPasswordEmptyToTrackSettingsChang
 	}
 
 	activeDefaultPass := "initial-default-pass"
-	var receivedPassword string
+	var lastPasswordValid bool
 	var server *httptest.Server
 	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if writeTestChallenge(w, r) {
 			return
 		}
 		if r.URL.Path == "/api/v1/telemetry" {
-			receivedPassword = r.Header.Get("X-M3TAL-Password")
+			passProof := r.Header.Get("X-M3TAL-Password-Proof")
 			nonce := r.Header.Get("X-M3TAL-Nonce")
 			clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
 			fp := testServerFingerprint(server)
-			if receivedPassword == "" {
+			if passProof == "" {
 				w.Header().Set("X-M3TAL-Auth-Status", "password_required")
 				w.Header().Set("X-M3TAL-Proof", responseProof("mesh-shared-token", nonce, clientNonce, []byte("password required\n"), fp))
 				http.Error(w, "password required", http.StatusUnauthorized)
 				return
 			}
-			if receivedPassword != activeDefaultPass {
+			lastPasswordValid = passwordProofValid(r, activeDefaultPass, fp)
+			if !lastPasswordValid {
 				http.Error(w, "invalid password", http.StatusUnauthorized)
 				return
 			}
@@ -1638,6 +1681,7 @@ func TestPairingWithDefaultPasswordLeavesStoredPasswordEmptyToTrackSettingsChang
 				Telemetry: remoteTelemetry{Hostname: "default-pass-node", Cores: 2, RAMTotalGB: 8, StorageTotalGB: 200},
 			})
 			w.Header().Set("X-M3TAL-Proof", responseProof("mesh-shared-token", nonce, clientNonce, body, fp))
+			setPasswordAuthProof(w, r, activeDefaultPass, fp, body)
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(body)
 			return
@@ -1674,8 +1718,8 @@ func TestPairingWithDefaultPasswordLeavesStoredPasswordEmptyToTrackSettingsChang
 	if refreshed.Status != "online" {
 		t.Fatalf("expected node to be online with rotated password, got status %s", refreshed.Status)
 	}
-	if receivedPassword != "rotated-default-pass" {
-		t.Fatalf("expected rotated password to be sent, got: %q", receivedPassword)
+	if !lastPasswordValid {
+		t.Fatal("expected rotated DefaultPassword proof to be accepted on retry")
 	}
 }
 

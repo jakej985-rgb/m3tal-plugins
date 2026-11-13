@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -641,7 +642,28 @@ func handleAction(req *RPCRequest) {
 			credsChanged = true
 		}
 		if addressChanged || credsChanged {
-			testedNode, pwOnly, err := connectAndNegotiateNode(foundNode.IP, foundNode.APIToken, foundNode.Password, cfg, foundNode.Fingerprint, false)
+			// A password typed in this update is a user-driven re-pair and may
+			// be proven once to the not-yet-pinned peer (TOFU); a saved
+			// password is never sent to an unpinned address.
+			// A token-authenticated response must not establish the pin for a
+			// saved password: tokens can be shared across nodes, so any token
+			// holder at the new address could capture the password proof and
+			// guess it offline. Moving a password-protected node therefore
+			// requires the user to re-enter its password.
+			allowUnpinned := password != ""
+			testedNode, pwOnly, err := connectAndNegotiateNodeOpts(foundNode.IP, foundNode.APIToken, foundNode.Password, cfg, foundNode.Fingerprint, false, allowUnpinned)
+			if err != nil && foundNode.Password != "" && foundNode.Fingerprint == "" &&
+				(addressChanged || errors.Is(err, ErrPasswordPinRequired)) {
+				// Do not persist a password-protected node without a verified
+				// fingerprint (new address, or a legacy unpinned peer whose
+				// credentials were edited): refresh could never reach it.
+				msg := err.Error()
+				if errors.Is(err, ErrPasswordPinRequired) {
+					msg = "re-enter the node password to verify and pin this node"
+				}
+				sendError(req.ID, -32002, "Node update failed", msg)
+				return
+			}
 			if err == nil {
 				foundNode.PasswordOnly = pwOnly
 				if testedNode.Fingerprint != "" {

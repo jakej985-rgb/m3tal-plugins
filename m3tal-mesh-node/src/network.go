@@ -369,20 +369,66 @@ func nodeTelemetryHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	passwordProofAuthed := false
 	if expectedPass != "" {
-		suppliedPass := r.Header.Get("X-M3TAL-Password")
-		if suppliedPass == "" {
-			w.Header().Set("X-M3TAL-Auth-Status", "password_required")
-			if suppliedProof != "" && matchedToken != "" {
-				w.Header().Set("X-M3TAL-Proof", nodeResponseProof(matchedToken, nonce, clientNonce, []byte("password required\n"), fp))
-			}
-			http.Error(w, "password required", http.StatusUnauthorized)
+		clientIP, _, ipErr := net.SplitHostPort(r.RemoteAddr)
+		if ipErr != nil {
+			clientIP = r.RemoteAddr
+		}
+		// Atomically check the lockout and reserve an attempt slot so
+		// concurrent requests cannot exceed the failure budget.
+		if !nodePasswordBegin(clientIP) {
+			http.Error(w, "too many failed authentication attempts", http.StatusTooManyRequests)
 			return
 		}
-		if subtle.ConstantTimeCompare([]byte(suppliedPass), []byte(expectedPass)) != 1 {
+		authed := false
+		if suppliedProof := r.Header.Get("X-M3TAL-Password-Proof"); suppliedProof != "" {
+			// Proof-based password auth: the client proves knowledge of the
+			// password via HMAC over the single-use challenge nonce, so the
+			// secret never crosses the wire (safe even on unverified TLS)
+			// and each guess consumes a fresh nonce.
+			// The token branch already validated and consumed this challenge
+			// when tokens are configured; consuming it again would always fail.
+			// Invalid challenges are not password guesses, so they do not
+			// count toward the lockout.
+			challengeOK := matchedToken != ""
+			if !challengeOK {
+				challengeOK = nonce != "" && clientNonce != "" && validNodeNonce(clientNonce) &&
+					consumeNodeChallenge(nonce, clientIP)
+			}
+			if !challengeOK {
+				nodePasswordRelease(clientIP)
+				http.Error(w, "invalid pairing challenge", http.StatusUnauthorized)
+				return
+			}
+			expected := nodePasswordProof(expectedPass, nonce, clientNonce, fp)
+			if subtle.ConstantTimeCompare([]byte(suppliedProof), []byte(expected)) == 1 {
+				authed = true
+				passwordProofAuthed = true
+			}
+		} else {
+			// Legacy raw-password header (older clients). Still rate-limited;
+			// new clients must use X-M3TAL-Password-Proof.
+			suppliedPass := r.Header.Get("X-M3TAL-Password")
+			if suppliedPass == "" {
+				nodePasswordRelease(clientIP)
+				w.Header().Set("X-M3TAL-Auth-Status", "password_required")
+				if suppliedProof != "" && matchedToken != "" {
+					w.Header().Set("X-M3TAL-Proof", nodeResponseProof(matchedToken, nonce, clientNonce, []byte("password required\n"), fp))
+				}
+				http.Error(w, "password required", http.StatusUnauthorized)
+				return
+			}
+			if subtle.ConstantTimeCompare([]byte(suppliedPass), []byte(expectedPass)) == 1 {
+				authed = true
+			}
+		}
+		if !authed {
+			nodePasswordFail(clientIP)
 			http.Error(w, "invalid password", http.StatusUnauthorized)
 			return
 		}
+		nodePasswordSuccess(clientIP)
 	}
 
 	hostname, _ := os.Hostname()
@@ -397,6 +443,12 @@ func nodeTelemetryHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if matchedToken != "" {
 		w.Header().Set("X-M3TAL-Proof", nodeResponseProof(matchedToken, nonce, clientNonce, body, fp))
+	}
+	if passwordProofAuthed && nonce != "" && clientNonce != "" {
+		// Prove to the client that this server knows the password, so a
+		// relay/MITM on the unauthenticated TLS channel cannot impersonate
+		// the node to a client holding the real credential.
+		w.Header().Set("X-M3TAL-Password-Auth-Proof", nodePasswordResponseProof(expectedPass, nonce, clientNonce, body, fp))
 	}
 	_, _ = w.Write(body)
 }
@@ -513,6 +565,138 @@ func nodeRequestProof(token, nonce, clientNonce string, certFingerprint ...strin
 		_, _ = io.WriteString(mac, "\n"+certFingerprint[0])
 	}
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// nodePasswordProof authenticates a password without transmitting it:
+// HMAC-SHA256 keyed by the password over the single-use challenge nonce.
+// Domain-separated ("PASS") from the token proofs.
+func nodePasswordProof(password, nonce, clientNonce string, certFingerprint ...string) string {
+	mac := hmac.New(sha256.New, []byte(password))
+	_, _ = io.WriteString(mac, "PASS\nGET\n/api/v1/telemetry\n"+nonce+"\n"+clientNonce)
+	if len(certFingerprint) > 0 && certFingerprint[0] != "" {
+		_, _ = io.WriteString(mac, "\n"+certFingerprint[0])
+	}
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// nodePasswordResponseProof lets a password-authenticated client verify the
+// responding server actually knows the password.
+func nodePasswordResponseProof(password, nonce, clientNonce string, body []byte, certFingerprint ...string) string {
+	sum := sha256.Sum256(body)
+	mac := hmac.New(sha256.New, []byte(password))
+	_, _ = io.WriteString(mac, "PASS\n200\n/api/v1/telemetry\n"+nonce+"\n"+clientNonce+"\n"+hex.EncodeToString(sum[:]))
+	if len(certFingerprint) > 0 && certFingerprint[0] != "" {
+		_, _ = io.WriteString(mac, "\n"+certFingerprint[0])
+	}
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// Password-attempt rate limiting: failed password proofs/raw passwords are
+// counted per client IP; 5 failures lock the IP out for 60 seconds. Bounds
+// online guessing even though each proof consumes a single-use nonce.
+const (
+	nodePassMaxFails   = 5
+	nodePassLockout    = 60 * time.Second
+	nodePassTrackerMax = 4096
+)
+
+type nodePassAttempt struct {
+	fails      int
+	inflight   int
+	lockedTill time.Time
+}
+
+var (
+	nodePassMu    sync.Mutex
+	nodePassFails = make(map[string]*nodePassAttempt)
+)
+
+// nodePasswordBegin atomically checks the lockout and reserves one attempt
+// slot. Failures plus in-flight attempts never exceed nodePassMaxFails, so
+// parallel requests cannot test more guesses than the budget allows. Every
+// true result must be settled by exactly one of nodePasswordFail,
+// nodePasswordSuccess, or nodePasswordRelease.
+func nodePasswordBegin(client string) bool {
+	nodePassMu.Lock()
+	defer nodePassMu.Unlock()
+	now := time.Now()
+	a := nodePassFails[client]
+	if a == nil {
+		if len(nodePassFails) >= nodePassTrackerMax {
+			// Evict idle entries that are not actively locked out.
+			for ip, e := range nodePassFails {
+				if e.inflight == 0 && !now.Before(e.lockedTill) {
+					delete(nodePassFails, ip)
+				}
+			}
+		}
+		if len(nodePassFails) >= nodePassTrackerMax {
+			// Tracker saturated by active lockouts: fail closed rather
+			// than grow unbounded or allow untracked guesses.
+			return false
+		}
+		a = &nodePassAttempt{}
+		nodePassFails[client] = a
+	} else if !a.lockedTill.IsZero() && !now.Before(a.lockedTill) {
+		// Previous lockout expired: start a fresh failure window.
+		a.fails = 0
+		a.lockedTill = time.Time{}
+	}
+	if now.Before(a.lockedTill) || a.fails+a.inflight >= nodePassMaxFails {
+		return false
+	}
+	a.inflight++
+	return true
+}
+
+// nodePasswordRelease returns a reserved slot for a request that did not
+// actually test a password (e.g. invalid challenge, no credential supplied).
+func nodePasswordRelease(client string) {
+	nodePassMu.Lock()
+	defer nodePassMu.Unlock()
+	a := nodePassFails[client]
+	if a == nil {
+		return
+	}
+	if a.inflight > 0 {
+		a.inflight--
+	}
+	if a.fails == 0 && a.inflight == 0 && a.lockedTill.IsZero() {
+		delete(nodePassFails, client)
+	}
+}
+
+func nodePasswordFail(client string) {
+	nodePassMu.Lock()
+	defer nodePassMu.Unlock()
+	a := nodePassFails[client]
+	if a == nil {
+		return
+	}
+	if a.inflight > 0 {
+		a.inflight--
+	}
+	a.fails++
+	if a.fails >= nodePassMaxFails {
+		a.lockedTill = time.Now().Add(nodePassLockout)
+	}
+}
+
+func nodePasswordSuccess(client string) {
+	nodePassMu.Lock()
+	defer nodePassMu.Unlock()
+	a := nodePassFails[client]
+	if a == nil {
+		return
+	}
+	if a.inflight > 0 {
+		a.inflight--
+	}
+	a.fails = 0
+	a.lockedTill = time.Time{}
+	if a.inflight == 0 {
+		delete(nodePassFails, client)
+	}
 }
 
 func nodeResponseProof(token, nonce, clientNonce string, body []byte, certFingerprint ...string) string {
