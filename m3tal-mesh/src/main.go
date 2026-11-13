@@ -652,12 +652,14 @@ func handleAction(req *RPCRequest) {
 			// requires the user to re-enter its password.
 			allowUnpinned := password != ""
 			testedNode, pwOnly, err := connectAndNegotiateNodeOpts(foundNode.IP, foundNode.APIToken, foundNode.Password, cfg, foundNode.Fingerprint, false, allowUnpinned)
-			if err != nil && addressChanged && foundNode.Password != "" && foundNode.Fingerprint == "" {
-				// Do not persist a password-protected node at a new address
-				// without a verified fingerprint: refresh could never reach it.
+			if err != nil && foundNode.Password != "" && foundNode.Fingerprint == "" &&
+				(addressChanged || errors.Is(err, ErrPasswordPinRequired)) {
+				// Do not persist a password-protected node without a verified
+				// fingerprint (new address, or a legacy unpinned peer whose
+				// credentials were edited): refresh could never reach it.
 				msg := err.Error()
 				if errors.Is(err, ErrPasswordPinRequired) {
-					msg = "re-enter the node password to verify and pin the new address"
+					msg = "re-enter the node password to verify and pin this node"
 				}
 				sendError(req.ID, -32002, "Node update failed", msg)
 				return
