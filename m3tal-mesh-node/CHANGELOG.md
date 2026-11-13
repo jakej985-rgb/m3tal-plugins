@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### 🔒 Security
+- **fix(mesh-node): HMAC password proofs + rate limiting** — accept `X-M3TAL-Password-Proof` (HMAC over the single-use challenge) and return `X-M3TAL-Password-Auth-Proof`; per-IP lockout after 5 failed password attempts (60s). Legacy raw `X-M3TAL-Password` is still accepted but rate-limited. **Requires an upgraded `m3tal-mesh`. Mesh controllers built from this release no longer send raw passwords.**
+
+---
+
 ## [0.5.2] - 2026-11-10
 
 ### 🚀 Changes & Improvements

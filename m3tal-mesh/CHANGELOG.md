@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### 🔒 Security
+- **fix(mesh): never send node passwords in cleartext** — send an HMAC `X-M3TAL-Password-Proof` instead of `X-M3TAL-Password`, and verify the node's `X-M3TAL-Password-Auth-Proof`. **Breaking:** password-protected peers must run an upgraded `m3tal-mesh-node`; older nodes will show as offline until upgraded.
+
+---
+
 ## [0.5.1] - 2026-11-06
 
 ### 🚀 Changes & Improvements

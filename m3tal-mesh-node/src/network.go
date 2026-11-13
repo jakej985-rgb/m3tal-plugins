@@ -375,7 +375,9 @@ func nodeTelemetryHandler(w http.ResponseWriter, r *http.Request) {
 		if ipErr != nil {
 			clientIP = r.RemoteAddr
 		}
-		if nodePasswordLocked(clientIP) {
+		// Atomically check the lockout and reserve an attempt slot so
+		// concurrent requests cannot exceed the failure budget.
+		if !nodePasswordBegin(clientIP) {
 			http.Error(w, "too many failed authentication attempts", http.StatusTooManyRequests)
 			return
 		}
@@ -385,9 +387,17 @@ func nodeTelemetryHandler(w http.ResponseWriter, r *http.Request) {
 			// password via HMAC over the single-use challenge nonce, so the
 			// secret never crosses the wire (safe even on unverified TLS)
 			// and each guess consumes a fresh nonce.
-			if nonce == "" || clientNonce == "" || !validNodeNonce(clientNonce) ||
-				!consumeNodeChallenge(nonce, clientIP) {
-				nodePasswordFail(clientIP)
+			// The token branch already validated and consumed this challenge
+			// when tokens are configured; consuming it again would always fail.
+			// Invalid challenges are not password guesses, so they do not
+			// count toward the lockout.
+			challengeOK := matchedToken != ""
+			if !challengeOK {
+				challengeOK = nonce != "" && clientNonce != "" && validNodeNonce(clientNonce) &&
+					consumeNodeChallenge(nonce, clientIP)
+			}
+			if !challengeOK {
+				nodePasswordRelease(clientIP)
 				http.Error(w, "invalid pairing challenge", http.StatusUnauthorized)
 				return
 			}
@@ -401,6 +411,7 @@ func nodeTelemetryHandler(w http.ResponseWriter, r *http.Request) {
 			// new clients must use X-M3TAL-Password-Proof.
 			suppliedPass := r.Header.Get("X-M3TAL-Password")
 			if suppliedPass == "" {
+				nodePasswordRelease(clientIP)
 				w.Header().Set("X-M3TAL-Auth-Status", "password_required")
 				if suppliedProof != "" && matchedToken != "" {
 					w.Header().Set("X-M3TAL-Proof", nodeResponseProof(matchedToken, nonce, clientNonce, []byte("password required\n"), fp))
@@ -591,6 +602,7 @@ const (
 
 type nodePassAttempt struct {
 	fails      int
+	inflight   int
 	lockedTill time.Time
 }
 
@@ -599,28 +611,70 @@ var (
 	nodePassFails = make(map[string]*nodePassAttempt)
 )
 
-func nodePasswordLocked(client string) bool {
+// nodePasswordBegin atomically checks the lockout and reserves one attempt
+// slot. Failures plus in-flight attempts never exceed nodePassMaxFails, so
+// parallel requests cannot test more guesses than the budget allows. Every
+// true result must be settled by exactly one of nodePasswordFail,
+// nodePasswordSuccess, or nodePasswordRelease.
+func nodePasswordBegin(client string) bool {
 	nodePassMu.Lock()
 	defer nodePassMu.Unlock()
-	a, ok := nodePassFails[client]
-	return ok && time.Now().Before(a.lockedTill)
+	now := time.Now()
+	a := nodePassFails[client]
+	if a == nil {
+		if len(nodePassFails) >= nodePassTrackerMax {
+			// Evict idle entries that are not actively locked out.
+			for ip, e := range nodePassFails {
+				if e.inflight == 0 && !now.Before(e.lockedTill) {
+					delete(nodePassFails, ip)
+				}
+			}
+		}
+		if len(nodePassFails) >= nodePassTrackerMax {
+			// Tracker saturated by active lockouts: fail closed rather
+			// than grow unbounded or allow untracked guesses.
+			return false
+		}
+		a = &nodePassAttempt{}
+		nodePassFails[client] = a
+	} else if !a.lockedTill.IsZero() && !now.Before(a.lockedTill) {
+		// Previous lockout expired: start a fresh failure window.
+		a.fails = 0
+		a.lockedTill = time.Time{}
+	}
+	if now.Before(a.lockedTill) || a.fails+a.inflight >= nodePassMaxFails {
+		return false
+	}
+	a.inflight++
+	return true
+}
+
+// nodePasswordRelease returns a reserved slot for a request that did not
+// actually test a password (e.g. invalid challenge, no credential supplied).
+func nodePasswordRelease(client string) {
+	nodePassMu.Lock()
+	defer nodePassMu.Unlock()
+	a := nodePassFails[client]
+	if a == nil {
+		return
+	}
+	if a.inflight > 0 {
+		a.inflight--
+	}
+	if a.fails == 0 && a.inflight == 0 && a.lockedTill.IsZero() {
+		delete(nodePassFails, client)
+	}
 }
 
 func nodePasswordFail(client string) {
 	nodePassMu.Lock()
 	defer nodePassMu.Unlock()
-	if len(nodePassFails) >= nodePassTrackerMax {
-		now := time.Now()
-		for ip, a := range nodePassFails {
-			if now.After(a.lockedTill) && a.fails < nodePassMaxFails {
-				delete(nodePassFails, ip)
-			}
-		}
-	}
 	a := nodePassFails[client]
 	if a == nil {
-		a = &nodePassAttempt{}
-		nodePassFails[client] = a
+		return
+	}
+	if a.inflight > 0 {
+		a.inflight--
 	}
 	a.fails++
 	if a.fails >= nodePassMaxFails {
@@ -631,7 +685,18 @@ func nodePasswordFail(client string) {
 func nodePasswordSuccess(client string) {
 	nodePassMu.Lock()
 	defer nodePassMu.Unlock()
-	delete(nodePassFails, client)
+	a := nodePassFails[client]
+	if a == nil {
+		return
+	}
+	if a.inflight > 0 {
+		a.inflight--
+	}
+	a.fails = 0
+	a.lockedTill = time.Time{}
+	if a.inflight == 0 {
+		delete(nodePassFails, client)
+	}
 }
 
 func nodeResponseProof(token, nonce, clientNonce string, body []byte, certFingerprint ...string) string {
