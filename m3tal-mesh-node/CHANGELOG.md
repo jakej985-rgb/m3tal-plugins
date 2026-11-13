@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.5.3] - 2026-11-13
+
+### 🚀 Changes & Improvements
+- **fix(mesh-node): share challenge between token and password proofs; harden lockout tracker** (`73c30aa`)
+- **fix(mesh): replace raw password header with HMAC challenge proofs** (`4d3f60c`)
+
+---
+
 ## [Unreleased]
 
 ### 🔒 Security
