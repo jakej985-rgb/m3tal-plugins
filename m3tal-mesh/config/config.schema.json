@@ -36,6 +36,16 @@
       "type": "string",
       "default": "",
       "description": "Optional fallback password sent to remote nodes that require password verification."
+    },
+    "broadcast_mdns": {
+      "type": "boolean",
+      "default": true,
+      "description": "Announce this node's presence on the local subnet via mDNS."
+    },
+    "broadcaster_only_mode": {
+      "type": "boolean",
+      "default": false,
+      "description": "Run in lightweight broadcaster-only mode without outbound fleet polling."
     }
   },
   "additionalProperties": false

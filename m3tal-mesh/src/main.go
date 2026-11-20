@@ -858,6 +858,7 @@ func handleAction(req *RPCRequest) {
 		})
 	case "set_settings":
 		cfg := loadMeshConfig()
+		prevPort, prevMDNS := cfg.ListenPort, cfg.IsMDNSEnabled()
 		if value, ok := raw.Args["pairing_token"].(string); ok && strings.TrimSpace(value) != "" {
 			cfg.PairingToken = strings.TrimSpace(value)
 		} else if clear, ok := raw.Args["clear_pairing_token"].(bool); ok && clear {
@@ -890,9 +891,15 @@ func handleAction(req *RPCRequest) {
 			return
 		}
 		usingCoreKey := resolveCoreAPIKey() != ""
+		restartRequired := cfg.ListenPort != prevPort || cfg.IsMDNSEnabled() != prevMDNS
+		msg := "Mesh settings saved"
+		if restartRequired {
+			msg = "Mesh settings saved. Restart the plugin to apply port or mDNS broadcast changes."
+		}
 		sendResponse(req.ID, map[string]interface{}{
 			"success":               true,
-			"message":               "Mesh settings saved",
+			"message":               msg,
+			"restart_required":      restartRequired,
 			"has_password":          cfg.DefaultPassword != "",
 			"has_pairing_token":     cfg.PairingToken != "",
 			"using_core_key":        usingCoreKey,

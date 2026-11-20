@@ -14,6 +14,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -151,7 +152,16 @@ func meshConfigBaseDir() string {
 	if stat, err := os.Stat("/home/m3tal/.config/m3tal"); err == nil && stat.IsDir() {
 		return "/home/m3tal/.config/m3tal/plugins/mesh"
 	}
-	// 5. System wide /etc/m3tal configuration directory
+	// 5. Preserve legacy root-home configuration from earlier releases
+	if home, err := os.UserHomeDir(); err == nil && home == "/root" {
+		legacy := filepath.Join(home, ".config", "m3tal", "plugins", "mesh")
+		for _, f := range []string{"config.json", "peers.json"} {
+			if _, err := os.Stat(filepath.Join(legacy, f)); err == nil {
+				return legacy
+			}
+		}
+	}
+	// 6. System wide /etc/m3tal configuration directory
 	if stat, err := os.Stat("/etc/m3tal/plugins/m3tal-mesh"); err == nil && stat.IsDir() {
 		return "/etc/m3tal/plugins/m3tal-mesh"
 	}
@@ -1502,6 +1512,53 @@ func meshPasswordSuccess(client string) {
 	delete(meshPassFails, client)
 }
 
+func setMeshFingerprint(der []byte) {
+	sum := sha256.Sum256(der)
+	meshCertFingerprintMu.Lock()
+	meshCertFingerprint = hex.EncodeToString(sum[:])
+	meshCertFingerprintMu.Unlock()
+}
+
+// loadOrCreateMeshCertificate keeps a stable TLS identity across restarts so
+// peers' pinned fingerprints stay valid. Rotation requires re-pairing.
+func loadOrCreateMeshCertificate() (tls.Certificate, error) {
+	dir := meshConfigBaseDir()
+	certPath := filepath.Join(dir, "tls_cert.pem")
+	keyPath := filepath.Join(dir, "tls_key.pem")
+	if cert, err := tls.LoadX509KeyPair(certPath, keyPath); err == nil && len(cert.Certificate) > 0 {
+		if leaf, err := x509.ParseCertificate(cert.Certificate[0]); err == nil && time.Now().Before(leaf.NotAfter) {
+			setMeshFingerprint(cert.Certificate[0])
+			return cert, nil
+		}
+	}
+	cert, err := createMeshCertificate()
+	if err != nil {
+		return cert, err
+	}
+	ecKey, ok := cert.PrivateKey.(*ecdsa.PrivateKey)
+	if !ok {
+		return cert, nil
+	}
+	keyDER, err := x509.MarshalECPrivateKey(ecKey)
+	if err != nil {
+		return cert, nil
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "m3tal-mesh: cannot persist TLS identity: %v\n", err)
+		return cert, nil
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]})
+	if err := os.WriteFile(keyPath, keyPEM, 0600); err != nil {
+		fmt.Fprintf(os.Stderr, "m3tal-mesh: cannot persist TLS key: %v\n", err)
+		return cert, nil
+	}
+	if err := os.WriteFile(certPath, certPEM, 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "m3tal-mesh: cannot persist TLS cert: %v\n", err)
+	}
+	return cert, nil
+}
+
 func createMeshCertificate() (tls.Certificate, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -1530,10 +1587,7 @@ func createMeshCertificate() (tls.Certificate, error) {
 	if err != nil {
 		return tls.Certificate{}, err
 	}
-	sum := sha256.Sum256(der)
-	meshCertFingerprintMu.Lock()
-	meshCertFingerprint = hex.EncodeToString(sum[:])
-	meshCertFingerprintMu.Unlock()
+	setMeshFingerprint(der)
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, nil
 }
 
@@ -1878,27 +1932,36 @@ func startMeshNetworkService() error {
 		MaxHeaderBytes:    32 * 1024,
 	}
 
-	certificate, err := createMeshCertificate()
+	certificate, err := loadOrCreateMeshCertificate()
 	if err != nil {
 		return fmt.Errorf("mesh TLS certificate: %w", err)
 	}
-
-	listener, err := tls.Listen("tcp", server.Addr, &tls.Config{
+	tlsCfg := &tls.Config{
 		Certificates: []tls.Certificate{certificate},
 		MinVersion:   tls.VersionTLS12,
-	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "m3tal-mesh HTTP service port %d: %v\n", cfg.ListenPort, err)
-		return nil
 	}
 
 	meshServerMu.Lock()
 	meshServer = server
 	meshServerMu.Unlock()
 
+	// Retry binding with backoff so a legacy m3tal-mesh-node holding the port
+	// does not permanently disable the unified broadcaster.
 	go func() {
-		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
-			fmt.Fprintf(os.Stderr, "m3tal-mesh HTTP service: %v\n", err)
+		backoff := 2 * time.Second
+		for {
+			listener, err := tls.Listen("tcp", server.Addr, tlsCfg)
+			if err == nil {
+				if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
+					fmt.Fprintf(os.Stderr, "m3tal-mesh HTTP service: %v\n", err)
+				}
+				return
+			}
+			fmt.Fprintf(os.Stderr, "m3tal-mesh HTTP service port %d: %v (retrying in %s)\n", cfg.ListenPort, err, backoff)
+			time.Sleep(backoff)
+			if backoff < time.Minute {
+				backoff *= 2
+			}
 		}
 	}()
 
