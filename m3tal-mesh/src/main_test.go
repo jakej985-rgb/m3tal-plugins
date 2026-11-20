@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -1165,5 +1166,144 @@ func TestMeshInheritsCoreAPIKey(t *testing.T) {
 		if onDisk.PairingToken != "" {
 			t.Errorf("expected inherited Core API key to NOT be persisted to disk, got %q", onDisk.PairingToken)
 		}
+	}
+}
+
+func TestGetTelemetryAndBeaconPingActions(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+
+	// Test get_telemetry
+	respTel := runActionForTest(t, 201, `{"action_id":"get_telemetry"}`)
+	if respTel.Error != nil {
+		t.Fatalf("get_telemetry error: %v", respTel.Error)
+	}
+	rawTel, _ := json.Marshal(respTel.Result)
+	var telMap map[string]interface{}
+	_ = json.Unmarshal(rawTel, &telMap)
+	if telMap["success"] != true {
+		t.Errorf("expected success=true, got %v", telMap["success"])
+	}
+	telData, ok := telMap["telemetry"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected telemetry map, got %T", telMap["telemetry"])
+	}
+	if telData["cores"].(float64) < 1 {
+		t.Errorf("expected cores >= 1, got %v", telData["cores"])
+	}
+
+	// Test beacon_ping
+	respPing := runActionForTest(t, 202, `{"action_id":"beacon_ping"}`)
+	if respPing.Error != nil {
+		t.Fatalf("beacon_ping error: %v", respPing.Error)
+	}
+	rawPing, _ := json.Marshal(respPing.Result)
+	var pingMap map[string]interface{}
+	_ = json.Unmarshal(rawPing, &pingMap)
+	if pingMap["success"] != true || pingMap["status"] != "online" {
+		t.Errorf("expected online status, got %v", pingMap)
+	}
+}
+
+func TestBroadcasterAndMDNSSettings(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+
+	setResp := runActionForTest(t, 203, `{"action":"set_settings","args":{"broadcast_mdns":false,"broadcaster_only_mode":true}}`)
+	if setResp.Error != nil {
+		t.Fatalf("set_settings error: %v", setResp.Error)
+	}
+	rawSet, _ := json.Marshal(setResp.Result)
+	var setMap map[string]interface{}
+	_ = json.Unmarshal(rawSet, &setMap)
+	if setMap["broadcast_mdns"] != false {
+		t.Errorf("expected broadcast_mdns=false, got %v", setMap["broadcast_mdns"])
+	}
+	if setMap["broadcaster_only_mode"] != true {
+		t.Errorf("expected broadcaster_only_mode=true, got %v", setMap["broadcaster_only_mode"])
+	}
+
+	getResp := runActionForTest(t, 204, `{"action":"get_settings"}`)
+	if getResp.Error != nil {
+		t.Fatalf("get_settings error: %v", getResp.Error)
+	}
+	rawGet, _ := json.Marshal(getResp.Result)
+	var getMap map[string]interface{}
+	_ = json.Unmarshal(rawGet, &getMap)
+	if getMap["broadcast_mdns"] != false || getMap["broadcaster_only_mode"] != true {
+		t.Errorf("expected false/true for broadcaster settings, got %v", getMap)
+	}
+
+	// In broadcaster_only_mode, getAllNodes returns local node without crashing or blocking
+	nodes := getAllNodes()
+	if len(nodes) < 1 || !nodes[0].IsLocal {
+		t.Errorf("expected local node in getAllNodes, got %+v", nodes)
+	}
+}
+
+func TestSQLiteCoreAPIKeyQuery(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("HOME", tempDir)
+	dbPath := filepath.Join(tempDir, "state.db")
+	t.Setenv("M3TAL_STATE_DB", dbPath)
+	t.Setenv("M3TAL_API_KEY", "")
+	t.Setenv("M3TAL_API_TOKEN", "")
+	t.Setenv("API_TOKEN", "")
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("failed to open sqlite: %v", err)
+	}
+	schema := `CREATE TABLE api_keys (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL,
+		token TEXT NOT NULL UNIQUE,
+		permissions TEXT NOT NULL DEFAULT '["*"]',
+		direction TEXT NOT NULL DEFAULT 'local',
+		target TEXT NOT NULL DEFAULT '',
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		last_used_at DATETIME
+	);`
+	if _, err := db.Exec(schema); err != nil {
+		t.Fatalf("failed to create table: %v", err)
+	}
+	_, err = db.Exec(`INSERT INTO api_keys (name, token, permissions, direction, target) VALUES
+		('Local Key', 'test-local-token-321', '["*"]', 'local', ''),
+		('Remote Peer Key', 'test-remote-token-654', '["mesh:access"]', 'remote', '192.168.1.100');`)
+	if err != nil {
+		t.Fatalf("failed to insert keys: %v", err)
+	}
+	db.Close()
+
+	// Verify resolveCoreAPIKey picks up the local key from state.db
+	primary := resolveCoreAPIKey()
+	if primary != "test-local-token-321" {
+		t.Errorf("expected test-local-token-321, got %q", primary)
+	}
+
+	// Verify resolveCoreAPIKeys includes local key
+	locals := resolveCoreAPIKeys()
+	foundLocal := false
+	for _, l := range locals {
+		if l == "test-local-token-321" {
+			foundLocal = true
+			break
+		}
+	}
+	if !foundLocal {
+		t.Errorf("expected test-local-token-321 in resolveCoreAPIKeys, got %v", locals)
+	}
+
+	// Verify resolveRemoteAPIKeys includes remote key
+	remotes := resolveRemoteAPIKeys()
+	foundRemote := false
+	for _, r := range remotes {
+		if r == "test-remote-token-654" {
+			foundRemote = true
+			break
+		}
+	}
+	if !foundRemote {
+		t.Errorf("expected test-remote-token-654 in resolveRemoteAPIKeys, got %v", remotes)
 	}
 }

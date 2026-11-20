@@ -1843,3 +1843,106 @@ func TestPairAndPersistPeerRollsBackPeerOnConfigSaveFailure(t *testing.T) {
 		t.Fatalf("expected 0 in-memory peers after rollback, got %d", len(inMemory))
 	}
 }
+
+func TestMeshInboundTelemetryHandler(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+	_ = saveMeshConfig(meshConfig{PairingToken: "mesh-inbound-secret", ListenPort: 9321})
+
+	// 1. Issue challenge
+	wChallenge := httptest.NewRecorder()
+	rChallenge := httptest.NewRequest(http.MethodPost, "/api/v1/challenge", nil)
+	rChallenge.RemoteAddr = "192.168.1.50:54321"
+	meshChallengeHandler(wChallenge, rChallenge)
+	if wChallenge.Code != http.StatusOK {
+		t.Fatalf("challenge returned %d", wChallenge.Code)
+	}
+	var chalResp struct {
+		Nonce string `json:"nonce"`
+	}
+	_ = json.Unmarshal(wChallenge.Body.Bytes(), &chalResp)
+	if chalResp.Nonce == "" {
+		t.Fatal("empty challenge nonce")
+	}
+
+	// 2. Request telemetry with valid proof
+	cNonce, _ := newMeshNonce()
+	proof := requestProof("mesh-inbound-secret", chalResp.Nonce, cNonce)
+	wTel := httptest.NewRecorder()
+	rTel := httptest.NewRequest(http.MethodGet, "/api/v1/telemetry", nil)
+	rTel.RemoteAddr = "192.168.1.50:54321"
+	rTel.Header.Set("X-M3TAL-Nonce", chalResp.Nonce)
+	rTel.Header.Set("X-M3TAL-Client-Nonce", cNonce)
+	rTel.Header.Set("X-M3TAL-Proof", proof)
+
+	meshTelemetryHandler(wTel, rTel)
+	if wTel.Code != http.StatusOK {
+		t.Fatalf("telemetry returned %d: %s", wTel.Code, wTel.Body.String())
+	}
+	var telPayload struct {
+		Name      string        `json:"name"`
+		Telemetry NodeTelemetry `json:"telemetry"`
+	}
+	if err := json.Unmarshal(wTel.Body.Bytes(), &telPayload); err != nil {
+		t.Fatalf("failed to decode telemetry: %v", err)
+	}
+	if telPayload.Telemetry.Cores < 1 {
+		t.Errorf("expected cores >= 1, got %d", telPayload.Telemetry.Cores)
+	}
+}
+
+func TestMeshInboundPairHandler(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+	remoteNodes = []MeshNode{}
+	_ = saveMeshConfig(meshConfig{PairingToken: "pair-secret-token", ListenPort: 9321})
+
+	// 1. Issue challenge
+	wChallenge := httptest.NewRecorder()
+	rChallenge := httptest.NewRequest(http.MethodPost, "/api/v1/challenge", nil)
+	rChallenge.RemoteAddr = "192.168.12.156:45678"
+	meshChallengeHandler(wChallenge, rChallenge)
+	if wChallenge.Code != http.StatusOK {
+		t.Fatalf("challenge returned %d", wChallenge.Code)
+	}
+	var chalResp struct {
+		Nonce string `json:"nonce"`
+	}
+	_ = json.Unmarshal(wChallenge.Body.Bytes(), &chalResp)
+
+	// 2. Submit pair request
+	cNonce, _ := newMeshNonce()
+	proof := pairRequestProof("pair-secret-token", chalResp.Nonce, cNonce)
+	pairBody := []byte(`{
+		"name": "m3tal-Server",
+		"hostname": "m3tal-Server",
+		"ip": "192.168.12.156:9321",
+		"role": "server",
+		"token": "peer-offered-key-777",
+		"fingerprint": "abc123certfp"
+	}`)
+	wPair := httptest.NewRecorder()
+	rPair := httptest.NewRequest(http.MethodPost, "/api/v1/pair", strings.NewReader(string(pairBody)))
+	rPair.RemoteAddr = "192.168.12.156:45678"
+	rPair.Header.Set("Content-Type", "application/json")
+	rPair.Header.Set("X-M3TAL-Nonce", chalResp.Nonce)
+	rPair.Header.Set("X-M3TAL-Client-Nonce", cNonce)
+	rPair.Header.Set("X-M3TAL-Proof", proof)
+
+	meshPairHandler(wPair, rPair)
+	if wPair.Code != http.StatusOK {
+		t.Fatalf("pair handler failed with %d: %s", wPair.Code, wPair.Body.String())
+	}
+
+	// Verify node is now in peers and persisted
+	peers := loadPeers()
+	if len(peers) != 1 {
+		t.Fatalf("expected 1 persisted peer, got %d", len(peers))
+	}
+	if peers[0].Name != "m3tal-Server" || peers[0].IP != "192.168.12.156:9321" {
+		t.Errorf("unexpected peer in peers: %+v", peers[0])
+	}
+	if peers[0].APIToken != "peer-offered-key-777" {
+		t.Errorf("expected token peer-offered-key-777, got %q", peers[0].APIToken)
+	}
+}
