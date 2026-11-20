@@ -1798,7 +1798,6 @@ func meshPairHandler(w http.ResponseWriter, r *http.Request) {
 		clientIP = r.RemoteAddr
 	}
 
-	matchedToken := ""
 	tokenOK := len(acceptedTokens) == 0
 	passOK := expectedPass == ""
 
@@ -1812,7 +1811,6 @@ func meshPairHandler(w http.ResponseWriter, r *http.Request) {
 			if subtle.ConstantTimeCompare([]byte(suppliedProof), []byte(pairProof)) == 1 ||
 				subtle.ConstantTimeCompare([]byte(suppliedProof), []byte(genProof)) == 1 {
 				tokenOK = true
-				matchedToken = tok
 				break
 			}
 		}
@@ -1878,10 +1876,9 @@ func meshPairHandler(w http.ResponseWriter, r *http.Request) {
 		peerRole = "server"
 	}
 
+	// The token that authenticated this request is *our* inbound key; it is
+	// not a credential the peer accepts, so never reuse it for polling back.
 	peerToken := pairReq.Token
-	if peerToken == "" {
-		peerToken = matchedToken
-	}
 
 	newNode := MeshNode{
 		ID:          stableNodeID(peerIP, peerHost),
@@ -2011,6 +2008,16 @@ func outboundIPFor(targetHost string) string {
 	return localAddr.IP.String()
 }
 
+// inboundReturnToken picks a credential this node's acceptedTokens() will
+// accept, so the reverse peer can poll us. Prefer the explicit pairing token;
+// otherwise fall back to this node's primary local Core API key.
+func inboundReturnToken(cfg meshConfig) string {
+	if t := strings.TrimSpace(cfg.PairingToken); t != "" {
+		return t
+	}
+	return resolveCoreAPIKey()
+}
+
 func dispatchBidirectionalPair(remoteAddress, token, password, pinnedFP string, passwordOnly bool, cfg meshConfig) error {
 	if pinnedFP == "" {
 		return fmt.Errorf("refusing reverse pairing without an authenticated peer fingerprint")
@@ -2066,7 +2073,7 @@ func dispatchBidirectionalPair(remoteAddress, token, password, pinnedFP string, 
 		Hostname:    myHost,
 		IP:          myAddress,
 		Role:        "workstation",
-		Token:       cfg.PairingToken,
+		Token:       inboundReturnToken(cfg),
 		Fingerprint: myFP,
 	}
 	body, err := json.Marshal(reqPayload)
