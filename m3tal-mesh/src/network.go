@@ -1019,6 +1019,8 @@ func pairAndPersistPeer(address, name, role, token, password string) (MeshNode, 
 	if role != "" {
 		node.Role = role
 	}
+	// Capture the negotiated credentials and authenticated fingerprint before overwriting.
+	negToken, negPassword, pinnedFP := node.APIToken, node.Password, node.Fingerprint
 	node.APIToken = token
 	node.Password = password
 	node.PasswordOnly = passwordOnly
@@ -1038,7 +1040,9 @@ func pairAndPersistPeer(address, name, role, token, password string) (MeshNode, 
 
 	// Bidirectional auto-registration: asynchronously request the remote peer to register this node
 	go func() {
-		_ = dispatchBidirectionalPair(address, token, password, cfg)
+		if err := dispatchBidirectionalPair(address, negToken, negPassword, pinnedFP, passwordOnly, cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "m3tal-mesh reverse pairing with %s: %v\n", address, err)
+		}
 	}()
 
 	return node, nil
@@ -1544,7 +1548,6 @@ func meshHealthHandler(w http.ResponseWriter, r *http.Request) {
 		"hostname":  hostname,
 		"version":   PluginVersion,
 		"status":    "online",
-		"telemetry": getLocalTelemetry(),
 	})
 	if err != nil {
 		http.Error(w, "could not encode health data", http.StatusInternalServerError)
@@ -1605,6 +1608,7 @@ func meshTelemetryHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	matchedToken := ""
+	challengeConsumed := false
 	if len(acceptedTokens) > 0 {
 		if suppliedProof == "" || nonce == "" || clientNonce == "" {
 			http.Error(w, "pairing token required", http.StatusUnauthorized)
@@ -1620,6 +1624,7 @@ func meshTelemetryHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid pairing challenge", http.StatusUnauthorized)
 			return
 		}
+		challengeConsumed = true
 
 		for _, tok := range acceptedTokens {
 			if subtle.ConstantTimeCompare([]byte(suppliedProof), []byte(requestProof(tok, nonce, clientNonce, fp))) == 1 {
@@ -1645,7 +1650,8 @@ func meshTelemetryHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		authed := false
 		if passProof := r.Header.Get("X-M3TAL-Password-Proof"); passProof != "" {
-			if nonce == "" || clientNonce == "" || !validMeshNonce(clientNonce) || !consumeMeshChallenge(nonce, clientIP) {
+			if nonce == "" || clientNonce == "" || !validMeshNonce(clientNonce) ||
+				(!challengeConsumed && !consumeMeshChallenge(nonce, clientIP)) {
 				meshPasswordFail(clientIP)
 				http.Error(w, "invalid pairing challenge", http.StatusUnauthorized)
 				return
@@ -1738,48 +1744,44 @@ func meshPairHandler(w http.ResponseWriter, r *http.Request) {
 		clientIP = r.RemoteAddr
 	}
 
-	authed := false
 	matchedToken := ""
+	tokenOK := len(acceptedTokens) == 0
+	passOK := expectedPass == ""
 
-	if len(acceptedTokens) > 0 && suppliedProof != "" && nonce != "" && clientNonce != "" {
-		if validMeshNonce(clientNonce) && consumeMeshChallenge(nonce, clientIP) {
-			for _, tok := range acceptedTokens {
-				pairProof := pairRequestProof(tok, nonce, clientNonce, fp)
-				genProof := requestProof(tok, nonce, clientNonce, fp)
-				if subtle.ConstantTimeCompare([]byte(suppliedProof), []byte(pairProof)) == 1 ||
-					subtle.ConstantTimeCompare([]byte(suppliedProof), []byte(genProof)) == 1 {
-					authed = true
-					matchedToken = tok
-					break
-				}
+	// Consume the single-use challenge exactly once for this request.
+	challengeOK := nonce != "" && clientNonce != "" && validMeshNonce(clientNonce) && consumeMeshChallenge(nonce, clientIP)
+
+	if !tokenOK && challengeOK && suppliedProof != "" {
+		for _, tok := range acceptedTokens {
+			pairProof := pairRequestProof(tok, nonce, clientNonce, fp)
+			genProof := requestProof(tok, nonce, clientNonce, fp)
+			if subtle.ConstantTimeCompare([]byte(suppliedProof), []byte(pairProof)) == 1 ||
+				subtle.ConstantTimeCompare([]byte(suppliedProof), []byte(genProof)) == 1 {
+				tokenOK = true
+				matchedToken = tok
+				break
 			}
 		}
 	}
 
-	if !authed && expectedPass != "" {
+	if !passOK {
 		if meshPasswordLocked(clientIP) {
 			http.Error(w, "too many failed authentication attempts", http.StatusTooManyRequests)
 			return
 		}
-		if passProof := r.Header.Get("X-M3TAL-Password-Proof"); passProof != "" {
-			if nonce != "" && clientNonce != "" && validMeshNonce(clientNonce) && consumeMeshChallenge(nonce, clientIP) {
-				expected := passwordRequestProof(expectedPass, nonce, clientNonce, fp)
-				if subtle.ConstantTimeCompare([]byte(passProof), []byte(expected)) == 1 {
-					authed = true
-					meshPasswordSuccess(clientIP)
-				}
-			}
-		} else if suppliedPass := r.Header.Get("X-M3TAL-Password"); suppliedPass != "" {
-			if subtle.ConstantTimeCompare([]byte(suppliedPass), []byte(expectedPass)) == 1 {
-				authed = true
-				meshPasswordSuccess(clientIP)
-			}
+		if passProof := r.Header.Get("X-M3TAL-Password-Proof"); passProof != "" && challengeOK {
+			expected := passwordRequestProof(expectedPass, nonce, clientNonce, fp)
+			passOK = subtle.ConstantTimeCompare([]byte(passProof), []byte(expected)) == 1
 		}
-		if !authed {
+		if passOK {
+			meshPasswordSuccess(clientIP)
+		} else {
 			meshPasswordFail(clientIP)
 		}
 	}
 
+	// Every configured credential must be satisfied independently.
+	authed := tokenOK && passOK
 	if authRequired && !authed {
 		http.Error(w, "invalid pairing credentials", http.StatusUnauthorized)
 		return
@@ -1946,28 +1948,27 @@ func outboundIPFor(targetHost string) string {
 	return localAddr.IP.String()
 }
 
-func dispatchBidirectionalPair(remoteAddress, token, password string, cfg meshConfig) error {
+func dispatchBidirectionalPair(remoteAddress, token, password, pinnedFP string, passwordOnly bool, cfg meshConfig) error {
+	if pinnedFP == "" {
+		return fmt.Errorf("refusing reverse pairing without an authenticated peer fingerprint")
+	}
 	endpoint, err := normalizeNodeAddress(remoteAddress, cfg.ListenPort)
 	if err != nil {
 		return err
 	}
-	// Fetch challenge from remote
+	// Pin every request to the fingerprint authenticated during initial pairing.
+	client := newPinnedHTTPClient(pinnedFP, 4*time.Second)
+	remoteFP := pinnedFP
 	challengeReq, err := http.NewRequest(http.MethodPost, "https://"+endpoint+"/api/v1/challenge", nil)
 	if err != nil {
 		return err
 	}
-	client := meshHTTPClient
 	challengeResp, err := client.Do(challengeReq)
 	if err != nil {
 		return err
 	}
 	defer challengeResp.Body.Close()
 
-	var remoteFP string
-	if challengeResp.TLS != nil && len(challengeResp.TLS.PeerCertificates) > 0 {
-		sum := sha256.Sum256(challengeResp.TLS.PeerCertificates[0].Raw)
-		remoteFP = hex.EncodeToString(sum[:])
-	}
 	if challengeResp.StatusCode != http.StatusOK {
 		return fmt.Errorf("remote node challenge error: HTTP %d", challengeResp.StatusCode)
 	}
@@ -1995,17 +1996,14 @@ func dispatchBidirectionalPair(remoteAddress, token, password string, cfg meshCo
 	myFP := meshCertFingerprint
 	meshCertFingerprintMu.RUnlock()
 
-	outboundToken := token
-	if outboundToken == "" {
-		outboundToken = cfg.PairingToken
-	}
-
+	// Only offer a return credential this node actually accepts inbound;
+	// never forward the remote peer's key back as a raw secret.
 	reqPayload := meshPairRequest{
 		Name:        myHost,
 		Hostname:    myHost,
 		IP:          myAddress,
 		Role:        "workstation",
-		Token:       outboundToken,
+		Token:       cfg.PairingToken,
 		Fingerprint: myFP,
 	}
 	body, err := json.Marshal(reqPayload)
@@ -2021,25 +2019,21 @@ func dispatchBidirectionalPair(remoteAddress, token, password string, cfg meshCo
 	req.Header.Set("X-M3TAL-Nonce", challenge.Nonce)
 	req.Header.Set("X-M3TAL-Client-Nonce", cNonce)
 
-	authTok := token
-	if authTok == "" {
-		authTok = cfg.PairingToken
+	if token != "" && !passwordOnly {
+		req.Header.Set("X-M3TAL-Proof", pairRequestProof(token, challenge.Nonce, cNonce, remoteFP))
 	}
-	if authTok != "" {
-		req.Header.Set("X-M3TAL-Proof", pairRequestProof(authTok, challenge.Nonce, cNonce, remoteFP))
-	} else if password != "" {
+	if password != "" {
 		req.Header.Set("X-M3TAL-Password-Proof", passwordRequestProof(password, challenge.Nonce, cNonce, remoteFP))
 	}
 
-	postClient := meshHTTPClient
-	if remoteFP != "" {
-		postClient = newPinnedHTTPClient(remoteFP, 4*time.Second)
-	}
-	pairResp, err := postClient.Do(req)
+	pairResp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
 	defer pairResp.Body.Close()
+	if pairResp.StatusCode != http.StatusOK {
+		return fmt.Errorf("remote node pair error: HTTP %d", pairResp.StatusCode)
+	}
 	return nil
 }
 
