@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.0] - 2026-11-20
+
+### 🚀 Changes & Improvements
+- **Merge branch 'main' into fix/security-audit-findings** (`265f15c`)
+- **chore(release): auto-bump m3tal-mesh-node version and update CHANGELOG [skip ci]** (`abe2d95`)
+- **feat(mesh): unify mesh and broadcaster with Core API key auth and bidirectional pairing** (`b55c9dc`)
+
+---
+
 ## [0.6.0] - 2026-11-19
 
 ### 🚀 Changes & Improvements

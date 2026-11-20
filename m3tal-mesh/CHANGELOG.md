@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.0] - 2026-11-20
+
+### 🚀 Changes & Improvements
+- **fix(mesh): offer a return credential the reverse peer can actually use** (`7a1495f`)
+- **fix(mesh): announce restart when broadcaster settings change** (`75fb46a`)
+- **fix(mesh): harden broadcaster auth and reverse pairing** (`46608a2`)
+- **Merge branch 'main' into fix/security-audit-findings** (`265f15c`)
+- **feat(mesh): unify mesh and broadcaster with Core API key auth and bidirectional pairing** (`b55c9dc`)
+
+---
+
 ## [0.6.0] - 2026-11-20
 
 ### 🚀 Changes & Improvements
