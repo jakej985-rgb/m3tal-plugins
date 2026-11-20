@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.6.0] - 2026-11-19
+
+### 🚀 Changes & Improvements
+- **feat(mesh): unify mesh and broadcaster with Core API key auth and bidirectional pairing** (`b55c9dc`)
+- **fix(mesh): replace raw password header with HMAC challenge proofs** (`4d3f60c`)
+
+---
+
 ## [0.5.2] - 2026-11-10
 
 ### 🚀 Changes & Improvements
