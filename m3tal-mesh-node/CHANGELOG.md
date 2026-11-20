@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.6.0] - 2026-11-19
+
+### 🚀 Changes & Improvements
+- **feat(mesh): unify mesh and broadcaster with Core API key auth and bidirectional pairing** (`b55c9dc`)
 ## [0.5.3] - 2026-11-13
 
 ### 🚀 Changes & Improvements

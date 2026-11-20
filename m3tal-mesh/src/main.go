@@ -21,7 +21,7 @@ import (
 const (
 	CanonicalProcessName = "m3tal-mesh"
 	PluginName           = "mesh"
-	PluginVersion        = "0.1.4"
+	PluginVersion        = "0.6.0"
 )
 
 // RPCRequest represents standard JSON-RPC 2.0 request.
@@ -221,12 +221,64 @@ func getLocalNode() MeshNode {
 	}
 }
 
+type NodeTelemetry struct {
+	Hostname       string  `json:"hostname"`
+	Cores          int     `json:"cores"`
+	Load1m         float64 `json:"load_1m"`
+	Load5m         float64 `json:"load_5m"`
+	Load15m        float64 `json:"load_15m"`
+	RAMUsedGB      float64 `json:"ram_used_gb"`
+	RAMTotalGB     float64 `json:"ram_total_gb"`
+	StorageUsedGB  float64 `json:"storage_used_gb"`
+	StorageTotalGB float64 `json:"storage_total_gb"`
+	OS             string  `json:"os"`
+	Arch           string  `json:"arch"`
+}
+
+func getLocalTelemetry() NodeTelemetry {
+	hostname, err := os.Hostname()
+	if err != nil || hostname == "" {
+		hostname = "m3tal-mesh"
+	}
+	cores := runtime.NumCPU()
+
+	var load1, load5, load15 float64
+	if data, err := os.ReadFile("/proc/loadavg"); err == nil {
+		parts := strings.Fields(string(data))
+		if len(parts) >= 3 {
+			load1, _ = strconv.ParseFloat(parts[0], 64)
+			load5, _ = strconv.ParseFloat(parts[1], 64)
+			load15, _ = strconv.ParseFloat(parts[2], 64)
+		}
+	}
+
+	ramUsed, ramTotal := getRAM()
+	diskUsed, diskTotal := getStorage()
+
+	return NodeTelemetry{
+		Hostname:       hostname,
+		Cores:          cores,
+		Load1m:         load1,
+		Load5m:         load5,
+		Load15m:        load15,
+		RAMUsedGB:      ramUsed,
+		RAMTotalGB:     ramTotal,
+		StorageUsedGB:  diskUsed,
+		StorageTotalGB: diskTotal,
+		OS:             runtime.GOOS,
+		Arch:           runtime.GOARCH,
+	}
+}
+
 func getAllNodes() []MeshNode {
-	if refreshMu.TryLock() {
-		go func() {
-			defer refreshMu.Unlock()
-			refreshRemotePeers()
-		}()
+	cfg := loadMeshConfig()
+	if !cfg.IsBroadcasterOnly() {
+		if refreshMu.TryLock() {
+			go func() {
+				defer refreshMu.Unlock()
+				refreshRemotePeers()
+			}()
+		}
 	}
 	nodeMutex.RLock()
 	defer nodeMutex.RUnlock()
@@ -241,10 +293,15 @@ func main() {
 	setProcessName(CanonicalProcessName)
 	remoteNodes = loadPeers()
 
+	if err := startMeshNetworkService(); err != nil {
+		fmt.Fprintf(os.Stderr, "m3tal-mesh network service: %v\n", err)
+	}
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigChan
+		shutdownMeshNetwork()
 		os.Exit(0)
 	}()
 
@@ -275,6 +332,7 @@ func handleRequest(req *RPCRequest) {
 		handleAction(req)
 	case "m3tal.shutdown":
 		sendResponse(req.ID, map[string]interface{}{"status": "ok"})
+		shutdownMeshNetwork()
 		os.Exit(0)
 	default:
 		sendError(req.ID, -32601, "Method not found", fmt.Sprintf("Unsupported method: %s", req.Method))
@@ -328,6 +386,18 @@ func handleInit(req *RPCRequest) {
 			{"id": "test_node", "label": "Test Node Connection", "description": "Test connectivity and credentials for a remote node", "confirm": false},
 			{"id": "update_node", "label": "Update Node", "description": "Update credentials or metadata for a connected node", "confirm": false},
 			{"id": "get_peers", "label": "Get Saved Peers", "description": "Fetch persisted peer connection entries", "confirm": false},
+			{
+				"id":          "get_telemetry",
+				"label":       "Get Telemetry",
+				"description": "Fetch real-time hardware telemetry payload from this node",
+				"confirm":     false,
+			},
+			{
+				"id":          "beacon_ping",
+				"label":       "Beacon Ping",
+				"description": "Respond to mesh discovery cluster beacon",
+				"confirm":     false,
+			},
 		},
 	}
 	sendResponse(req.ID, result)
@@ -788,6 +858,7 @@ func handleAction(req *RPCRequest) {
 		})
 	case "set_settings":
 		cfg := loadMeshConfig()
+		prevPort, prevMDNS := cfg.ListenPort, cfg.IsMDNSEnabled()
 		if value, ok := raw.Args["pairing_token"].(string); ok && strings.TrimSpace(value) != "" {
 			cfg.PairingToken = strings.TrimSpace(value)
 		} else if clear, ok := raw.Args["clear_pairing_token"].(bool); ok && clear {
@@ -809,20 +880,34 @@ func handleAction(req *RPCRequest) {
 		if value, ok := raw.Args["listen_port"].(float64); ok {
 			cfg.ListenPort = int(value)
 		}
+		if value, ok := raw.Args["broadcast_mdns"].(bool); ok {
+			cfg.BroadcastMDNS = &value
+		}
+		if value, ok := raw.Args["broadcaster_only_mode"].(bool); ok {
+			cfg.BroadcasterOnly = &value
+		}
 		if err := saveMeshConfig(cfg); err != nil {
 			sendError(req.ID, -32010, "Settings save failed", err.Error())
 			return
 		}
 		usingCoreKey := resolveCoreAPIKey() != ""
+		restartRequired := cfg.ListenPort != prevPort || cfg.IsMDNSEnabled() != prevMDNS
+		msg := "Mesh settings saved"
+		if restartRequired {
+			msg = "Mesh settings saved. Restart the plugin to apply port or mDNS broadcast changes."
+		}
 		sendResponse(req.ID, map[string]interface{}{
 			"success":               true,
-			"message":               "Mesh settings saved",
+			"message":               msg,
+			"restart_required":      restartRequired,
 			"has_password":          cfg.DefaultPassword != "",
 			"has_pairing_token":     cfg.PairingToken != "",
 			"using_core_key":        usingCoreKey,
 			"require_pairing_token": cfg.IsPairingTokenRequired(),
 			"discovery_enabled":     cfg.IsDiscoveryEnabled(),
 			"listen_port":           cfg.ListenPort,
+			"broadcast_mdns":        cfg.IsMDNSEnabled(),
+			"broadcaster_only_mode": cfg.IsBroadcasterOnly(),
 		})
 	case "get_fleet":
 		sendResponse(req.ID, map[string]interface{}{
@@ -863,6 +948,24 @@ func handleAction(req *RPCRequest) {
 			"require_pairing_token": cfg.IsPairingTokenRequired(),
 			"discovery_enabled":     cfg.IsDiscoveryEnabled(),
 			"listen_port":           cfg.ListenPort,
+			"broadcast_mdns":        cfg.IsMDNSEnabled(),
+			"broadcaster_only_mode": cfg.IsBroadcasterOnly(),
+		})
+
+	case "get_telemetry":
+		t := getLocalTelemetry()
+		sendResponse(req.ID, map[string]interface{}{
+			"success":   true,
+			"telemetry": t,
+		})
+
+	case "beacon_ping":
+		hostname, _ := os.Hostname()
+		sendResponse(req.ID, map[string]interface{}{
+			"success":  true,
+			"hostname": hostname,
+			"status":   "online",
+			"version":  PluginVersion,
 		})
 
 	default:

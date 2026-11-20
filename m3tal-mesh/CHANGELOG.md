@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.6.0] - 2026-11-20
+
+### 🚀 Changes & Improvements
+- **feat(mesh): unified mesh aggregator and telemetry broadcaster into single standalone plugin**
+  - Integrated bidirectional auto-pairing via `POST /api/v1/pair`: pairing Machine A to Machine B automatically registers Machine A in Machine B's fleet catalog.
+  - Native integration with M3TAL Core API Key Manager (`/var/lib/m3tal/state.db`, `/etc/m3tal/api_keys.json`, `~/.config/m3tal/api_keys.json`, `M3TAL_API_KEY`): validates inbound requests against local keys and queries remote keys for outbound connections.
+  - Fixed headless systemd path resolution (`$HOME` undefined) via cascading fallback hierarchy across user and system directories.
+  - Added built-in TLS broadcaster (`/health`, `/api/v1/challenge`, `/api/v1/telemetry`, `/api/v1/pair`) and mDNS advertiser.
+  - Added `get_telemetry` and `beacon_ping` actions for direct RPC telemetry collection.
+  - Added settings for `broadcast_mdns` and `broadcaster_only_mode`.
 ## [0.5.2] - 2026-11-13
 
 ### 🚀 Changes & Improvements

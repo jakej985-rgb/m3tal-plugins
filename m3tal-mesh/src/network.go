@@ -2,16 +2,23 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"net/url"
@@ -23,6 +30,7 @@ import (
 	"time"
 
 	"github.com/grandcat/zeroconf"
+	_ "modernc.org/sqlite"
 )
 
 var (
@@ -39,6 +47,8 @@ type meshConfig struct {
 	RequirePairingToken *bool  `json:"require_pairing_token,omitempty"`
 	ListenPort          int    `json:"listen_port"`
 	DiscoveryEnabled    *bool  `json:"discovery_enabled,omitempty"`
+	BroadcastMDNS       *bool  `json:"broadcast_mdns,omitempty"`
+	BroadcasterOnly     *bool  `json:"broadcaster_only_mode,omitempty"`
 }
 
 func (c meshConfig) IsPairingTokenRequired() bool {
@@ -53,6 +63,20 @@ func (c meshConfig) IsDiscoveryEnabled() bool {
 		return true
 	}
 	return *c.DiscoveryEnabled
+}
+
+func (c meshConfig) IsMDNSEnabled() bool {
+	if c.BroadcastMDNS == nil {
+		return true
+	}
+	return *c.BroadcastMDNS
+}
+
+func (c meshConfig) IsBroadcasterOnly() bool {
+	if c.BroadcasterOnly == nil {
+		return false
+	}
+	return *c.BroadcasterOnly
 }
 
 type remoteTelemetry struct {
@@ -108,12 +132,52 @@ func newPinnedHTTPClient(expectedFP string, timeout time.Duration) *http.Client 
 	}
 }
 
-func meshConfigPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return ""
+func meshConfigBaseDir() string {
+	// 1. Explicit configuration directory override
+	if dir := os.Getenv("M3TAL_CONFIG_DIR"); dir != "" {
+		return filepath.Join(dir, "plugins", "mesh")
 	}
-	return filepath.Join(home, ".config", "m3tal", "plugins", "mesh", "config.json")
+	// 2. XDG_CONFIG_HOME override
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		return filepath.Join(xdg, "m3tal", "plugins", "mesh")
+	}
+	// 3. User home directory if valid and not system root
+	if home, err := os.UserHomeDir(); err == nil && home != "" && home != "/" && home != "/root" {
+		return filepath.Join(home, ".config", "m3tal", "plugins", "mesh")
+	}
+	// 4. Existing local user configuration path
+	if stat, err := os.Stat("/home/m3tal/.config/m3tal/plugins/mesh"); err == nil && stat.IsDir() {
+		return "/home/m3tal/.config/m3tal/plugins/mesh"
+	}
+	if stat, err := os.Stat("/home/m3tal/.config/m3tal"); err == nil && stat.IsDir() {
+		return "/home/m3tal/.config/m3tal/plugins/mesh"
+	}
+	// 5. Preserve legacy root-home configuration from earlier releases
+	if home, err := os.UserHomeDir(); err == nil && home == "/root" {
+		legacy := filepath.Join(home, ".config", "m3tal", "plugins", "mesh")
+		for _, f := range []string{"config.json", "peers.json"} {
+			if _, err := os.Stat(filepath.Join(legacy, f)); err == nil {
+				return legacy
+			}
+		}
+	}
+	// 6. System wide /etc/m3tal configuration directory
+	if stat, err := os.Stat("/etc/m3tal/plugins/m3tal-mesh"); err == nil && stat.IsDir() {
+		return "/etc/m3tal/plugins/m3tal-mesh"
+	}
+	if stat, err := os.Stat("/etc/m3tal"); err == nil && stat.IsDir() {
+		return "/etc/m3tal/plugins/m3tal-mesh"
+	}
+	// 6. User home even if /root
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, ".config", "m3tal", "plugins", "mesh")
+	}
+	return "/etc/m3tal/plugins/m3tal-mesh"
+}
+
+func meshConfigPath() string {
+	base := meshConfigBaseDir()
+	return filepath.Join(base, "config.json")
 }
 
 func saveMeshConfig(cfg meshConfig) error {
@@ -124,7 +188,7 @@ func saveMeshConfig(cfg meshConfig) error {
 	if cfg.ListenPort < 1 || cfg.ListenPort > 65535 {
 		return fmt.Errorf("default node port must be between 1 and 65535")
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
 	// Do not persist dynamically inherited Core API key into local plugin config file
@@ -143,7 +207,118 @@ func saveMeshConfig(cfg meshConfig) error {
 	return os.Rename(tmp, path)
 }
 
-// resolveCoreAPIKey retrieves the central API key configured in M3TAL Core.
+func coreAPIKeyAllowsMesh(perms []string) bool {
+	for _, p := range perms {
+		if p == "*" || p == "mesh:access" || strings.HasPrefix(p, "mesh") {
+			return true
+		}
+	}
+	return len(perms) == 0
+}
+
+func queryStateDBKeys() (primary string, localKeys []string, remoteKeys []string) {
+	var candidates []string
+	if dbEnv := os.Getenv("M3TAL_STATE_DB"); dbEnv != "" {
+		candidates = append(candidates, dbEnv)
+	}
+	home, _ := os.UserHomeDir()
+	isCustomHome := home != "" && home != "/home/m3tal" && home != "/root"
+	if isCustomHome {
+		candidates = append(candidates,
+			filepath.Join(home, ".config", "m3tal", "state.db"),
+			filepath.Join(home, "state.db"),
+			filepath.Join(home, "data", "state.db"),
+		)
+	} else {
+		candidates = append(candidates,
+			"/var/lib/m3tal/state.db",
+			"/home/m3tal/apps/M3tal-core/data/state.db",
+			"./data/state.db",
+		)
+		if home != "" {
+			candidates = append(candidates,
+				filepath.Join(home, ".config", "m3tal", "state.db"),
+				filepath.Join(home, "data", "state.db"),
+			)
+		}
+	}
+
+	var dbPath string
+	for _, p := range candidates {
+		if stat, err := os.Stat(p); err == nil && !stat.IsDir() {
+			dbPath = p
+			break
+		}
+	}
+	if dbPath == "" {
+		return "", nil, nil
+	}
+
+	db, err := sql.Open("sqlite", fmt.Sprintf("file:%s?mode=ro", dbPath))
+	if err != nil {
+		return "", nil, nil
+	}
+	defer db.Close()
+
+	rows, err := db.Query("SELECT token, permissions, direction FROM api_keys")
+	if err != nil {
+		return "", nil, nil
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var tok, permsRaw, dir string
+		if err := rows.Scan(&tok, &permsRaw, &dir); err != nil {
+			continue
+		}
+		tok = strings.TrimSpace(tok)
+		if tok == "" {
+			continue
+		}
+		var perms []string
+		_ = json.Unmarshal([]byte(permsRaw), &perms)
+
+		if dir == "remote" {
+			remoteKeys = append(remoteKeys, tok)
+		} else {
+			if coreAPIKeyAllowsMesh(perms) {
+				if primary == "" {
+					primary = tok
+				}
+				localKeys = append(localKeys, tok)
+			}
+		}
+	}
+	return primary, localKeys, remoteKeys
+}
+
+func readAPIKeysFile(path string) (primary string, localKeys []string, remoteKeys []string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", nil, nil
+	}
+	var parsed struct {
+		PrimaryToken string            `json:"primary_token"`
+		Keys         []coreAPIKeyEntry `json:"keys"`
+	}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return "", nil, nil
+	}
+	primary = strings.TrimSpace(parsed.PrimaryToken)
+	for _, k := range parsed.Keys {
+		tok := strings.TrimSpace(k.Token)
+		if tok == "" {
+			continue
+		}
+		if k.Direction == "remote" {
+			remoteKeys = append(remoteKeys, tok)
+		} else if coreAPIKeyAllowsMesh(k.Permissions) {
+			localKeys = append(localKeys, tok)
+		}
+	}
+	return primary, localKeys, remoteKeys
+}
+
 func resolveCoreAPIKey() string {
 	if k := os.Getenv("M3TAL_API_KEY"); k != "" {
 		return k
@@ -154,31 +329,53 @@ func resolveCoreAPIKey() string {
 	if k := os.Getenv("API_TOKEN"); k != "" {
 		return k
 	}
-	home, err := os.UserHomeDir()
-	if err == nil && home != "" {
-		// 1. Check Core's api_keys.json (managed by Core API Key Manager)
-		keyFile := filepath.Join(home, ".config", "m3tal", "api_keys.json")
-		if data, err := os.ReadFile(keyFile); err == nil {
-			var parsed struct {
-				PrimaryToken string `json:"primary_token"`
-			}
-			if err := json.Unmarshal(data, &parsed); err == nil && parsed.PrimaryToken != "" {
-				return parsed.PrimaryToken
-			}
+
+	home, _ := os.UserHomeDir()
+	isCustomHome := home != "" && home != "/home/m3tal" && home != "/root"
+
+	if dbPrimary, _, _ := queryStateDBKeys(); dbPrimary != "" {
+		return dbPrimary
+	}
+
+	var keyFiles []string
+	if isCustomHome {
+		keyFiles = []string{
+			filepath.Join(home, ".config", "m3tal", "api_keys.json"),
 		}
-		// 2. Check Core's config.json
-		coreCfgFile := filepath.Join(home, ".config", "m3tal", "config.json")
-		if data, err := os.ReadFile(coreCfgFile); err == nil {
-			var parsed struct {
-				APIToken string `json:"api_token"`
-			}
-			if err := json.Unmarshal(data, &parsed); err == nil && parsed.APIToken != "" {
-				return parsed.APIToken
-			}
+	} else {
+		if home != "" {
+			keyFiles = append(keyFiles, filepath.Join(home, ".config", "m3tal", "api_keys.json"))
 		}
-		// 3. Check legacy ~/.m3tal/config
-		legacyCfg := filepath.Join(home, ".m3tal", "config")
-		if data, err := os.ReadFile(legacyCfg); err == nil {
+		keyFiles = append(keyFiles,
+			"/home/m3tal/.config/m3tal/api_keys.json",
+			"/etc/m3tal/api_keys.json",
+		)
+	}
+
+	for _, kf := range keyFiles {
+		if primary, _, _ := readAPIKeysFile(kf); primary != "" {
+			return primary
+		}
+	}
+
+	var cfgFiles []string
+	if isCustomHome {
+		cfgFiles = []string{
+			filepath.Join(home, ".config", "m3tal", "config.json"),
+			filepath.Join(home, ".m3tal", "config"),
+		}
+	} else {
+		if home != "" {
+			cfgFiles = append(cfgFiles, filepath.Join(home, ".config", "m3tal", "config.json"))
+		}
+		cfgFiles = append(cfgFiles,
+			"/home/m3tal/.config/m3tal/config.json",
+			"/etc/m3tal/config.json",
+			"/etc/m3tal/core_settings.json",
+		)
+	}
+	for _, cf := range cfgFiles {
+		if data, err := os.ReadFile(cf); err == nil {
 			var parsed struct {
 				APIToken string `json:"api_token"`
 			}
@@ -196,37 +393,117 @@ type coreAPIKeyEntry struct {
 	Direction   string   `json:"direction"`
 }
 
-// resolveRemoteAPIKeys returns the remote-direction credentials registered in
-// Core's API Key Manager — tokens this PC uses to authenticate to other
-// machines' or apps' APIs (e.g. mesh peers). They form the outbound
-// credential pool tried alongside the configured pairing token.
-func resolveRemoteAPIKeys() []string {
+func resolveCoreAPIKeys() []string {
 	seen := make(map[string]bool)
 	var out []string
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return out
-	}
-	keyFile := filepath.Join(home, ".config", "m3tal", "api_keys.json")
-	data, err := os.ReadFile(keyFile)
-	if err != nil {
-		return out
-	}
-	var parsed struct {
-		Keys []coreAPIKeyEntry `json:"keys"`
-	}
-	if err := json.Unmarshal(data, &parsed); err != nil {
-		return out
-	}
-	for _, k := range parsed.Keys {
-		if k.Direction != "remote" {
-			continue
-		}
-		t := strings.TrimSpace(k.Token)
+	add := func(t string) {
+		t = strings.TrimSpace(t)
 		if t != "" && !seen[t] {
 			seen[t] = true
 			out = append(out, t)
 		}
+	}
+
+	if k := os.Getenv("M3TAL_API_KEY"); k != "" {
+		add(k)
+	}
+	if k := os.Getenv("M3TAL_API_TOKEN"); k != "" {
+		add(k)
+	}
+	if k := os.Getenv("API_TOKEN"); k != "" {
+		add(k)
+	}
+
+	primary, locals, _ := queryStateDBKeys()
+	add(primary)
+	for _, l := range locals {
+		add(l)
+	}
+
+	home, _ := os.UserHomeDir()
+	isCustomHome := home != "" && home != "/home/m3tal" && home != "/root"
+
+	var keyFiles []string
+	if isCustomHome {
+		keyFiles = []string{
+			filepath.Join(home, ".config", "m3tal", "api_keys.json"),
+		}
+	} else {
+		if home != "" {
+			keyFiles = append(keyFiles, filepath.Join(home, ".config", "m3tal", "api_keys.json"))
+		}
+		keyFiles = append(keyFiles,
+			"/home/m3tal/.config/m3tal/api_keys.json",
+			"/etc/m3tal/api_keys.json",
+		)
+	}
+
+	for _, kf := range keyFiles {
+		pFile, lFile, _ := readAPIKeysFile(kf)
+		add(pFile)
+		for _, l := range lFile {
+			add(l)
+		}
+	}
+	return out
+}
+
+func resolveRemoteAPIKeys() []string {
+	seen := make(map[string]bool)
+	var out []string
+	add := func(t string) {
+		t = strings.TrimSpace(t)
+		if t != "" && !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+
+	_, _, remotes := queryStateDBKeys()
+	for _, r := range remotes {
+		add(r)
+	}
+
+	home, _ := os.UserHomeDir()
+	isCustomHome := home != "" && home != "/home/m3tal" && home != "/root"
+
+	var keyFiles []string
+	if isCustomHome {
+		keyFiles = []string{
+			filepath.Join(home, ".config", "m3tal", "api_keys.json"),
+		}
+	} else {
+		if home != "" {
+			keyFiles = append(keyFiles, filepath.Join(home, ".config", "m3tal", "api_keys.json"))
+		}
+		keyFiles = append(keyFiles,
+			"/home/m3tal/.config/m3tal/api_keys.json",
+			"/etc/m3tal/api_keys.json",
+		)
+	}
+
+	for _, kf := range keyFiles {
+		_, _, rFile := readAPIKeysFile(kf)
+		for _, r := range rFile {
+			add(r)
+		}
+	}
+	return out
+}
+
+func (c meshConfig) acceptedTokens() []string {
+	seen := make(map[string]bool)
+	var out []string
+	add := func(t string) {
+		t = strings.TrimSpace(t)
+		if t != "" && !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	add(c.PairingToken)
+	for _, t := range resolveCoreAPIKeys() {
+		add(t)
 	}
 	return out
 }
@@ -254,11 +531,26 @@ func loadMeshConfig() meshConfig {
 }
 
 func peersPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return ""
+	home, _ := os.UserHomeDir()
+	isCustomHome := home != "" && home != "/home/m3tal" && home != "/root"
+	base := meshConfigBaseDir()
+	primary := filepath.Join(base, "peers.json")
+	if isCustomHome {
+		return primary
 	}
-	return filepath.Join(home, ".config", "m3tal", "plugins", "mesh", "peers.json")
+	if _, err := os.Stat(primary); err == nil {
+		return primary
+	}
+	candidates := []string{
+		"/home/m3tal/.config/m3tal/plugins/mesh/peers.json",
+		"/etc/m3tal/plugins/m3tal-mesh/peers.json",
+	}
+	for _, cand := range candidates {
+		if _, err := os.Stat(cand); err == nil {
+			return cand
+		}
+	}
+	return primary
 }
 
 type peerDiskRecord struct {
@@ -313,7 +605,7 @@ func savePeers(peers []MeshNode) error {
 	if path == "" {
 		return fmt.Errorf("cannot locate the user configuration directory")
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
 	records := make([]peerDiskRecord, len(peers))
@@ -737,6 +1029,8 @@ func pairAndPersistPeer(address, name, role, token, password string) (MeshNode, 
 	if role != "" {
 		node.Role = role
 	}
+	// Capture the negotiated credentials and authenticated fingerprint before overwriting.
+	negToken, negPassword, pinnedFP := node.APIToken, node.Password, node.Fingerprint
 	node.APIToken = token
 	node.Password = password
 	node.PasswordOnly = passwordOnly
@@ -753,6 +1047,14 @@ func pairAndPersistPeer(address, name, role, token, password string) (MeshNode, 
 			return MeshNode{}, fmt.Errorf("could not save pairing token: %w", err)
 		}
 	}
+
+	// Bidirectional auto-registration: asynchronously request the remote peer to register this node
+	go func() {
+		if err := dispatchBidirectionalPair(address, negToken, negPassword, pinnedFP, passwordOnly, cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "m3tal-mesh reverse pairing with %s: %v\n", address, err)
+		}
+	}()
+
 	return node, nil
 }
 
@@ -1075,3 +1377,733 @@ func refreshRemotePeers() {
 	}
 	wg.Wait()
 }
+
+var (
+	meshShutdownOnce      sync.Once
+	meshServer            *http.Server
+	meshMDNSServer        *zeroconf.Server
+	meshServerMu          sync.Mutex
+	meshChallengeMu       sync.Mutex
+	meshChallenges        = make(map[string]meshChallengeRecord)
+	meshCertFingerprintMu sync.RWMutex
+	meshCertFingerprint   string
+)
+
+type meshChallengeRecord struct {
+	expires time.Time
+	client  string
+}
+
+func issueMeshChallenge(client string) (string, error) {
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	nonce := hex.EncodeToString(bytes)
+	now := time.Now()
+	meshChallengeMu.Lock()
+	defer meshChallengeMu.Unlock()
+	var clientCount int
+	var oldestClientNonce string
+	var oldestClientExpiry time.Time
+	var oldestNonce string
+	var oldestExpiry time.Time
+	for known, challenge := range meshChallenges {
+		if now.After(challenge.expires) {
+			delete(meshChallenges, known)
+			continue
+		}
+		if oldestNonce == "" || challenge.expires.Before(oldestExpiry) {
+			oldestNonce, oldestExpiry = known, challenge.expires
+		}
+		if challenge.client == client {
+			clientCount++
+			if oldestClientNonce == "" || challenge.expires.Before(oldestClientExpiry) {
+				oldestClientNonce, oldestClientExpiry = known, challenge.expires
+			}
+		}
+	}
+	if clientCount >= 16 && oldestClientNonce != "" {
+		delete(meshChallenges, oldestClientNonce)
+	}
+	if len(meshChallenges) >= 4096 && oldestNonce != "" {
+		delete(meshChallenges, oldestNonce)
+	}
+	meshChallenges[nonce] = meshChallengeRecord{expires: now.Add(30 * time.Second), client: client}
+	return nonce, nil
+}
+
+func consumeMeshChallenge(nonce string, client ...string) bool {
+	if !validMeshNonce(nonce) {
+		return false
+	}
+	meshChallengeMu.Lock()
+	challenge, ok := meshChallenges[nonce]
+	if ok {
+		delete(meshChallenges, nonce)
+	}
+	meshChallengeMu.Unlock()
+	if !ok || time.Now().After(challenge.expires) {
+		return false
+	}
+	if len(client) > 0 && client[0] != "" && challenge.client != "" && challenge.client != client[0] {
+		return false
+	}
+	return true
+}
+
+func pairRequestProof(token, nonce, clientNonce string, certFingerprint ...string) string {
+	mac := hmac.New(sha256.New, []byte(token))
+	_, _ = io.WriteString(mac, "POST\n/api/v1/pair\n"+nonce+"\n"+clientNonce)
+	if len(certFingerprint) > 0 && certFingerprint[0] != "" {
+		_, _ = io.WriteString(mac, "\n"+certFingerprint[0])
+	}
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+const (
+	meshPassMaxFails   = 5
+	meshPassLockout    = 60 * time.Second
+	meshPassTrackerMax = 4096
+)
+
+type meshPassAttempt struct {
+	fails      int
+	lockedTill time.Time
+}
+
+var (
+	meshPassMu    sync.Mutex
+	meshPassFails = make(map[string]*meshPassAttempt)
+)
+
+func meshPasswordLocked(client string) bool {
+	meshPassMu.Lock()
+	defer meshPassMu.Unlock()
+	a, ok := meshPassFails[client]
+	return ok && time.Now().Before(a.lockedTill)
+}
+
+func meshPasswordFail(client string) {
+	meshPassMu.Lock()
+	defer meshPassMu.Unlock()
+	if len(meshPassFails) >= meshPassTrackerMax {
+		now := time.Now()
+		for ip, a := range meshPassFails {
+			if now.After(a.lockedTill) && a.fails < meshPassMaxFails {
+				delete(meshPassFails, ip)
+			}
+		}
+	}
+	a := meshPassFails[client]
+	if a == nil {
+		a = &meshPassAttempt{}
+		meshPassFails[client] = a
+	}
+	a.fails++
+	if a.fails >= meshPassMaxFails {
+		a.lockedTill = time.Now().Add(meshPassLockout)
+	}
+}
+
+func meshPasswordSuccess(client string) {
+	meshPassMu.Lock()
+	defer meshPassMu.Unlock()
+	delete(meshPassFails, client)
+}
+
+func setMeshFingerprint(der []byte) {
+	sum := sha256.Sum256(der)
+	meshCertFingerprintMu.Lock()
+	meshCertFingerprint = hex.EncodeToString(sum[:])
+	meshCertFingerprintMu.Unlock()
+}
+
+// loadOrCreateMeshCertificate keeps a stable TLS identity across restarts so
+// peers' pinned fingerprints stay valid. Rotation requires re-pairing.
+func loadOrCreateMeshCertificate() (tls.Certificate, error) {
+	dir := meshConfigBaseDir()
+	certPath := filepath.Join(dir, "tls_cert.pem")
+	keyPath := filepath.Join(dir, "tls_key.pem")
+	if cert, err := tls.LoadX509KeyPair(certPath, keyPath); err == nil && len(cert.Certificate) > 0 {
+		if leaf, err := x509.ParseCertificate(cert.Certificate[0]); err == nil && time.Now().Before(leaf.NotAfter) {
+			setMeshFingerprint(cert.Certificate[0])
+			return cert, nil
+		}
+	}
+	cert, err := createMeshCertificate()
+	if err != nil {
+		return cert, err
+	}
+	ecKey, ok := cert.PrivateKey.(*ecdsa.PrivateKey)
+	if !ok {
+		return cert, nil
+	}
+	keyDER, err := x509.MarshalECPrivateKey(ecKey)
+	if err != nil {
+		return cert, nil
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "m3tal-mesh: cannot persist TLS identity: %v\n", err)
+		return cert, nil
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]})
+	if err := os.WriteFile(keyPath, keyPEM, 0600); err != nil {
+		fmt.Fprintf(os.Stderr, "m3tal-mesh: cannot persist TLS key: %v\n", err)
+		return cert, nil
+	}
+	if err := os.WriteFile(certPath, certPEM, 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "m3tal-mesh: cannot persist TLS cert: %v\n", err)
+	}
+	return cert, nil
+}
+
+func createMeshCertificate() (tls.Certificate, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	hostname, _ := os.Hostname()
+	if hostname == "" {
+		hostname = "m3tal-mesh"
+	}
+	now := time.Now()
+	template := x509.Certificate{
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: hostname},
+		DNSNames:              []string{hostname},
+		NotBefore:             now.Add(-time.Minute),
+		NotAfter:              now.Add(365 * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	setMeshFingerprint(der)
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, nil
+}
+
+func meshHealthHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	hostname, _ := os.Hostname()
+	body, err := json.Marshal(map[string]any{
+		"name":      hostname,
+		"hostname":  hostname,
+		"version":   PluginVersion,
+		"status":    "online",
+	})
+	if err != nil {
+		http.Error(w, "could not encode health data", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(body)
+}
+
+func meshChallengeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	clientIP, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		clientIP = r.RemoteAddr
+	}
+	nonce, err := issueMeshChallenge(clientIP)
+	if err != nil {
+		http.Error(w, "could not create challenge", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	resp := map[string]string{"nonce": nonce}
+	meshCertFingerprintMu.RLock()
+	fp := meshCertFingerprint
+	meshCertFingerprintMu.RUnlock()
+	if fp != "" {
+		resp["fingerprint"] = fp
+	}
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func meshTelemetryHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	current := loadMeshConfig()
+	acceptedTokens := current.acceptedTokens()
+	expectedPass := current.DefaultPassword
+	authRequired := current.IsPairingTokenRequired()
+
+	if authRequired && len(acceptedTokens) == 0 && expectedPass == "" {
+		http.Error(w, "authentication is required but neither API token nor password is configured on this node", http.StatusServiceUnavailable)
+		return
+	}
+
+	suppliedProof := r.Header.Get("X-M3TAL-Proof")
+	nonce := r.Header.Get("X-M3TAL-Nonce")
+	clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
+	var fp string
+	if r.TLS != nil {
+		meshCertFingerprintMu.RLock()
+		fp = meshCertFingerprint
+		meshCertFingerprintMu.RUnlock()
+	}
+
+	matchedToken := ""
+	challengeConsumed := false
+	if len(acceptedTokens) > 0 {
+		if suppliedProof == "" || nonce == "" || clientNonce == "" {
+			http.Error(w, "pairing token required", http.StatusUnauthorized)
+			return
+		}
+
+		clientIP, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			clientIP = r.RemoteAddr
+		}
+
+		if !validMeshNonce(clientNonce) || !consumeMeshChallenge(nonce, clientIP) {
+			http.Error(w, "invalid pairing challenge", http.StatusUnauthorized)
+			return
+		}
+		challengeConsumed = true
+
+		for _, tok := range acceptedTokens {
+			if subtle.ConstantTimeCompare([]byte(suppliedProof), []byte(requestProof(tok, nonce, clientNonce, fp))) == 1 {
+				matchedToken = tok
+				break
+			}
+		}
+		if matchedToken == "" {
+			http.Error(w, "invalid pairing token", http.StatusUnauthorized)
+			return
+		}
+	}
+
+	passwordProofAuthed := false
+	if expectedPass != "" {
+		clientIP, _, ipErr := net.SplitHostPort(r.RemoteAddr)
+		if ipErr != nil {
+			clientIP = r.RemoteAddr
+		}
+		if meshPasswordLocked(clientIP) {
+			http.Error(w, "too many failed authentication attempts", http.StatusTooManyRequests)
+			return
+		}
+		authed := false
+		if passProof := r.Header.Get("X-M3TAL-Password-Proof"); passProof != "" {
+			if nonce == "" || clientNonce == "" || !validMeshNonce(clientNonce) ||
+				(!challengeConsumed && !consumeMeshChallenge(nonce, clientIP)) {
+				meshPasswordFail(clientIP)
+				http.Error(w, "invalid pairing challenge", http.StatusUnauthorized)
+				return
+			}
+			expected := passwordRequestProof(expectedPass, nonce, clientNonce, fp)
+			if subtle.ConstantTimeCompare([]byte(passProof), []byte(expected)) == 1 {
+				authed = true
+				passwordProofAuthed = true
+			}
+		} else {
+			suppliedPass := r.Header.Get("X-M3TAL-Password")
+			if suppliedPass == "" {
+				w.Header().Set("X-M3TAL-Auth-Status", "password_required")
+				if suppliedProof != "" && matchedToken != "" {
+					w.Header().Set("X-M3TAL-Proof", responseProof(matchedToken, nonce, clientNonce, []byte("password required\n"), fp))
+				}
+				http.Error(w, "password required", http.StatusUnauthorized)
+				return
+			}
+			if subtle.ConstantTimeCompare([]byte(suppliedPass), []byte(expectedPass)) == 1 {
+				authed = true
+			}
+		}
+		if !authed {
+			meshPasswordFail(clientIP)
+			http.Error(w, "invalid password", http.StatusUnauthorized)
+			return
+		}
+		meshPasswordSuccess(clientIP)
+	}
+
+	hostname, _ := os.Hostname()
+	body, err := json.Marshal(map[string]any{
+		"name":      hostname,
+		"hostname":  hostname,
+		"version":   PluginVersion,
+		"telemetry": getLocalTelemetry(),
+	})
+	if err != nil {
+		http.Error(w, "could not encode telemetry", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if matchedToken != "" {
+		w.Header().Set("X-M3TAL-Proof", responseProof(matchedToken, nonce, clientNonce, body, fp))
+	}
+	if passwordProofAuthed && nonce != "" && clientNonce != "" {
+		w.Header().Set("X-M3TAL-Password-Auth-Proof", passwordResponseProof(expectedPass, nonce, clientNonce, body, fp))
+	}
+	_, _ = w.Write(body)
+}
+
+type meshPairRequest struct {
+	Name        string `json:"name"`
+	Hostname    string `json:"hostname"`
+	IP          string `json:"ip"`
+	Role        string `json:"role"`
+	Token       string `json:"token,omitempty"`
+	Fingerprint string `json:"fingerprint,omitempty"`
+}
+
+func meshPairHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	current := loadMeshConfig()
+	acceptedTokens := current.acceptedTokens()
+	expectedPass := current.DefaultPassword
+	authRequired := current.IsPairingTokenRequired()
+
+	if authRequired && len(acceptedTokens) == 0 && expectedPass == "" {
+		http.Error(w, "authentication is required but neither API token nor password is configured on this node", http.StatusServiceUnavailable)
+		return
+	}
+
+	suppliedProof := r.Header.Get("X-M3TAL-Proof")
+	nonce := r.Header.Get("X-M3TAL-Nonce")
+	clientNonce := r.Header.Get("X-M3TAL-Client-Nonce")
+	var fp string
+	if r.TLS != nil {
+		meshCertFingerprintMu.RLock()
+		fp = meshCertFingerprint
+		meshCertFingerprintMu.RUnlock()
+	}
+
+	clientIP, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		clientIP = r.RemoteAddr
+	}
+
+	tokenOK := len(acceptedTokens) == 0
+	passOK := expectedPass == ""
+
+	// Consume the single-use challenge exactly once for this request.
+	challengeOK := nonce != "" && clientNonce != "" && validMeshNonce(clientNonce) && consumeMeshChallenge(nonce, clientIP)
+
+	if !tokenOK && challengeOK && suppliedProof != "" {
+		for _, tok := range acceptedTokens {
+			pairProof := pairRequestProof(tok, nonce, clientNonce, fp)
+			genProof := requestProof(tok, nonce, clientNonce, fp)
+			if subtle.ConstantTimeCompare([]byte(suppliedProof), []byte(pairProof)) == 1 ||
+				subtle.ConstantTimeCompare([]byte(suppliedProof), []byte(genProof)) == 1 {
+				tokenOK = true
+				break
+			}
+		}
+	}
+
+	if !passOK {
+		if meshPasswordLocked(clientIP) {
+			http.Error(w, "too many failed authentication attempts", http.StatusTooManyRequests)
+			return
+		}
+		if passProof := r.Header.Get("X-M3TAL-Password-Proof"); passProof != "" && challengeOK {
+			expected := passwordRequestProof(expectedPass, nonce, clientNonce, fp)
+			passOK = subtle.ConstantTimeCompare([]byte(passProof), []byte(expected)) == 1
+		}
+		if passOK {
+			meshPasswordSuccess(clientIP)
+		} else {
+			meshPasswordFail(clientIP)
+		}
+	}
+
+	// Every configured credential must be satisfied independently.
+	authed := tokenOK && passOK
+	if authRequired && !authed {
+		http.Error(w, "invalid pairing credentials", http.StatusUnauthorized)
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 64*1024))
+	if err != nil {
+		http.Error(w, "cannot read request body", http.StatusBadRequest)
+		return
+	}
+
+	var pairReq meshPairRequest
+	if err := json.Unmarshal(body, &pairReq); err != nil {
+		http.Error(w, "invalid JSON payload", http.StatusBadRequest)
+		return
+	}
+
+	peerIP := pairReq.IP
+	if peerIP == "" {
+		peerIP = net.JoinHostPort(clientIP, strconv.Itoa(current.ListenPort))
+	} else {
+		if norm, err := normalizeNodeAddress(peerIP, current.ListenPort); err == nil {
+			peerIP = norm
+		}
+	}
+
+	peerHost := pairReq.Hostname
+	if peerHost == "" {
+		peerHost = pairReq.Name
+	}
+	if peerHost == "" {
+		peerHost = clientIP
+	}
+	peerName := pairReq.Name
+	if peerName == "" {
+		peerName = peerHost
+	}
+	peerRole := pairReq.Role
+	if peerRole == "" {
+		peerRole = "server"
+	}
+
+	// The token that authenticated this request is *our* inbound key; it is
+	// not a credential the peer accepts, so never reuse it for polling back.
+	peerToken := pairReq.Token
+
+	newNode := MeshNode{
+		ID:          stableNodeID(peerIP, peerHost),
+		Name:        peerName,
+		IP:          peerIP,
+		Role:        peerRole,
+		Status:      "online",
+		Fingerprint: pairReq.Fingerprint,
+		APIToken:    peerToken,
+		LastSeen:    "just now",
+	}
+
+	if err := persistPairedPeer(newNode); err != nil {
+		http.Error(w, fmt.Sprintf("could not register peer: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	myHost, _ := os.Hostname()
+	if myHost == "" {
+		myHost = "m3tal-mesh"
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"success":     true,
+		"message":     "Node registered successfully in bidirectional mesh",
+		"name":        myHost,
+		"hostname":    myHost,
+		"fingerprint": fp,
+	})
+}
+
+func startMeshNetworkService() error {
+	cfg := loadMeshConfig()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", meshHealthHandler)
+	mux.HandleFunc("/api/v1/challenge", meshChallengeHandler)
+	mux.HandleFunc("/api/v1/telemetry", meshTelemetryHandler)
+	mux.HandleFunc("/api/v1/pair", meshPairHandler)
+
+	server := &http.Server{
+		Addr:              ":" + strconv.Itoa(cfg.ListenPort),
+		Handler:           mux,
+		ReadHeaderTimeout: 4 * time.Second,
+		ReadTimeout:       5 * time.Second,
+		WriteTimeout:      5 * time.Second,
+		IdleTimeout:       45 * time.Second,
+		MaxHeaderBytes:    32 * 1024,
+	}
+
+	certificate, err := loadOrCreateMeshCertificate()
+	if err != nil {
+		return fmt.Errorf("mesh TLS certificate: %w", err)
+	}
+	tlsCfg := &tls.Config{
+		Certificates: []tls.Certificate{certificate},
+		MinVersion:   tls.VersionTLS12,
+	}
+
+	meshServerMu.Lock()
+	meshServer = server
+	meshServerMu.Unlock()
+
+	// Retry binding with backoff so a legacy m3tal-mesh-node holding the port
+	// does not permanently disable the unified broadcaster.
+	go func() {
+		backoff := 2 * time.Second
+		for {
+			listener, err := tls.Listen("tcp", server.Addr, tlsCfg)
+			if err == nil {
+				if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
+					fmt.Fprintf(os.Stderr, "m3tal-mesh HTTP service: %v\n", err)
+				}
+				return
+			}
+			fmt.Fprintf(os.Stderr, "m3tal-mesh HTTP service port %d: %v (retrying in %s)\n", cfg.ListenPort, err, backoff)
+			time.Sleep(backoff)
+			if backoff < time.Minute {
+				backoff *= 2
+			}
+		}
+	}()
+
+	if cfg.IsMDNSEnabled() {
+		hostname, _ := os.Hostname()
+		if hostname == "" {
+			hostname = "m3tal-mesh"
+		}
+		mdnsServer, err := zeroconf.Register(hostname, meshServiceType, "local.", cfg.ListenPort, []string{"version=" + PluginVersion, "protocol=1"}, nil)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "m3tal-mesh mDNS registration: %v\n", err)
+		} else {
+			meshServerMu.Lock()
+			meshMDNSServer = mdnsServer
+			meshServerMu.Unlock()
+		}
+	}
+	return nil
+}
+
+func shutdownMeshNetwork() {
+	meshShutdownOnce.Do(func() {
+		meshServerMu.Lock()
+		server, mdnsServer := meshServer, meshMDNSServer
+		meshServerMu.Unlock()
+		if mdnsServer != nil {
+			mdnsServer.Shutdown()
+		}
+		if server != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			_ = server.Shutdown(ctx)
+		}
+	})
+}
+
+func outboundIPFor(targetHost string) string {
+	conn, err := net.DialTimeout("udp", targetHost, 2*time.Second)
+	if err != nil {
+		return getLocalIP()
+	}
+	defer conn.Close()
+	localAddr, ok := conn.LocalAddr().(*net.UDPAddr)
+	if !ok || localAddr == nil || localAddr.IP.IsUnspecified() || localAddr.IP.IsLoopback() {
+		return getLocalIP()
+	}
+	return localAddr.IP.String()
+}
+
+// inboundReturnToken picks a credential this node's acceptedTokens() will
+// accept, so the reverse peer can poll us. Prefer the explicit pairing token;
+// otherwise fall back to this node's primary local Core API key.
+func inboundReturnToken(cfg meshConfig) string {
+	if t := strings.TrimSpace(cfg.PairingToken); t != "" {
+		return t
+	}
+	return resolveCoreAPIKey()
+}
+
+func dispatchBidirectionalPair(remoteAddress, token, password, pinnedFP string, passwordOnly bool, cfg meshConfig) error {
+	if pinnedFP == "" {
+		return fmt.Errorf("refusing reverse pairing without an authenticated peer fingerprint")
+	}
+	endpoint, err := normalizeNodeAddress(remoteAddress, cfg.ListenPort)
+	if err != nil {
+		return err
+	}
+	// Pin every request to the fingerprint authenticated during initial pairing.
+	client := newPinnedHTTPClient(pinnedFP, 4*time.Second)
+	remoteFP := pinnedFP
+	challengeReq, err := http.NewRequest(http.MethodPost, "https://"+endpoint+"/api/v1/challenge", nil)
+	if err != nil {
+		return err
+	}
+	challengeResp, err := client.Do(challengeReq)
+	if err != nil {
+		return err
+	}
+	defer challengeResp.Body.Close()
+
+	if challengeResp.StatusCode != http.StatusOK {
+		return fmt.Errorf("remote node challenge error: HTTP %d", challengeResp.StatusCode)
+	}
+
+	var challenge struct {
+		Nonce string `json:"nonce"`
+	}
+	if err := json.NewDecoder(io.LimitReader(challengeResp.Body, 4096)).Decode(&challenge); err != nil || !validMeshNonce(challenge.Nonce) {
+		return fmt.Errorf("invalid challenge from %s", endpoint)
+	}
+
+	cNonce, err := newMeshNonce()
+	if err != nil {
+		return err
+	}
+
+	myHost, _ := os.Hostname()
+	if myHost == "" {
+		myHost = "m3tal-mesh"
+	}
+	localOutboundIP := outboundIPFor(endpoint)
+	myAddress := net.JoinHostPort(localOutboundIP, strconv.Itoa(cfg.ListenPort))
+
+	meshCertFingerprintMu.RLock()
+	myFP := meshCertFingerprint
+	meshCertFingerprintMu.RUnlock()
+
+	// Only offer a return credential this node actually accepts inbound;
+	// never forward the remote peer's key back as a raw secret.
+	reqPayload := meshPairRequest{
+		Name:        myHost,
+		Hostname:    myHost,
+		IP:          myAddress,
+		Role:        "workstation",
+		Token:       inboundReturnToken(cfg),
+		Fingerprint: myFP,
+	}
+	body, err := json.Marshal(reqPayload)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, "https://"+endpoint+"/api/v1/pair", strings.NewReader(string(body)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-M3TAL-Nonce", challenge.Nonce)
+	req.Header.Set("X-M3TAL-Client-Nonce", cNonce)
+
+	if token != "" && !passwordOnly {
+		req.Header.Set("X-M3TAL-Proof", pairRequestProof(token, challenge.Nonce, cNonce, remoteFP))
+	}
+	if password != "" {
+		req.Header.Set("X-M3TAL-Password-Proof", passwordRequestProof(password, challenge.Nonce, cNonce, remoteFP))
+	}
+
+	pairResp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer pairResp.Body.Close()
+	if pairResp.StatusCode != http.StatusOK {
+		return fmt.Errorf("remote node pair error: HTTP %d", pairResp.StatusCode)
+	}
+	return nil
+}
+

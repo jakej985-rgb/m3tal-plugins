@@ -2,7 +2,7 @@ apiVersion: m3tal.io/v1alpha1
 kind: Plugin
 metadata:
   name: mesh
-  version: "0.5.2"
+  version: "0.6.0"
   title: "Mesh Fleet"
   description: "Personal Cloud & Local Network Fleet Federation, peer discovery, and multi-node hardware telemetry reader"
   author: "jakej985-rgb"
@@ -28,8 +28,13 @@ spec:
       description: "Mesh cluster federation, remote node discovery, and authentication (uses M3TAL Core API key)"
       category: "network"
       fields:
+        - key: "pairing_token"
+          label: "Cluster Pairing Token (Optional Override)"
+          type: "password"
+          default: ""
+          description: "Optional manual override token. By default, Mesh authenticates using M3TAL Core API keys."
         - key: "default_password"
-          label: "Default Connection Password (Optional)"
+          label: "Connection Password (Optional)"
           type: "password"
           default: ""
           description: "Optional fallback password sent to remote nodes that require password verification"
@@ -39,15 +44,25 @@ spec:
           default: true
           description: "Enforce credentials authentication for all remote nodes. Disabling this allows connecting to unauthenticated nodes (⚠️ SAFETY WARNING: Not recommended or safe on untrusted/shared networks!)."
         - key: "listen_port"
-          label: "Default Node Port"
+          label: "Telemetry & Broadcaster Port"
           type: "number"
           default: 9321
-          description: "Default TCP port for communicating with remote m3tal-mesh-node instances"
+          description: "TCP port used for direct peer telemetry broadcasting and connections"
         - key: "discovery_enabled"
           label: "Enable LAN Discovery (mDNS)"
           type: "boolean"
           default: true
-          description: "Automatically discover local m3tal-mesh-node daemons via mDNS on local subnet"
+          description: "Automatically discover and broadcast presence to local M3TAL mesh instances on LAN"
+        - key: "broadcast_mdns"
+          label: "Broadcast Presence (mDNS)"
+          type: "boolean"
+          default: true
+          description: "Announce this node's presence on the local subnet via mDNS"
+        - key: "broadcaster_only_mode"
+          label: "Broadcaster Only Mode"
+          type: "boolean"
+          default: false
+          description: "Run in lightweight broadcaster-only mode without outbound fleet polling"
 
   ui:
     entry: "ui/dist/index.html"

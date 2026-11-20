@@ -246,7 +246,8 @@ func startNodeNetworkService() error {
 	}
 	listener, err := tls.Listen("tcp", server.Addr, &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12})
 	if err != nil {
-		return fmt.Errorf("mesh-node HTTP service: %w", err)
+		fmt.Fprintf(os.Stderr, "mesh-node HTTP service: %v (unified m3tal-mesh is active on this port; yielding)\n", err)
+		return nil
 	}
 	nodeServerMu.Lock()
 	nodeServer = server
