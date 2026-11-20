@@ -17,6 +17,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added built-in TLS broadcaster (`/health`, `/api/v1/challenge`, `/api/v1/telemetry`, `/api/v1/pair`) and mDNS advertiser.
   - Added `get_telemetry` and `beacon_ping` actions for direct RPC telemetry collection.
   - Added settings for `broadcast_mdns` and `broadcaster_only_mode`.
+## [0.5.2] - 2026-11-13
+
+### 🚀 Changes & Improvements
+- **fix(mesh): reject credential edits that leave a password peer unpinned** (`c1e4d99`)
+- **fix(mesh): do not repin saved passwords from a token-only probe on address change** (`06916fc`)
+- **fix(mesh): pin moved dual-auth nodes via token-only probe; update address-change test** (`9835def`)
+- **fix(mesh): re-pin password nodes on address change; pin fingerprints in password tests** (`d02b947`)
+- **fix(mesh): only send password proofs to pinned peers, except interactive pairing (TOFU)** (`287a6c5`)
+- **fix(mesh-node): share challenge between token and password proofs; harden lockout tracker** (`73c30aa`)
+- **fix(mesh): replace raw password header with HMAC challenge proofs** (`4d3f60c`)
+
+---
+
+## [Unreleased]
+
+### 🔒 Security
+- **fix(mesh): never send node passwords in cleartext** — send an HMAC `X-M3TAL-Password-Proof` instead of `X-M3TAL-Password`, and verify the node's `X-M3TAL-Password-Auth-Proof`. **Breaking:** password-protected peers must run an upgraded `m3tal-mesh-node`; older nodes will show as offline until upgraded.
 
 ---
 

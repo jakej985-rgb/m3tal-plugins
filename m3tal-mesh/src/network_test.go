@@ -460,7 +460,7 @@ func TestFetchRemoteRESTTokenAndOptionalPassword(t *testing.T) {
 	defer server.Close()
 
 	// 1. Valid token and password via HMAC
-	node, err := fetchRemoteWithAuth(server.Listener.Addr().String(), "node-api-token", "node-pass", 9321)
+	node, err := fetchRemoteWithAuth(server.Listener.Addr().String(), "node-api-token", "node-pass", 9321, testServerFingerprint(server))
 	if err != nil {
 		t.Fatalf("fetchRemoteWithAuth failed: %v", err)
 	}
@@ -474,7 +474,7 @@ func TestFetchRemoteRESTTokenAndOptionalPassword(t *testing.T) {
 	}
 
 	// 2. Wrong password -> error
-	_, err = fetchRemoteWithAuth(server.Listener.Addr().String(), "node-api-token", "wrong-pass", 9321)
+	_, err = fetchRemoteWithAuth(server.Listener.Addr().String(), "node-api-token", "wrong-pass", 9321, testServerFingerprint(server))
 	if err == nil {
 		t.Fatal("expected failure with wrong password")
 	}
@@ -488,7 +488,7 @@ func TestFetchRemoteRESTTokenAndOptionalPassword(t *testing.T) {
 		http.Error(w, "should not be reached", http.StatusOK)
 	}))
 	defer badChallengeServer.Close()
-	_, err = fetchRemoteWithAuth(badChallengeServer.Listener.Addr().String(), "node-api-token", "node-pass", 9321)
+	_, err = fetchRemoteWithAuth(badChallengeServer.Listener.Addr().String(), "node-api-token", "node-pass", 9321, testServerFingerprint(badChallengeServer))
 	if err == nil {
 		t.Fatal("expected fetchRemoteWithAuth to fail closed when challenge fails")
 	}
@@ -520,7 +520,11 @@ func TestFetchRemoteRESTTokenAndOptionalPassword(t *testing.T) {
 	}))
 	defer passOnlyServer.Close()
 
-	passNode, err := fetchRemoteWithAuth(passOnlyServer.Listener.Addr().String(), "", "only-pass", 9321)
+	// Unpinned password proof must be refused before any request is sent.
+	if _, err := fetchRemoteWithAuth(passOnlyServer.Listener.Addr().String(), "", "only-pass", 9321); !errors.Is(err, ErrPasswordPinRequired) {
+		t.Fatalf("expected ErrPasswordPinRequired for unpinned password peer, got %v", err)
+	}
+	passNode, err := fetchRemoteWithAuth(passOnlyServer.Listener.Addr().String(), "", "only-pass", 9321, testServerFingerprint(passOnlyServer))
 	if err != nil {
 		t.Fatalf("fetchRemoteWithAuth on password-only server failed: %v", err)
 	}

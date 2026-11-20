@@ -11,7 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 🚀 Changes & Improvements
 - **feat(mesh): unify mesh and broadcaster with Core API key auth and bidirectional pairing** (`b55c9dc`)
+## [0.5.3] - 2026-11-13
+
+### 🚀 Changes & Improvements
+- **fix(mesh-node): share challenge between token and password proofs; harden lockout tracker** (`73c30aa`)
 - **fix(mesh): replace raw password header with HMAC challenge proofs** (`4d3f60c`)
+
+---
+
+## [Unreleased]
+
+### 🔒 Security
+- **fix(mesh-node): HMAC password proofs + rate limiting** — accept `X-M3TAL-Password-Proof` (HMAC over the single-use challenge) and return `X-M3TAL-Password-Auth-Proof`; per-IP lockout after 5 failed password attempts (60s). Legacy raw `X-M3TAL-Password` is still accepted but rate-limited. **Requires an upgraded `m3tal-mesh`. Mesh controllers built from this release no longer send raw passwords.**
 
 ---
 

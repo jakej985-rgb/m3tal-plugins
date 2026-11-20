@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.8.3] - 2026-11-10
+
+### 🚀 Changes & Improvements
+- **Merge branch 'main' into sentinel/fix-docker-argument-injection-17977707349015993176** (`1f9ad36`)
+- **Resolve CHANGELOG conflict: include main's 0.8.x entries** (`6dcf354`)
+- **Remove 128-char cap from container target validation and add changelog entry** (`26506a3`)
+- **Resolve conflicts: align with main's validateContainerTarget** (`b6f74bc`)
+- **Merge branch 'main' into sentinel/fix-docker-argument-injection-17977707349015993176** (`e24f5b0`)
+- **🛡️ Sentinel: [HIGH] Fix CLI argument injection in m3tal-docker** (`fd8d5cb`)
+
+---
+
+## [Unreleased]
+
+### 🔒 Security
+- **fix(security): validate container targets to prevent CLI argument injection**: `StartContainer`, `StopContainer`, `RestartContainer`, `GetLogs`, and `InspectContainer` now reject targets that do not match Docker's container name/ID syntax (`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`) before invoking the `docker` CLI, blocking flag injection via leading `-` and shell/path metacharacters. No artificial length cap, so long legal names remain addressable.
+
+---
+
 ## [0.8.2] - 2026-11-06
 
 ### 🚀 Changes & Improvements
