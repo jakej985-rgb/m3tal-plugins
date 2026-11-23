@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.1] - 2026-11-23
+
+### 🚀 Changes & Improvements
+- **ci(release): replace per-plugin workflows with one deduped release matrix** (`a4441b4`)
+
+---
+
 ## [0.7.0] - 2026-11-20
 
 ### 🚀 Changes & Improvements
