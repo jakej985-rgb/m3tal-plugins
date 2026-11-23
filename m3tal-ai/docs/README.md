@@ -11,6 +11,6 @@
 
 ## Before plugin release
 
-Add `plugin.yaml`, canonical build target, `config/config.schema.json`, `CHANGELOG.md`, lifecycle tests, and `.github/workflows/Build-m3tal-ai-Deb.yml`.
+Add `plugin.yaml`, canonical build target, `config/config.schema.json`, `CHANGELOG.md`, lifecycle tests, and an entry in `release-units.json`.
 
 See the plugin [`README.md`](../README.md) and repository [`docs/PLUGIN_AUTHORING.md`](../../docs/PLUGIN_AUTHORING.md).

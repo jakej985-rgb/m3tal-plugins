@@ -8,6 +8,6 @@ One-click benchmarking for CPU multi-threading, GPU compute, and disk I/O throug
 
 ## Status
 
-Planned. No `plugin.yaml`, implementation, or release workflow exists yet. When implemented, it should use `Build-m3tal-bench-Deb.yml` and publish `m3tal-plugin-bench` through `m3tal-apt-key`.
+Planned. No `plugin.yaml`, implementation, or release workflow exists yet. When implemented, it should join a release unit in `release-units.json` and publish `m3tal-plugin-bench` through `m3tal-apt-key`.
 
 See the plugin [`README.md`](../README.md) and repository [`PLUGINS.md`](../../PLUGINS.md).

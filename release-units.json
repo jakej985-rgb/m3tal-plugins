@@ -1,0 +1,15 @@
+{
+  "docker": {
+    "plugins": ["m3tal-docker"]
+  },
+  "compose": {
+    "plugins": ["m3tal-compose"]
+  },
+  "mesh": {
+    "plugins": ["m3tal-mesh", "m3tal-mesh-node"],
+    "cluster": true
+  },
+  "samba-nfs": {
+    "plugins": ["m3tal-samba-nfs"]
+  }
+}

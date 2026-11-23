@@ -4,13 +4,15 @@ This runbook describes how plugins in `m3tal-plugins` are versioned, built, pack
 
 ## Current release topology
 
-Release automation follows one workflow per releasable plugin, named `Build-<plugin_name>-Deb.yml`:
+Release automation is a single workflow, `.github/workflows/release-plugins.yml`, driven by release units in `release-units.json`. A unit is the set of plugin directories that must be versioned, built, and published together:
 
-- `m3tal-docker` → `Build-m3tal-docker-Deb.yml`
-- `m3tal-compose` → `Build-m3tal-compose-Deb.yml`
-- `m3tal-samba-nfs` → `Build-m3tal-samba-nfs-Deb.yml`
-- `m3tal-mesh` → `Build-m3tal-mesh-Deb.yml` — deliberate exception: this single workflow builds `m3tal-mesh`, `m3tal-mesh-node`, and the `m3tal-plugin-mesh-cluster` metapackage together so cluster versions stay aligned.
-- Planned plugins (`m3tal-ai`, `m3tal-stacks`, `m3tal-smart`, `m3tal-traefik`, `m3tal-vpn`, `m3tal-bench`) get a `Build-<plugin_name>-Deb.yml` workflow when they receive a `plugin.yaml` and build target.
+- `docker` → `m3tal-docker`
+- `compose` → `m3tal-compose`
+- `samba-nfs` → `m3tal-samba-nfs`
+- `mesh` → `m3tal-mesh` + `m3tal-mesh-node` + `m3tal-plugin-mesh-cluster` — deliberate grouping: the metapackage refuses to build when the node version trails the mesh version, so both are always bumped and aligned to the same version.
+- Planned plugins (`m3tal-ai`, `m3tal-stacks`, `m3tal-smart`, `m3tal-traefik`, `m3tal-vpn`, `m3tal-bench`) join a release unit when they receive a `plugin.yaml` and build target.
+
+On a push to `main`, a detection job maps the touched plugin directories to units; each touched unit then runs as one matrix entry, one at a time.
 
 Every plugin directory also has its own `docs/` folder with a plugin-specific `README.md`.
 
@@ -43,15 +45,15 @@ make package PLUGIN=m3tal-docker
 3. Stages `plugin.yaml`, `bin/`, `ui/dist`, `config/`, docs, and changelog under `/usr/lib/m3tal/plugins/<dir>`.
 4. Generates a Debian package named from `metadata.package_name` or `m3tal-plugin-<suffix>`.
 
-The mesh workflow additionally builds `m3tal-plugin-mesh-cluster`, a bundle package that installs the mesh peer components.
+A unit marked `cluster: true` (currently `mesh`) additionally runs `scripts/build-cluster-deb.sh` to build `m3tal-plugin-mesh-cluster`, a bundle package that installs the mesh peer components.
 
 ## Publish pipeline
 
 For workflow-backed plugins:
 
-1. Push to `main` touches the plugin directory, or manually dispatch the workflow.
-2. Smart bump updates `plugin.yaml` and `CHANGELOG.md`.
-3. Release commit is pushed back to `main`.
+1. Push to `main` touches a plugin directory, or manually dispatch the workflow with a `unit` (`all` for every unit).
+2. `scripts/release-units.py` bumps the touched members of the unit, then aligns every member to the highest version.
+3. Release commit is pushed back to `main` (message tagged `[skip ci]`).
 4. `.deb` files are built.
 5. Assets are attached to the rolling GitHub Release tag `plugins-latest`.
 6. The workflow dispatches `publish-deb` to `jakej985-rgb/m3tal-apt-key` with `package_id`, `version`, `deb_url`, and `allow_replace`.
@@ -66,13 +68,9 @@ sudo apt install -y m3tal-plugin-<name>
 
 ## Adding release automation to a new plugin
 
-Copy the closest existing workflow and adjust:
+Add the plugin directory to a release unit in `release-units.json` (create a new unit for an independent package; add it to `mesh` if it must version in lockstep). No workflow edit is required: `.github/workflows/release-plugins.yml` discovers units and builds every member with `build-plugin-deb.sh`.
 
-- `paths` to the plugin directory.
-- Go version and Node version.
-- `smart-bump.py --plugin` loop.
-- `build-plugin-deb.sh` call.
-- `publish-deb` dispatch loop.
+Set `"cluster": true` on a unit that also needs the cluster metapackage step. `scripts/release-units.py --verify` fails if a directory with a `plugin.yaml` is not assigned to a unit.
 
 For plugins that need privileged host access, document `root: true` and review package/service permissions before publishing.
 

@@ -31,6 +31,6 @@ make audit PLUGIN=m3tal-docker
 make package PLUGIN=m3tal-docker
 ```
 
-Release workflow: `.github/workflows/Build-m3tal-docker-Deb.yml`
+Release workflow: `.github/workflows/release-plugins.yml` (release unit `docker`)
 
 See the plugin [`README.md`](../README.md), [`plugin.yaml`](../plugin.yaml), and repository [`docs/IPC_PROTOCOL.md`](../../docs/IPC_PROTOCOL.md).

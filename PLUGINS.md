@@ -112,7 +112,7 @@ sudo apt install -y m3tal-plugin-mesh-node
 - **Route**: `/storage/shares`
 - **Capabilities**: `collector`, `actions`, `ui_view`, `settings`
 - **Implemented actions**: `get_shares`, `create_smb_share`, `delete_smb_share`, `create_nfs_export`, `delete_nfs_export`, `create_smb_user`, `delete_smb_user`, `set_smb_password`, `mount_share`, `unmount_share`, `restart_services`, `get_settings`, `set_settings`
-- **Status**: implementing. A dedicated release workflow exists (`Build-m3tal-samba-nfs-Deb.yml`), but `m3tal-plugin-samba-nfs` is not yet published to APT.
+- **Status**: implementing. It is wired into `.github/workflows/release-plugins.yml` as the `samba-nfs` release unit, but `m3tal-plugin-samba-nfs` is not yet published to APT.
 - **Operational note**: the manifest declares `root: true` because Samba/NFS administration requires privileged access to `/etc/samba`, `/etc/exports`, service reloads, and mount operations.
 
 ### Local AI Assistant — `m3tal-ai`

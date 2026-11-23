@@ -59,11 +59,12 @@ m3tal-plugins/
 │   └── src/                     # Backend source code (Go, Python, Shell, Rust)
 ├── scripts/
 │   ├── build-plugin-deb.sh      # Central Debian packaging script
+│   ├── release-units.py         # Release unit resolver (plan + lockstep bumps)
 │   └── smart-bump.py            # Monorepo version bumper & touched plugin detector
 ├── .github/
 │   └── workflows/
-│       ├── Build-m3tal-docker-Deb.yml # Dedicated per-plugin release workflow
-│       └── ...
+│       └── release-plugins.yml  # Detect touched release units → build/publish matrix
+├── release-units.json           # Plugin groups that version & publish together
 ├── PLUGINS.md                   # Full catalog & description of all plugins
 └── Makefile                     # Monorepo build orchestrator
 ```
@@ -129,19 +130,20 @@ Generates `m3tal-plugin-docker-monitor_<version>_amd64.deb`.
 
 ## 6. Release & APT Ingestion Pipeline
 
-Release automation uses one workflow per releasable plugin, named `Build-<plugin_name>-Deb.yml`:
+Release automation is a single workflow, `.github/workflows/release-plugins.yml`, driven by **release units** declared in [`release-units.json`](./release-units.json). A unit is the set of plugin directories that must be versioned, built, and published together:
 
-- `m3tal-docker` → `Build-m3tal-docker-Deb.yml`
-- `m3tal-compose` → `Build-m3tal-compose-Deb.yml`
-- `m3tal-samba-nfs` → `Build-m3tal-samba-nfs-Deb.yml`
-- `m3tal-mesh` → `Build-m3tal-mesh-Deb.yml` (intentionally shared: builds `m3tal-mesh`, `m3tal-mesh-node`, and `m3tal-plugin-mesh-cluster` together so cluster versions stay aligned)
-- Planned plugins get a `Build-<plugin_name>-Deb.yml` workflow when they receive a `plugin.yaml` and build target.
+- `docker` → `m3tal-docker` (`m3tal-plugin-docker-monitor`)
+- `compose` → `m3tal-compose`
+- `samba-nfs` → `m3tal-samba-nfs`
+- `mesh` → `m3tal-mesh` + `m3tal-mesh-node` + the `m3tal-plugin-mesh-cluster` metapackage (version-locked: the metapackage refuses to build when the node version trails the mesh version)
 
-For workflow-backed plugins:
+A plugin that ships a `plugin.yaml` must belong to a unit; adding one is a `release-units.json` edit, not a new workflow. On a push to `main`, a detection job maps the touched plugin directories to units and each touched unit runs as one matrix entry, one at a time.
 
-1. Changes are pushed to `main` under the plugin directory, or the workflow is manually dispatched.
-2. `scripts/smart-bump.py` updates `plugin.yaml` and `CHANGELOG.md` for touched plugins.
-3. `scripts/build-plugin-deb.sh` builds the `.deb`; mesh additionally builds `m3tal-plugin-mesh-cluster`.
+For each touched unit:
+
+1. Changes are pushed to `main` under a plugin directory, or the workflow is manually dispatched with `unit` and `force_bump`.
+2. `scripts/release-units.py` maps the touched directories to their unit and calls `scripts/smart-bump.py` to update `plugin.yaml` and `CHANGELOG.md`.
+3. Every member of the unit is aligned to the highest resulting version, then `scripts/build-plugin-deb.sh` builds each `.deb`; a `cluster: true` unit additionally builds `m3tal-plugin-mesh-cluster`.
 4. Assets are attached to the rolling GitHub Release tag `plugins-latest`.
 5. The workflow dispatches `publish-deb` to `jakej985-rgb/m3tal-apt-key`:
    ```json

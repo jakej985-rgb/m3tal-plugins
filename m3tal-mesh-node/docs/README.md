@@ -31,6 +31,6 @@ make audit PLUGIN=m3tal-mesh-node
 make package PLUGIN=m3tal-mesh-node
 ```
 
-`m3tal-mesh-node` is released by the shared `Build-m3tal-mesh-Deb.yml` workflow together with `m3tal-mesh` and the cluster metapackage.
+`m3tal-mesh-node` is released by the shared `mesh` release unit in `.github/workflows/release-plugins.yml` together with `m3tal-mesh` and the cluster metapackage.
 
 See the plugin [`README.md`](../README.md), [`plugin.yaml`](../plugin.yaml), and repository [`docs/IPC_PROTOCOL.md`](../../docs/IPC_PROTOCOL.md).

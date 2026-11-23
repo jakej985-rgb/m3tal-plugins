@@ -1,0 +1,216 @@
+name: Release Plugins
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'm3tal-*/**'
+      - 'scripts/**'
+      - 'release-units.json'
+      - '.github/workflows/release-plugins.yml'
+  workflow_dispatch:
+    inputs:
+      unit:
+        description: "Release unit to publish (all = every unit)"
+        required: true
+        default: "all"
+      force_bump:
+        description: "Force version bump type (auto, patch, minor, major)"
+        required: true
+        default: "auto"
+
+permissions:
+  contents: write
+
+# Release commits are pushed back to main and every unit publishes to the same
+# rolling `plugins-latest` release, so runs must never overlap.
+concurrency:
+  group: release-plugins
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    name: Detect release units
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.units.outputs.matrix }}
+      count: ${{ steps.units.outputs.count }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Require main branch for publishing
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Publishing can only run from main (selected ref: $GITHUB_REF)."
+            exit 1
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Resolve release units
+        id: units
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_UNIT: ${{ github.event.inputs.unit }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ "$DISPATCH_UNIT" = "all" ]; then
+              MATRIX=$(./scripts/release-units.py --list-all)
+            else
+              MATRIX=$(./scripts/release-units.py --list-unit "$DISPATCH_UNIT")
+            fi
+          else
+            MATRIX=$(./scripts/release-units.py --list)
+          fi
+
+          COUNT=$(printf '%s' "$MATRIX" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["unit"]))')
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "Release units to publish: $MATRIX"
+
+  release:
+    name: Release ${{ matrix.unit }}
+    needs: detect
+    if: needs.detect.outputs.count != '0'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      # Bump commits and the shared release tag make parallel publishing unsafe.
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.detect.outputs.matrix) }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Require main branch for publishing
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Publishing can only run from main (selected ref: $GITHUB_REF)."
+            exit 1
+          fi
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Packaging Tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends dpkg-dev apt-utils gnupg curl
+          python3 -m pip install --upgrade pip pyyaml
+
+      - name: Bump ${{ matrix.unit }} release unit
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          FORCE_BUMP: ${{ github.event.inputs.force_bump || 'auto' }}
+        run: |
+          set -euo pipefail
+          UNIT="${{ matrix.unit }}"
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "Manual workflow dispatch for release unit $UNIT..."
+            ./scripts/release-units.py --unit "$UNIT" --apply --bump-type "$FORCE_BUMP" --force
+          else
+            ./scripts/release-units.py --unit "$UNIT" --apply --bump-type auto
+          fi
+
+          DIRS=$(./scripts/release-units.py --unit "$UNIT" --plugins)
+          if [ -n "$(git status --porcelain -- $DIRS)" ]; then
+            git config user.name "m3tal-bot"
+            git config user.email "bot@m3tal.io"
+            git add -- $DIRS
+            git commit -m "chore(release): auto-bump $UNIT release unit [skip ci]"
+            bash scripts/push-release-commit.sh origin main
+          else
+            echo "ℹ️ No version changes for $UNIT."
+          fi
+
+      - name: Build and package ${{ matrix.unit }} DEBs
+        run: |
+          set -euo pipefail
+          UNIT="${{ matrix.unit }}"
+
+          mkdir -p dist/packages
+          for plugin in $(./scripts/release-units.py --unit "$UNIT" --plugins); do
+            ./scripts/build-plugin-deb.sh "$plugin"
+          done
+
+          if [ "$(./scripts/release-units.py --unit "$UNIT" --cluster)" = "true" ]; then
+            ./scripts/build-cluster-deb.sh
+          fi
+
+          mv m3tal-plugin-*.deb dist/packages/ 2>/dev/null || true
+          mv m3tal-plugin-*.sha256 dist/packages/ 2>/dev/null || true
+          ls -la dist/packages/
+
+          if ! ls dist/packages/*.deb >/dev/null 2>&1; then
+            echo "::error::Release unit $UNIT produced no .deb artifacts."
+            exit 1
+          fi
+
+      - name: Create / Update GitHub Release
+        if: hashFiles('dist/packages/*.deb') != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/packages/*
+          tag_name: plugins-latest
+          name: "M3TAL Plugins Release"
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Ingest & Sign DEBs via Central APT Repository (m3tal-apt-key)
+        if: hashFiles('dist/packages/*.deb') != ''
+        run: |
+          set -euo pipefail
+          for deb in dist/packages/*.deb; do
+            [ -f "$deb" ] || continue
+            DEB_BASENAME=$(basename "$deb")
+            PKG_ID=$(echo "$DEB_BASENAME" | cut -d_ -f1)
+            PKG_VER=$(echo "$DEB_BASENAME" | cut -d_ -f2)
+            DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/plugins-latest/${DEB_BASENAME}"
+
+            echo "🚀 Dispatching $PKG_ID v$PKG_VER to m3tal-apt-key..."
+
+            curl -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}" \
+              https://api.github.com/repos/jakej985-rgb/m3tal-apt-key/dispatches \
+              -d @- << EOF
+            {
+              "event_type": "publish-deb",
+              "client_payload": {
+                "package_id": "${PKG_ID}",
+                "version": "${PKG_VER}",
+                "deb_url": "${DOWNLOAD_URL}",
+                "allow_replace": true
+              }
+            }
+          EOF
+          done

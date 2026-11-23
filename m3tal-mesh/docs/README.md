@@ -31,6 +31,6 @@ make audit PLUGIN=m3tal-mesh
 make package PLUGIN=m3tal-mesh
 ```
 
-`Build-m3tal-mesh-Deb.yml` intentionally builds `m3tal-mesh`, `m3tal-mesh-node`, and the `m3tal-plugin-mesh-cluster` metapackage together so cluster versions stay aligned.
+The `mesh` release unit in `.github/workflows/release-plugins.yml` intentionally builds `m3tal-mesh`, `m3tal-mesh-node`, and the `m3tal-plugin-mesh-cluster` metapackage together so cluster versions stay aligned.
 
 See the plugin [`README.md`](../README.md), [`plugin.yaml`](../plugin.yaml), and repository [`docs/IPC_PROTOCOL.md`](../../docs/IPC_PROTOCOL.md).

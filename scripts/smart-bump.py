@@ -165,7 +165,7 @@ def update_plugin_manifest(plugin, new_version):
         f.write(new_content)
 
 
-def update_plugin_changelog(plugin, new_version, commits):
+def update_plugin_changelog(plugin, new_version, commits, note=None):
     changelog_path = os.path.join(ROOT_DIR, plugin, "CHANGELOG.md")
     if not os.path.isfile(changelog_path):
         return
@@ -181,7 +181,9 @@ def update_plugin_changelog(plugin, new_version, commits):
     header = f"## [{new_version}] - {today}\n\n### 🚀 Changes & Improvements\n"
 
     items = []
-    if commits:
+    if note:
+        items.append(f"- {note}")
+    elif commits:
         for c in commits:
             items.append(f"- **{c['subject']}** (`{c['sha']}`)")
     else:
@@ -207,6 +209,7 @@ def main():
     parser.add_argument("--apply", action="store_true", help="Apply version bump to plugin.yaml and CHANGELOG.md")
     parser.add_argument("--force", action="store_true", help="Force bump even if no change is detected")
     parser.add_argument("--bump-type", choices=["auto", "patch", "minor", "major"], default="auto")
+    parser.add_argument("--set-version", metavar="VERSION", help="Set an exact MAJOR.MINOR.PATCH version (used to align release units)")
     parser.add_argument("--list-touched", action="store_true", help="Print only space-separated list of touched plugins")
     args = parser.parse_args()
 
@@ -218,6 +221,26 @@ def main():
         target_plugins = [args.plugin]
     else:
         target_plugins = all_plugins
+
+    if args.set_version:
+        if not args.plugin:
+            print("Error: --set-version requires --plugin (refusing to rewrite every manifest).", file=sys.stderr)
+            sys.exit(1)
+        new_ver = args.set_version.strip().lstrip("v")
+        if not re.fullmatch(r"\d+\.\d+\.\d+", new_ver):
+            print(f"Error: --set-version expects MAJOR.MINOR.PATCH (got '{args.set_version}').", file=sys.stderr)
+            sys.exit(1)
+        for p in target_plugins:
+            curr_ver = get_current_version(p)
+            if curr_ver == new_ver:
+                print(f"📦 Plugin: {p}\n   Version:  {curr_ver} (unchanged)")
+                continue
+            print(f"📦 Plugin: {p}\n   Version:  {curr_ver} -> {new_ver} (set)")
+            if args.apply:
+                update_plugin_manifest(p, new_ver)
+                update_plugin_changelog(p, new_ver, [], note=f"Aligned to release unit version {new_ver}.")
+                print(f"   ✅ Applied version {new_ver} to {p}/plugin.yaml and {p}/CHANGELOG.md")
+        return
 
     touched_plugins = []
 
