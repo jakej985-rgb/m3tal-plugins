@@ -1,0 +1,144 @@
+name: Branch Janitor
+
+# Deletes head branches that are fully merged into main and have no open PR.
+# Catches what GitHub's "Automatically delete head branches" setting cannot:
+# branches merged locally and pushed, plus leftovers from before it existed.
+on:
+  schedule:
+    # Mondays 06:17 UTC, off the hour so it never races the release workflow.
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Report what would be deleted without deleting (true, false)"
+        required: true
+        default: "true"
+
+permissions:
+  contents: write
+  pull-requests: read
+
+# A manual dry run and the weekly sweep must never delete concurrently.
+concurrency:
+  group: branch-janitor
+  cancel-in-progress: false
+
+env:
+  # Space-separated exact branch names that must never be deleted, even when they
+  # sit at main's tip. Empty by default: add your long-lived branches here, e.g.
+  # KEEP_BRANCHES: "dev staging preview" (`main` never needs listing; it is
+  # excluded before the sweep starts). Exact names only, no globs.
+  KEEP_BRANCHES: ""
+
+jobs:
+  prune:
+    name: Delete merged branches
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      # Scheduled runs delete; a manual run defaults to a safe dry run.
+      DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Sweep fully merged branches
+        run: |
+          set -euo pipefail
+
+          OWNER="${REPO%%/*}"
+          KEEP="${KEEP_BRANCHES:-}"
+          DELETED=0
+          SKIPPED=0
+          FAILED=0
+          SUMMARY="$GITHUB_STEP_SUMMARY"
+          if [ "$DRY_RUN" = "true" ]; then
+            VERB="would delete"
+            MODE="dry run — nothing will be deleted."
+          else
+            VERB="deleted"
+            MODE="live — merged branches will be deleted."
+          fi
+          {
+            echo "### Branch janitor (\`$REPO\`)"
+            echo ""
+            echo "Mode: $MODE"
+            echo ""
+            echo "Keep-list: \`${KEEP:-<empty>}\`"
+            echo ""
+            echo "| Branch | Result |"
+            echo "| --- | --- |"
+          } >> "$SUMMARY"
+
+          # Refresh all remote heads locally so every check below is offline-safe.
+          git fetch --prune origin '+refs/heads/*:refs/remotes/origin/*'
+          git rev-parse --verify --quiet origin/main > /dev/null || {
+            echo "::error::origin/main not found; refusing to sweep."
+            exit 1
+          }
+
+          while read -r branch; do
+            # Keep-listed branches legitimately sit at main's tip, so never touch them.
+            case " $KEEP " in
+              *" $branch "*)
+                SKIPPED=$((SKIPPED + 1))
+                echo "| \`$branch\` | kept (keep-list) |" >> "$SUMMARY"
+                continue ;;
+            esac
+
+            # Zero commits outside main means every commit is already merged.
+            AHEAD=$(git rev-list --count "origin/main..origin/$branch")
+            if [ "$AHEAD" != "0" ]; then
+              SKIPPED=$((SKIPPED + 1))
+              echo "| \`$branch\` | kept ($AHEAD unmerged commit(s)) |" >> "$SUMMARY"
+              continue
+            fi
+
+            # An open PR means the branch is still in play, merged-looking or not.
+            ENCODED=$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$branch")
+            OPEN_PRS=$(curl -fsSL \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              "$GITHUB_API_URL/repos/$REPO/pulls?state=open&head=${OWNER}:${ENCODED}&per_page=100" \
+              | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
+            if [ "$OPEN_PRS" != "0" ]; then
+              SKIPPED=$((SKIPPED + 1))
+              echo "| \`$branch\` | kept ($OPEN_PRS open PR(s)) |" >> "$SUMMARY"
+              continue
+            fi
+
+            if [ "$DRY_RUN" = "true" ]; then
+              DELETED=$((DELETED + 1))
+              echo "Would delete \`$branch\` ($(git rev-parse --short "origin/$branch"), 0 unique commits)."
+              echo "| \`$branch\` | would delete |" >> "$SUMMARY"
+            elif OUTPUT=$(git push origin --delete "$branch" 2>&1); then
+              DELETED=$((DELETED + 1))
+              echo "Deleted \`$branch\` ($(git rev-parse --short "origin/$branch"), 0 unique commits)."
+              echo "| \`$branch\` | deleted |" >> "$SUMMARY"
+            elif grep -qiE 'protected branch|GH013|remote ref does not exist' <<< "$OUTPUT"; then
+              # Rulesets are deliberate; a ref that vanished mid-run is already the goal.
+              SKIPPED=$((SKIPPED + 1))
+              echo "::warning::Skipping $branch: protected by a ruleset or already deleted upstream."
+              echo "| \`$branch\` | skipped (protected or already gone) |" >> "$SUMMARY"
+            else
+              FAILED=$((FAILED + 1))
+              echo "::error::Failed to delete $branch: $OUTPUT"
+              echo "| \`$branch\` | failed |" >> "$SUMMARY"
+            fi
+          # main and origin/HEAD are excluded here; the keep-list covers everything else.
+          done < <(git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/origin | grep -vxE 'HEAD|main')
+
+          {
+            echo ""
+            echo "**$VERB $DELETED branch(es)**, kept $SKIPPED, failed $FAILED."
+          } >> "$SUMMARY"
+          echo "Janitor finished: $VERB=$DELETED kept=$SKIPPED failed=$FAILED"
+
+          if [ "$FAILED" -gt 0 ]; then
+            echo "::error::$FAILED branch deletion(s) failed unexpectedly; see the run summary."
+            exit 1
+          fi
