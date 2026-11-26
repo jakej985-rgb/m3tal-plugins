@@ -25,10 +25,10 @@ concurrency:
 
 env:
   # Space-separated exact branch names that must never be deleted, even when they
-  # sit at main's tip. Empty by default: add your long-lived branches here, e.g.
+  # sit at main's tip. Add more long-lived branches here, e.g.
   # KEEP_BRANCHES: "dev staging preview" (`main` never needs listing; it is
   # excluded before the sweep starts). Exact names only, no globs.
-  KEEP_BRANCHES: ""
+  KEEP_BRANCHES: "dev"
 
 jobs:
   prune:
