@@ -42,7 +42,7 @@ jobs:
       DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
           fetch-depth: 0
@@ -111,13 +111,16 @@ jobs:
               continue
             fi
 
+            # Record the SHA first: a successful delete also drops the local
+            # remote-tracking ref, so rev-parse afterwards would fail.
+            SHA=$(git rev-parse --short "origin/$branch")
             if [ "$DRY_RUN" = "true" ]; then
               DELETED=$((DELETED + 1))
-              echo "Would delete \`$branch\` ($(git rev-parse --short "origin/$branch"), 0 unique commits)."
+              echo "Would delete \`$branch\` ($SHA, 0 unique commits)."
               echo "| \`$branch\` | would delete |" >> "$SUMMARY"
             elif OUTPUT=$(git push origin --delete "$branch" 2>&1); then
               DELETED=$((DELETED + 1))
-              echo "Deleted \`$branch\` ($(git rev-parse --short "origin/$branch"), 0 unique commits)."
+              echo "Deleted \`$branch\` ($SHA, 0 unique commits)."
               echo "| \`$branch\` | deleted |" >> "$SUMMARY"
             elif grep -qiE 'protected branch|GH013|remote ref does not exist' <<< "$OUTPUT"; then
               # Rulesets are deliberate; a ref that vanished mid-run is already the goal.
