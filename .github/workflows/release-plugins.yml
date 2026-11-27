@@ -192,11 +192,6 @@ jobs:
           go-version: '1.26'
           cache: true
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: '20'
-
       - name: Set up Python
         uses: actions/setup-python@v7
         with:

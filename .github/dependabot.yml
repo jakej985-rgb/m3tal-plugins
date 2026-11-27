@@ -1,6 +1,6 @@
 version: 2
 updates:
-  # Workflow action refs (`actions/checkout@v5`, `actions/setup-node@v4`, …) are
+  # Workflow action refs (`actions/checkout@v7`, `actions/setup-go@v7`, …) are
   # pinned to floating majors, which only move when someone remembers to bump
   # them. Let Dependabot keep them current instead.
   - package-ecosystem: "github-actions"
