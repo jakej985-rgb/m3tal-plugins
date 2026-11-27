@@ -37,18 +37,17 @@ endif
 audit-all:
 	@set -eu; \
 	dirs=$$(find . -maxdepth 1 -mindepth 1 -type d ! -name '.*' ! -name 'scripts'); \
-	plugins=""; \
+	audited=0; \
 	for d in $$dirs; do \
-		if [ -f "$$d/plugin.yaml" ]; then plugins="$$plugins $${d#./}"; fi; \
+		if [ -f "$$d/plugin.yaml" ]; then \
+			audited=$$((audited + 1)); \
+			./scripts/audit-plugin.sh "$${d#./}"; \
+		fi; \
 	done; \
-	if [ -z "$$plugins" ]; then \
-		echo "::error::No plugin directory with a plugin.yaml was found; refusing to report a clean audit."; \
+	if [ "$$audited" -eq 0 ]; then \
+		echo "No plugin directory with a plugin.yaml was found; refusing to report a clean audit." >&2; \
 		exit 1; \
-	fi; \
-	echo "Auditing:$$plugins"; \
-	for p in $$plugins; do \
-		./scripts/audit-plugin.sh "$$p"; \
-	done
+	fi
 
 build-changed:
 	@TOUCHED=$$("./scripts/smart-bump.sh" $(BASE_ARG) --list-touched); \
