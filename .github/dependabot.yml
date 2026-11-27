@@ -1,8 +1,10 @@
 version: 2
 updates:
-  # Workflow action refs (`actions/checkout@v7`, `actions/setup-go@v7`, …) are
-  # pinned to floating majors, which only move when someone remembers to bump
-  # them. Let Dependabot keep them current instead.
+  # Workflow action refs are pinned to full commit SHAs with the release tag in
+  # a trailing comment (`actions/checkout@3d3c42e… # v7.0.1`) so a re-pointed or
+  # compromised tag cannot change what runs. Dependabot understands that form
+  # and updates the SHA and the comment together, so pinning does not mean
+  # going stale.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

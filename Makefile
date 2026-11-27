@@ -35,11 +35,19 @@ endif
 	@./scripts/audit-plugin.sh "$(PLUGIN)"
 
 audit-all:
-	@set -e; \
-	for p in $$(find . -maxdepth 1 -mindepth 1 -type d ! -name '.*' ! -name 'scripts'); do \
-		if [ -f "$$p/plugin.yaml" ]; then \
-			./scripts/audit-plugin.sh "$$(basename "$$p")"; \
-		fi; \
+	@set -eu; \
+	dirs=$$(find . -maxdepth 1 -mindepth 1 -type d ! -name '.*' ! -name 'scripts'); \
+	plugins=""; \
+	for d in $$dirs; do \
+		if [ -f "$$d/plugin.yaml" ]; then plugins="$$plugins $${d#./}"; fi; \
+	done; \
+	if [ -z "$$plugins" ]; then \
+		echo "::error::No plugin directory with a plugin.yaml was found; refusing to report a clean audit."; \
+		exit 1; \
+	fi; \
+	echo "Auditing:$$plugins"; \
+	for p in $$plugins; do \
+		./scripts/audit-plugin.sh "$$p"; \
 	done
 
 build-changed:
