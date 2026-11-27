@@ -84,6 +84,8 @@ jobs:
   # CI (`ci.yml`) runs on the same push that triggers this workflow, so without a
   # gate a failing audit or build would still publish. Nothing is bumped, built,
   # or pushed until the CI run for this exact commit has concluded successfully.
+  # The 50-minute job budget covers CI's own worst case: the units and audit jobs
+  # first, then four 20-minute build jobs at max-parallel 2.
   gate:
     name: Require green CI
     needs: detect
