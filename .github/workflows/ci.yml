@@ -65,17 +65,10 @@ jobs:
       - name: Install Audit Dependencies
         run: python3 -m pip install --disable-pip-version-check pyyaml
 
-      # `make audit-all` loops without `set -e`, so an early failing plugin can
-      # be masked by a later passing one. Fail on the reported status as well as
-      # on the exit code.
+      # `audit-all` aborts on the first plugin that fails, so the exit code is
+      # the gate.
       - name: Audit every plugin against the six gates
-        run: |
-          set -euo pipefail
-          make audit-all | tee audit.log
-          if grep -q 'Overall Status: .*\[FAILED\]' audit.log; then
-            echo "::error::At least one plugin failed its audit; see the log above."
-            exit 1
-          fi
+        run: make audit-all
 
   build:
     name: Build ${{ matrix.unit }}

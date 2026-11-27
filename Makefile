@@ -35,7 +35,8 @@ endif
 	@./scripts/audit-plugin.sh "$(PLUGIN)"
 
 audit-all:
-	@for p in $$(find . -maxdepth 1 -mindepth 1 -type d ! -name '.*' ! -name 'scripts'); do \
+	@set -e; \
+	for p in $$(find . -maxdepth 1 -mindepth 1 -type d ! -name '.*' ! -name 'scripts'); do \
 		if [ -f "$$p/plugin.yaml" ]; then \
 			./scripts/audit-plugin.sh "$$(basename "$$p")"; \
 		fi; \
