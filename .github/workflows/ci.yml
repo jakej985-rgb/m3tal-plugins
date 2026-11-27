@@ -7,8 +7,8 @@ name: CI
 # them away.
 #
 # Go tracks the highest `go` directive in the repo (m3tal-mesh/src/go.mod
-# requires 1.26.0) instead of release-plugins.yml's 1.23, which only works
-# because the toolchain auto-downloads 1.26 on demand.
+# requires 1.26.0), and release-plugins.yml pins the same version, so a local
+# build here and a published DEB compile with the same compiler.
 on:
   pull_request:
   push:

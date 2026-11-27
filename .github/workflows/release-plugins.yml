@@ -22,6 +22,9 @@ on:
 
 permissions:
   contents: write
+  # The publish gate reads this repo's own CI runs for the commit it is about to
+  # publish, so the fallback GITHUB_TOKEN needs to see them.
+  actions: read
 
 # Release commits are pushed back to main and every unit publishes to the same
 # rolling `plugins-latest` release, so runs must never overlap.
@@ -78,9 +81,86 @@ jobs:
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
           echo "Release units to publish: $MATRIX"
 
+  # CI (`ci.yml`) runs on the same push that triggers this workflow, so without a
+  # gate a failing audit or build would still publish. Nothing is bumped, built,
+  # or pushed until the CI run for this exact commit has concluded successfully.
+  gate:
+    name: Require green CI
+    needs: detect
+    if: needs.detect.outputs.count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      SHA: ${{ github.sha }}
+    steps:
+      - name: Wait for CI on ${{ github.sha }}
+        env:
+          CI_GATE_POLL_SECONDS: '20'
+          CI_GATE_TIMEOUT_SECONDS: '2700'
+          CI_GATE_APPEAR_SECONDS: '180'
+        run: |
+          set -euo pipefail
+
+          poll="${CI_GATE_POLL_SECONDS:-20}"
+          timeout="${CI_GATE_TIMEOUT_SECONDS:-2700}"
+          appear="${CI_GATE_APPEAR_SECONDS:-180}"
+
+          # The bot's own version bumps carry [skip ci] so the publish does not
+          # retrigger itself, which means GitHub never creates a CI run for them.
+          # They only rewrite version strings and are the bump step of every
+          # publish, so they are the single allowed exception.
+          author="$(gh api "repos/$REPO/commits/$SHA" --jq '.commit.author.email')"
+          subject="$(gh api "repos/$REPO/commits/$SHA" --jq '.commit.message | split("\n")[0]')"
+          if [ "$author" = "bot@m3tal.io" ] \
+             && printf '%s' "$subject" | grep -Fq 'chore(release): auto-bump' \
+             && printf '%s' "$subject" | grep -Fq '[skip ci]'; then
+            echo "::notice::$SHA is the release bot's own [skip ci] bump; no CI run exists to gate on."
+            exit 0
+          fi
+
+          # A push-triggered release and the CI run it must wait for start at the
+          # same moment, so give the run a moment to appear before calling it
+          # missing.
+          deadline=$((SECONDS + appear))
+          run_id=""
+          while [ -z "$run_id" ]; do
+            run_id="$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&event=push&per_page=1" --jq '.workflow_runs[0].id // empty')"
+            [ -n "$run_id" ] && break
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error::No push-triggered CI run appeared for $SHA within ${appear}s; refusing to publish a commit CI never checked."
+              exit 1
+            fi
+            sleep 5
+          done
+
+          echo "Waiting on CI run $run_id for $SHA..."
+          deadline=$((SECONDS + timeout))
+          while :; do
+            state="$(gh api "repos/$REPO/actions/runs/$run_id" --jq '"\(.status) \(.conclusion // "")"')"
+            status="${state%% *}"
+            conclusion="${state#* }"
+            if [ "$status" = "completed" ]; then
+              if [ "$conclusion" = "success" ]; then
+                echo "✅ CI succeeded for $SHA (run $run_id)."
+                exit 0
+              fi
+              echo "::error::CI for $SHA concluded '${conclusion:-unknown}' (run $run_id); refusing to publish. Re-run CI for the commit, then re-run Release Plugins."
+              exit 1
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error::CI for $SHA was still '$status' after ${timeout}s (run $run_id); refusing to publish."
+              exit 1
+            fi
+            sleep "$poll"
+          done
+
   release:
     name: Release ${{ matrix.unit }}
-    needs: detect
+    needs:
+      - detect
+      - gate
     if: needs.detect.outputs.count != '0'
     runs-on: ubuntu-latest
     strategy:

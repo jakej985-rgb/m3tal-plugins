@@ -1,0 +1,18 @@
+version: 2
+updates:
+  # Workflow action refs (`actions/checkout@v5`, `actions/setup-node@v4`, …) are
+  # pinned to floating majors, which only move when someone remembers to bump
+  # them. Let Dependabot keep them current instead.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+    # One PR per week for all action bumps; each would otherwise arrive
+    # separately and need its own CI run.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
