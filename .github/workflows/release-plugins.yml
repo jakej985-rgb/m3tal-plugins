@@ -191,6 +191,9 @@ jobs:
           # build deterministic instead of relying on toolchain auto-download.
           go-version: '1.26'
           cache: true
+          # Every plugin keeps its go.sum under its own src/ directory, so the
+          # default repo-root lookup never finds a key and the cache never hits.
+          cache-dependency-path: '**/go.sum'
 
       - name: Set up Python
         uses: actions/setup-python@v7
