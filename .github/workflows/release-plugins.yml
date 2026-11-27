@@ -105,7 +105,9 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          # m3tal-mesh/src/go.mod requires go >= 1.26.0; pinning to it keeps the
+          # build deterministic instead of relying on toolchain auto-download.
+          go-version: '1.26'
           cache: true
 
       - name: Set up Node.js

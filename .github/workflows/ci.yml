@@ -1,0 +1,145 @@
+name: CI
+
+# Pre-merge gate for the plugin monorepo. `release-plugins.yml` publishes
+# straight from main into the rolling `plugins-latest` release and the signed
+# APT index, so nothing here may publish: it validates the release-unit map,
+# audits every plugin, and builds the same .deb artifacts locally, then throws
+# them away.
+#
+# Go tracks the highest `go` directive in the repo (m3tal-mesh/src/go.mod
+# requires 1.26.0) instead of release-plugins.yml's 1.23, which only works
+# because the toolchain auto-downloads 1.26 on demand.
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  units:
+    name: Verify release units
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.units.outputs.matrix }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Every plugin with a plugin.yaml must belong to exactly one release unit,
+      # or a push to it would never be detected, built, or published.
+      - name: Verify release-units.json
+        id: units
+        run: |
+          set -euo pipefail
+          ./scripts/release-units.py --verify
+          MATRIX=$(./scripts/release-units.py --list-all)
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          echo "Build matrix: $MATRIX"
+
+  audit:
+    name: Audit plugins
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Audit Dependencies
+        run: python3 -m pip install --disable-pip-version-check pyyaml
+
+      # `make audit-all` loops without `set -e`, so an early failing plugin can
+      # be masked by a later passing one. Fail on the reported status as well as
+      # on the exit code.
+      - name: Audit every plugin against the six gates
+        run: |
+          set -euo pipefail
+          make audit-all | tee audit.log
+          if grep -q 'Overall Status: .*\[FAILED\]' audit.log; then
+            echo "::error::At least one plugin failed its audit; see the log above."
+            exit 1
+          fi
+
+  build:
+    name: Build ${{ matrix.unit }}
+    needs: units
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix: ${{ fromJSON(needs.units.outputs.matrix) }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          # Every plugin keeps its go.sum in its own src/ directory, so the
+          # default root-level dependency cache lookup would find nothing.
+          cache: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Build Dependencies
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check pyyaml
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends dpkg-dev
+
+      # Same build path release-plugins.yml uses, minus the release, the APT
+      # dispatch, and the push back to main.
+      - name: Build ${{ matrix.unit }} packages (no publish)
+        env:
+          UNIT: ${{ matrix.unit }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/packages
+          for plugin in $(./scripts/release-units.py --unit "$UNIT" --plugins); do
+            ./scripts/build-plugin-deb.sh "$plugin"
+          done
+          if [ "$(./scripts/release-units.py --unit "$UNIT" --cluster)" = "true" ]; then
+            ./scripts/build-cluster-deb.sh
+          fi
+
+          shopt -s nullglob
+          debs=(./*.deb)
+          sums=(./*.sha256)
+          if [ ${#debs[@]} -gt 0 ]; then mv "${debs[@]}" dist/packages/; fi
+          if [ ${#sums[@]} -gt 0 ]; then mv "${sums[@]}" dist/packages/; fi
+          ls -la dist/packages/
+
+          if ! ls dist/packages/*.deb > /dev/null 2>&1; then
+            echo "::error::Release unit $UNIT produced no .deb artifacts."
+            exit 1
+          fi
+          {
+            echo "### Built \`$UNIT\` (not published)"
+            echo ""
+            echo '```'
+            ls dist/packages/
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
