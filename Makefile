@@ -35,12 +35,19 @@ endif
 	@./scripts/audit-plugin.sh "$(PLUGIN)"
 
 audit-all:
-	@set -e; \
-	for p in $$(find . -maxdepth 1 -mindepth 1 -type d ! -name '.*' ! -name 'scripts'); do \
-		if [ -f "$$p/plugin.yaml" ]; then \
-			./scripts/audit-plugin.sh "$$(basename "$$p")"; \
+	@set -eu; \
+	dirs=$$(find . -maxdepth 1 -mindepth 1 -type d ! -name '.*' ! -name 'scripts'); \
+	audited=0; \
+	for d in $$dirs; do \
+		if [ -f "$$d/plugin.yaml" ]; then \
+			audited=$$((audited + 1)); \
+			./scripts/audit-plugin.sh "$${d#./}"; \
 		fi; \
-	done
+	done; \
+	if [ "$$audited" -eq 0 ]; then \
+		echo "No plugin directory with a plugin.yaml was found; refusing to report a clean audit." >&2; \
+		exit 1; \
+	fi
 
 build-changed:
 	@TOUCHED=$$("./scripts/smart-bump.sh" $(BASE_ARG) --list-touched); \
